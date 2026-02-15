@@ -10,6 +10,8 @@ from pathlib import Path
 SPEEDRIFT_MARKER = "## Speedrift Protocol"
 UXRIFT_MARKER = "## uxrift Protocol"
 SPECRIFT_MARKER = "## specrift Protocol"
+SUPERPOWERS_MARKER = "## Superpowers Protocol"
+MODEL_MEDIATED_MARKER = "## Model-Mediated Protocol"
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,18 @@ Context from dependencies:
 - If you need to change scope, update touch globs:
   ./.workgraph/speedrift contract set-touch --task {{{{task_id}}}} <globs...>
 - If `hardening_in_core` is flagged, avoid adding guardrails in the core task; do/complete the `harden:` follow-up task instead.
+
+{SUPERPOWERS_MARKER}
+- If Superpowers-style skills are available in this environment, use:
+  /brainstorming before code
+  /test-driven-development for behavior changes
+  /verification-before-completion before `wg done`
+- If not available, follow the same phases explicitly.
+
+{MODEL_MEDIATED_MARKER}
+- Separate pipes vs decisions (facts/execution vs judgment).
+- If a Model-Mediated Architecture skill is available, apply it (model decides; code executes).
+- Log key decisions/deviations in `wg log`, and prefer follow-up tasks over bloating the current task.
 {uxrift}
 
 ## Workgraph Rules
@@ -163,22 +177,50 @@ _TEMPLATE_START_RE = re.compile(r'(?P<prefix>\btemplate\s*=\s*"""\r?\n)', re.MUL
 
 
 def _inject_speedrift_into_template(body: str) -> str | None:
-    if SPEEDRIFT_MARKER in body:
-        old = "  ./.workgraph/speedrift check --task {{task_id}} --write-log --create-followups"
-        new = "  ./.workgraph/rifts check --task {{task_id}} --write-log --create-followups"
-        upgraded = body.replace(old, new)
-        if upgraded != body:
-            return upgraded
-        return None
+    changed = False
+    cur = body
 
-    m = _TEMPLATE_START_RE.search(body)
+    old = "  ./.workgraph/speedrift check --task {{task_id}} --write-log --create-followups"
+    new = "  ./.workgraph/rifts check --task {{task_id}} --write-log --create-followups"
+    if old in cur:
+        cur = cur.replace(old, new)
+        changed = True
+
+    m = _TEMPLATE_START_RE.search(cur)
     if not m:
-        return None
+        return cur if changed else None
 
     start = m.end("prefix")
-    end = body.find('\"\"\"', start)
+    end = cur.find('\"\"\"', start)
     if end == -1:
-        return None
+        return cur if changed else None
+
+    if SPEEDRIFT_MARKER in cur:
+        inserts: list[str] = []
+        if SUPERPOWERS_MARKER not in cur:
+            inserts.append(
+                "\n"
+                f"{SUPERPOWERS_MARKER}\n"
+                "- If Superpowers-style skills are available in this environment, use:\n"
+                "  /brainstorming before code\n"
+                "  /test-driven-development for behavior changes\n"
+                "  /verification-before-completion before `wg done`\n"
+                "- If not available, follow the same phases explicitly.\n"
+            )
+        if MODEL_MEDIATED_MARKER not in cur:
+            inserts.append(
+                "\n"
+                f"{MODEL_MEDIATED_MARKER}\n"
+                "- Separate pipes vs decisions (facts/execution vs judgment).\n"
+                "- If a Model-Mediated Architecture skill is available, apply it (model decides; code executes).\n"
+                "- Log key decisions/deviations in `wg log`, and prefer follow-up tasks over bloating the current task.\n"
+            )
+
+        if inserts:
+            cur = cur[:end].rstrip("\n") + "\n" + "\n".join(i.strip("\n") for i in inserts) + "\n" + cur[end:]
+            changed = True
+
+        return cur if changed else None
 
     insert = (
         "\n"
@@ -189,9 +231,21 @@ def _inject_speedrift_into_template(body: str) -> str | None:
         "- If you need to change scope, update touch globs:\n"
         "  ./.workgraph/speedrift contract set-touch --task {{task_id}} <globs...>\n"
         "- If `hardening_in_core` is flagged, avoid adding guardrails in the core task; do/complete the `harden:` follow-up task instead.\n"
+        "\n"
+        f"{SUPERPOWERS_MARKER}\n"
+        "- If Superpowers-style skills are available in this environment, use:\n"
+        "  /brainstorming before code\n"
+        "  /test-driven-development for behavior changes\n"
+        "  /verification-before-completion before `wg done`\n"
+        "- If not available, follow the same phases explicitly.\n"
+        "\n"
+        f"{MODEL_MEDIATED_MARKER}\n"
+        "- Separate pipes vs decisions (facts/execution vs judgment).\n"
+        "- If a Model-Mediated Architecture skill is available, apply it (model decides; code executes).\n"
+        "- Log key decisions/deviations in `wg log`, and prefer follow-up tasks over bloating the current task.\n"
     )
 
-    return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
+    return cur[:end].rstrip("\n") + "\n" + insert + "\n" + cur[end:]
 
 
 def _inject_uxrift_into_template(body: str) -> str | None:

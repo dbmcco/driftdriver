@@ -87,7 +87,11 @@ test -x "$TMPDIR/.workgraph/uxrift"
 
 rg -n "## Speedrift Protocol" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
 rg -n "\\./\\.workgraph/rifts check" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
+rg -n "## Superpowers Protocol" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
+rg -n "## Model-Mediated Protocol" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
 rg -n "## Speedrift Protocol" "$TMPDIR/.workgraph/executors/claude.toml" >/dev/null
+rg -n "## Superpowers Protocol" "$TMPDIR/.workgraph/executors/claude.toml" >/dev/null
+rg -n "## Model-Mediated Protocol" "$TMPDIR/.workgraph/executors/claude.toml" >/dev/null
 rg -n "^\\.speedrift/$" "$TMPDIR/.workgraph/.gitignore" >/dev/null
 rg -n "^\\.specrift/$" "$TMPDIR/.workgraph/.gitignore" >/dev/null
 rg -n "## uxrift Protocol" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
