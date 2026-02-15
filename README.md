@@ -8,7 +8,10 @@ Driftdriver is an orchestrator for **Workgraph-first** agent development.
 
 Today it supports:
 - `speedrift` (baseline, always-run)
+- `specrift` (optional, only when a task declares a ```specrift block)
 - `uxrift` (optional, only when a task declares a ```uxrift block)
+
+Plugin interface: see `RIFT_PLUGIN_CONTRACT.md`.
 
 ## Install Into A Repo
 

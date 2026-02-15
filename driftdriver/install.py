@@ -9,6 +9,7 @@ from pathlib import Path
 
 SPEEDRIFT_MARKER = "## Speedrift Protocol"
 UXRIFT_MARKER = "## uxrift Protocol"
+SPECRIFT_MARKER = "## specrift Protocol"
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class InstallResult:
     wrote_rifts: bool
     wrote_driver: bool
     wrote_speedrift: bool
+    wrote_specrift: bool
     wrote_uxrift: bool
     updated_gitignore: bool
     created_executor: bool
@@ -41,6 +43,10 @@ def _ensure_line_in_file(path: Path, line: str) -> bool:
 
 def ensure_speedrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".speedrift/")
+
+
+def ensure_specrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".specrift/")
 
 
 def ensure_uxrift_gitignore(wg_dir: Path) -> bool:
@@ -74,6 +80,10 @@ def write_driver_wrapper(wg_dir: Path, *, driver_bin: Path) -> bool:
 
 def write_speedrift_wrapper(wg_dir: Path, *, speedrift_bin: Path) -> bool:
     return write_tool_wrapper(wg_dir, tool_name="speedrift", tool_bin=speedrift_bin)
+
+
+def write_specrift_wrapper(wg_dir: Path, *, specrift_bin: Path) -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="specrift", tool_bin=specrift_bin)
 
 
 def write_uxrift_wrapper(wg_dir: Path, *, uxrift_bin: Path) -> bool:
