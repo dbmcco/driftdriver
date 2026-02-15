@@ -43,10 +43,17 @@ Exit codes:
 - `0`: clean
 - `3`: findings exist (advisory; act via follow-ups / contract edits)
 
+## Continuous "Pit Wall" Mode
+
+If you want drift telemetry running continuously while work happens:
+
+```bash
+./.workgraph/rifts orchestrate --write-log --create-followups
+```
+
 ## Development
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py'
 scripts/e2e_smoke.sh
 ```
-

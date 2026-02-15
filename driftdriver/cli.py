@@ -175,6 +175,39 @@ def cmd_check(args: argparse.Namespace) -> int:
     return ExitCode.ok
 
 
+def cmd_orchestrate(args: argparse.Namespace) -> int:
+    """
+    Run drift "pit wall" loops.
+
+    Today this delegates to baseline speedrift's monitor+redirect orchestrator.
+    """
+
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    project_dir = wg_dir.parent
+
+    speedrift = wg_dir / "speedrift"
+    if not speedrift.exists():
+        print("error: .workgraph/speedrift not found; run driftdriver install first", file=sys.stderr)
+        return ExitCode.usage
+
+    cmd = [
+        str(speedrift),
+        "--dir",
+        str(project_dir),
+        "orchestrate",
+        "--interval",
+        str(int(args.interval)),
+        "--redirect-interval",
+        str(int(args.redirect_interval)),
+    ]
+    if args.write_log:
+        cmd.append("--write-log")
+    if args.create_followups:
+        cmd.append("--create-followups")
+
+    return int(_run(cmd))
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="driftdriver")
     p.add_argument("--dir", help="Project directory (or .workgraph dir). Defaults to cwd search.")
@@ -194,6 +227,13 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--write-log", action="store_true", help="Write summary into wg log")
     check.add_argument("--create-followups", action="store_true", help="Create follow-up tasks for findings")
     check.set_defaults(func=cmd_check)
+
+    orch = sub.add_parser("orchestrate", help="Run continuous drift monitor+redirect loops (delegates to speedrift)")
+    orch.add_argument("--interval", default=30, help="Monitor poll interval seconds (default: 30)")
+    orch.add_argument("--redirect-interval", default=5, help="Redirect poll interval seconds (default: 5)")
+    orch.add_argument("--write-log", action="store_true", help="Write a drift summary to wg log (redirect agent)")
+    orch.add_argument("--create-followups", action="store_true", help="Create follow-up tasks (redirect agent)")
+    orch.set_defaults(func=cmd_orchestrate)
 
     args = p.parse_args(argv)
     return int(args.func(args))
