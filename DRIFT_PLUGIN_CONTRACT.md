@@ -1,6 +1,6 @@
-# Rift Plugin Contract (v1)
+# Drift Plugin Contract (v1)
 
-This document defines the minimal contract for a **rift** tool so it can be orchestrated by `driftdriver` via `./.workgraph/rifts`.
+This document defines the minimal contract for a **drift** tool so it can be orchestrated by `driftdriver` via `./.workgraph/drifts`.
 
 Goal: consistent agent behavior, low confusion, no hard blocks.
 
@@ -9,20 +9,22 @@ Goal: consistent agent behavior, low confusion, no hard blocks.
 Plugins are enabled per-task by a fenced TOML block in the Workgraph task `description`:
 
 ````md
-```<rift_name>
+```<drift_name>
 schema = 1
 ...
 ```
 ````
 
 Examples:
-- `uxrift` reads a ` ```uxrift` block.
-- `specrift` reads a ` ```specrift` block.
+- `uxdrift` reads a ` ```uxdrift` block.
+- `specdrift` reads a ` ```specdrift` block.
+- `datadrift` reads a ` ```datadrift` block.
+- `depsdrift` reads a ` ```depsdrift` block.
 
 ## CLI Interface
 
 Required:
-- `<rift> wg check --task <id> [--write-log] [--create-followups]`
+- `<drift> wg check --task <id> [--write-log] [--create-followups]`
 
 Behavior:
 - Exit codes:
@@ -37,14 +39,13 @@ Output:
 
 ## State & Artifacts
 
-- Artifacts should live under `./.workgraph/.<rift>/...` (repo-local, gitignored).
+- Artifacts should live under `./.workgraph/.<drift>/...` (repo-local, gitignored).
 - Do not modify repo code except by creating follow-up tasks and Workgraph logs (unless the tool is explicitly a refactoring tool).
 
 ## Orchestration Rules (driftdriver)
 
 - `speedrift` is the baseline check (always-run).
 - Optional plugins run only when:
-  - the wrapper exists in `./.workgraph/<rift>` (installed), and
-  - the task declares ` ```<rift>` in its description.
+  - the wrapper exists in `./.workgraph/<drift>` (installed), and
+  - the task declares ` ```<drift>` in its description.
 - Optional plugin failures must be **best-effort** (warn and continue).
-

@@ -8,30 +8,61 @@ Driftdriver is an orchestrator for **Workgraph-first** agent development.
 
 Today it supports:
 - `speedrift` (baseline, always-run)
-- `specrift` (optional, only when a task declares a ```specrift block)
-- `uxrift` (optional, only when a task declares a ```uxrift block)
+- `specdrift` (optional, only when a task declares a ```specdrift block)
+- `datadrift` (optional, only when a task declares a ```datadrift block)
+- `depsdrift` (optional, only when a task declares a ```depsdrift block)
+- `uxdrift` (optional, only when a task declares a ```uxdrift block)
 
-Plugin interface: see `RIFT_PLUGIN_CONTRACT.md`.
+Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
+
+## Install (CLI)
+
+You need `wg` (Workgraph) installed first.
+
+Fastest install today is `pipx` from GitHub:
+
+```bash
+pipx install git+https://github.com/dbmcco/driftdriver.git
+pipx install git+https://github.com/dbmcco/speedrift.git
+
+# Optional plugins:
+pipx install git+https://github.com/dbmcco/specdrift.git
+pipx install git+https://github.com/dbmcco/uxdrift.git
+```
 
 ## Install Into A Repo
 
 From the repo you want to work in:
 
 ```bash
-/Users/braydon/projects/experiments/driftdriver/bin/driftdriver install
+driftdriver install
 ```
 
 Optional UX integration:
 
 ```bash
-/Users/braydon/projects/experiments/driftdriver/bin/driftdriver install --with-uxrift
+driftdriver install --with-uxdrift
+```
+
+### Wrapper Modes (Portable vs Pinned)
+
+By default `driftdriver install` chooses wrapper style automatically:
+
+- `--wrapper-mode auto`: portable only when core tools are on PATH (default)
+- `--wrapper-mode pinned`: `.workgraph/*` wrappers exec absolute paths (best for local checkouts)
+- `--wrapper-mode portable`: `.workgraph/*` wrappers exec tools on PATH (commit-safe)
+
+If you want to commit `./.workgraph/drifts` (and wrappers) into the repo, use:
+
+```bash
+driftdriver install --wrapper-mode portable --with-uxdrift
 ```
 
 This writes:
-- `./.workgraph/driftdriver` (pinned wrapper)
-- `./.workgraph/rifts` (single per-repo entrypoint used by agents)
-- `./.workgraph/speedrift` (pinned wrapper)
-- (optional) `./.workgraph/uxrift` (pinned wrapper)
+- `./.workgraph/driftdriver` (wrapper)
+- `./.workgraph/drifts` (single per-repo entrypoint used by agents)
+- `./.workgraph/speedrift` (wrapper)
+- (optional) `./.workgraph/uxdrift` (wrapper)
 - executor prompt guidance under `./.workgraph/executors/*.toml`
 
 ## Per-Task Protocol
@@ -39,7 +70,7 @@ This writes:
 Agents should run (at task start and before completion):
 
 ```bash
-./.workgraph/rifts check --task <id> --write-log --create-followups
+./.workgraph/drifts check --task <id> --write-log --create-followups
 ```
 
 Exit codes:
@@ -51,7 +82,7 @@ Exit codes:
 If you want drift telemetry running continuously while work happens:
 
 ```bash
-./.workgraph/rifts orchestrate --write-log --create-followups
+./.workgraph/drifts orchestrate --write-log --create-followups
 ```
 
 ## Development

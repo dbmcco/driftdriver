@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "driftdriver"
+version = "0.1.0"
+description = "Workgraph-first drift orchestrator (Speedrift suite)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+driftdriver = "driftdriver.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["driftdriver*"]
+

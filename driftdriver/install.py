@@ -8,19 +8,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SPEEDRIFT_MARKER = "## Speedrift Protocol"
-UXRIFT_MARKER = "## uxrift Protocol"
-SPECRIFT_MARKER = "## specrift Protocol"
+UXDRIFT_MARKER = "## uxdrift Protocol"
+SPECDRIFT_MARKER = "## specdrift Protocol"
 SUPERPOWERS_MARKER = "## Superpowers Protocol"
 MODEL_MEDIATED_MARKER = "## Model-Mediated Protocol"
 
 
 @dataclass(frozen=True)
 class InstallResult:
-    wrote_rifts: bool
+    wrote_drifts: bool
     wrote_driver: bool
     wrote_speedrift: bool
-    wrote_specrift: bool
-    wrote_uxrift: bool
+    wrote_specdrift: bool
+    wrote_datadrift: bool
+    wrote_depsdrift: bool
+    wrote_uxdrift: bool
     updated_gitignore: bool
     created_executor: bool
     patched_executors: list[str]
@@ -47,26 +49,76 @@ def ensure_speedrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".speedrift/")
 
 
-def ensure_specrift_gitignore(wg_dir: Path) -> bool:
-    return _ensure_line_in_file(wg_dir / ".gitignore", ".specrift/")
+def ensure_specdrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".specdrift/")
+
+def ensure_datadrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".datadrift/")
+
+def ensure_depsdrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".depsdrift/")
 
 
-def ensure_uxrift_gitignore(wg_dir: Path) -> bool:
-    return _ensure_line_in_file(wg_dir / ".gitignore", ".uxrift/")
+def ensure_uxdrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".uxdrift/")
 
 
-def write_tool_wrapper(wg_dir: Path, *, tool_name: str, tool_bin: Path) -> bool:
+def _portable_wrapper_content(tool_name: str) -> str:
     """
-    Writes .workgraph/<tool_name> wrapper pointing at a tool checkout.
+    Commit-safe wrapper that resolves the tool from PATH at runtime.
+
+    We explicitly skip WG_DIR in PATH to avoid recursion if `.workgraph` is added
+    to PATH.
+    """
+
+    tool = str(tool_name)
+    return (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n\n"
+        "WG_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
+        f"TOOL=\"{tool}\"\n"
+        "FOUND=\"\"\n"
+        "IFS=':' read -r -a PARTS <<< \"${PATH:-}\"\n"
+        "for p in \"${PARTS[@]}\"; do\n"
+        "  [[ -z \"$p\" ]] && continue\n"
+        "  if [[ \"$p\" == \"$WG_DIR\" ]]; then\n"
+        "    continue\n"
+        "  fi\n"
+        "  if [[ -x \"$p/$TOOL\" ]]; then\n"
+        "    FOUND=\"$p/$TOOL\"\n"
+        "    break\n"
+        "  fi\n"
+        "done\n"
+        "if [[ -z \"$FOUND\" ]]; then\n"
+        "  echo \"error: $TOOL not found on PATH (portable wrapper)\" >&2\n"
+        "  exit 2\n"
+        "fi\n"
+        "exec \"$FOUND\" \"$@\"\n"
+    )
+
+
+def write_tool_wrapper(
+    wg_dir: Path,
+    *,
+    tool_name: str,
+    tool_bin: Path,
+    wrapper_mode: str = "pinned",
+) -> bool:
+    """
+    Writes .workgraph/<tool_name> wrapper.
     Returns True if file changed.
     """
 
     wrapper = wg_dir / tool_name
-    content = (
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n\n"
-        f'exec "{tool_bin}" "$@"\n'
-    )
+    mode = str(wrapper_mode or "pinned").strip().lower()
+    if mode == "portable":
+        content = _portable_wrapper_content(str(tool_name))
+    else:
+        content = (
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n\n"
+            f'exec "{tool_bin}" "$@"\n'
+        )
 
     existing = wrapper.read_text(encoding="utf-8") if wrapper.exists() else None
     changed = existing != content
@@ -76,28 +128,34 @@ def write_tool_wrapper(wg_dir: Path, *, tool_name: str, tool_bin: Path) -> bool:
     return changed
 
 
-def write_driver_wrapper(wg_dir: Path, *, driver_bin: Path) -> bool:
-    return write_tool_wrapper(wg_dir, tool_name="driftdriver", tool_bin=driver_bin)
+def write_driver_wrapper(wg_dir: Path, *, driver_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="driftdriver", tool_bin=driver_bin, wrapper_mode=wrapper_mode)
 
 
-def write_speedrift_wrapper(wg_dir: Path, *, speedrift_bin: Path) -> bool:
-    return write_tool_wrapper(wg_dir, tool_name="speedrift", tool_bin=speedrift_bin)
+def write_speedrift_wrapper(wg_dir: Path, *, speedrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="speedrift", tool_bin=speedrift_bin, wrapper_mode=wrapper_mode)
 
 
-def write_specrift_wrapper(wg_dir: Path, *, specrift_bin: Path) -> bool:
-    return write_tool_wrapper(wg_dir, tool_name="specrift", tool_bin=specrift_bin)
+def write_specdrift_wrapper(wg_dir: Path, *, specdrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="specdrift", tool_bin=specdrift_bin, wrapper_mode=wrapper_mode)
+
+def write_datadrift_wrapper(wg_dir: Path, *, datadrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="datadrift", tool_bin=datadrift_bin, wrapper_mode=wrapper_mode)
+
+def write_depsdrift_wrapper(wg_dir: Path, *, depsdrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="depsdrift", tool_bin=depsdrift_bin, wrapper_mode=wrapper_mode)
 
 
-def write_uxrift_wrapper(wg_dir: Path, *, uxrift_bin: Path) -> bool:
-    return write_tool_wrapper(wg_dir, tool_name="uxrift", tool_bin=uxrift_bin)
+def write_uxdrift_wrapper(wg_dir: Path, *, uxdrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="uxdrift", tool_bin=uxdrift_bin, wrapper_mode=wrapper_mode)
 
 
-def write_rifts_wrapper(wg_dir: Path) -> bool:
+def write_drifts_wrapper(wg_dir: Path) -> bool:
     """
-    Writes .workgraph/rifts wrapper that delegates to .workgraph/driftdriver.
+    Writes .workgraph/drifts wrapper that delegates to .workgraph/driftdriver.
     """
 
-    wrapper = wg_dir / "rifts"
+    wrapper = wg_dir / "drifts"
     content = (
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n\n"
@@ -113,17 +171,17 @@ def write_rifts_wrapper(wg_dir: Path) -> bool:
     return changed
 
 
-def _default_claude_executor_text(*, project_dir: Path, include_uxrift: bool) -> str:
-    uxrift = ""
-    if include_uxrift:
-        uxrift = (
+def _default_claude_executor_text(*, project_dir: Path, include_uxdrift: bool) -> str:
+    uxdrift = ""
+    if include_uxdrift:
+        uxdrift = (
             "\n"
-            f"{UXRIFT_MARKER}\n"
-            "- If this task includes a `uxrift` block (in the description), run:\n"
-            f"  ./.workgraph/uxrift wg check --task {{{{task_id}}}} --write-log --create-followups\n"
-            "- Or run the unified check (runs uxrift when a spec is present):\n"
-            f"  ./.workgraph/rifts check --task {{{{task_id}}}} --write-log --create-followups\n"
-            "- If it fails due to missing URL, set `url = \"...\"` in the `uxrift` block or pass --url.\n"
+            f"{UXDRIFT_MARKER}\n"
+            "- If this task includes a `uxdrift` block (in the description), run:\n"
+            f"  ./.workgraph/uxdrift wg check --task {{{{task_id}}}} --write-log --create-followups\n"
+            "- Or run the unified check (runs uxdrift when a spec is present):\n"
+            f"  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups\n"
+            "- If it fails due to missing URL, set `url = \"...\"` in the `uxdrift` block or pass --url.\n"
         )
 
     return f"""[executor]
@@ -146,7 +204,7 @@ Context from dependencies:
 {SPEEDRIFT_MARKER}
 - Treat the `wg-contract` block (in the task description) as binding.
 - At start and just before completion, run:
-  ./.workgraph/rifts check --task {{{{task_id}}}} --write-log --create-followups
+  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups
 - If you need to change scope, update touch globs:
   ./.workgraph/speedrift contract set-touch --task {{{{task_id}}}} <globs...>
 - If `hardening_in_core` is flagged, avoid adding guardrails in the core task; do/complete the `harden:` follow-up task instead.
@@ -162,7 +220,7 @@ Context from dependencies:
 - Separate pipes vs decisions (facts/execution vs judgment).
 - If a Model-Mediated Architecture skill is available, apply it (model decides; code executes).
 - Log key decisions/deviations in `wg log`, and prefer follow-up tasks over bloating the current task.
-{uxrift}
+{uxdrift}
 
 ## Workgraph Rules
 - Stay focused on this task.
@@ -181,7 +239,7 @@ def _inject_speedrift_into_template(body: str) -> str | None:
     cur = body
 
     old = "  ./.workgraph/speedrift check --task {{task_id}} --write-log --create-followups"
-    new = "  ./.workgraph/rifts check --task {{task_id}} --write-log --create-followups"
+    new = "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups"
     if old in cur:
         cur = cur.replace(old, new)
         changed = True
@@ -227,7 +285,7 @@ def _inject_speedrift_into_template(body: str) -> str | None:
         f"{SPEEDRIFT_MARKER}\n"
         "- Treat the `wg-contract` block (in the task description) as binding.\n"
         "- At start and just before completion, run:\n"
-        "  ./.workgraph/rifts check --task {{task_id}} --write-log --create-followups\n"
+        "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups\n"
         "- If you need to change scope, update touch globs:\n"
         "  ./.workgraph/speedrift contract set-touch --task {{task_id}} <globs...>\n"
         "- If `hardening_in_core` is flagged, avoid adding guardrails in the core task; do/complete the `harden:` follow-up task instead.\n"
@@ -248,8 +306,8 @@ def _inject_speedrift_into_template(body: str) -> str | None:
     return cur[:end].rstrip("\n") + "\n" + insert + "\n" + cur[end:]
 
 
-def _inject_uxrift_into_template(body: str) -> str | None:
-    if UXRIFT_MARKER in body:
+def _inject_uxdrift_into_template(body: str) -> str | None:
+    if UXDRIFT_MARKER in body:
         return None
 
     m = _TEMPLATE_START_RE.search(body)
@@ -263,19 +321,19 @@ def _inject_uxrift_into_template(body: str) -> str | None:
 
     insert = (
         "\n"
-        f"{UXRIFT_MARKER}\n"
-        "- If this task includes a `uxrift` block (in the description), run:\n"
-        "  ./.workgraph/uxrift wg check --task {{task_id}} --write-log --create-followups\n"
-        "- Or run the unified check (runs uxrift when a spec is present):\n"
-        "  ./.workgraph/rifts check --task {{task_id}} --write-log --create-followups\n"
-        "- If it fails due to missing URL, set `url = \"...\"` in the `uxrift` block or pass --url.\n"
-        "- Artifacts live under `.workgraph/.uxrift/`.\n"
+        f"{UXDRIFT_MARKER}\n"
+        "- If this task includes a `uxdrift` block (in the description), run:\n"
+        "  ./.workgraph/uxdrift wg check --task {{task_id}} --write-log --create-followups\n"
+        "- Or run the unified check (runs uxdrift when a spec is present):\n"
+        "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups\n"
+        "- If it fails due to missing URL, set `url = \"...\"` in the `uxdrift` block or pass --url.\n"
+        "- Artifacts live under `.workgraph/.uxdrift/`.\n"
     )
 
     return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
 
 
-def ensure_executor_guidance(wg_dir: Path, *, include_uxrift: bool) -> tuple[bool, list[str]]:
+def ensure_executor_guidance(wg_dir: Path, *, include_uxdrift: bool) -> tuple[bool, list[str]]:
     executors_dir = wg_dir / "executors"
     executors_dir.mkdir(parents=True, exist_ok=True)
 
@@ -283,7 +341,7 @@ def ensure_executor_guidance(wg_dir: Path, *, include_uxrift: bool) -> tuple[boo
     claude_path = executors_dir / "claude.toml"
     if not claude_path.exists():
         claude_path.write_text(
-            _default_claude_executor_text(project_dir=wg_dir.parent, include_uxrift=include_uxrift),
+            _default_claude_executor_text(project_dir=wg_dir.parent, include_uxdrift=include_uxdrift),
             encoding="utf-8",
         )
         created = True
@@ -299,8 +357,8 @@ def ensure_executor_guidance(wg_dir: Path, *, include_uxrift: bool) -> tuple[boo
             cur = new_text
             changed = True
 
-        if include_uxrift:
-            new_text = _inject_uxrift_into_template(cur)
+        if include_uxdrift:
+            new_text = _inject_uxdrift_into_template(cur)
             if new_text is not None:
                 cur = new_text
                 changed = True
