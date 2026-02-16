@@ -17,6 +17,7 @@ from driftdriver.install import (
     ensure_speedrift_gitignore,
     ensure_therapydrift_gitignore,
     ensure_uxdrift_gitignore,
+    ensure_yagnidrift_gitignore,
     resolve_bin,
     write_datadrift_wrapper,
     write_depsdrift_wrapper,
@@ -26,6 +27,7 @@ from driftdriver.install import (
     write_speedrift_wrapper,
     write_therapydrift_wrapper,
     write_uxdrift_wrapper,
+    write_yagnidrift_wrapper,
 )
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
 
@@ -131,6 +133,19 @@ def cmd_install(args: argparse.Namespace) -> int:
         # Best-effort: don't fail install.
         include_therapydrift = False
 
+    include_yagnidrift = bool(args.with_yagnidrift or args.yagnidrift_bin)
+    yagnidrift_bin = resolve_bin(
+        explicit=Path(args.yagnidrift_bin) if args.yagnidrift_bin else None,
+        env_var="YAGNIDRIFT_BIN",
+        which_name="yagnidrift",
+        candidates=[
+            repo_root.parent / "yagnidrift" / "bin" / "yagnidrift",
+        ],
+    )
+    if include_yagnidrift and yagnidrift_bin is None:
+        # Best-effort: don't fail install.
+        include_yagnidrift = False
+
     datadrift_bin = resolve_bin(
         explicit=Path(args.datadrift_bin) if args.datadrift_bin else None,
         env_var="DATADRIFT_BIN",
@@ -183,6 +198,13 @@ def cmd_install(args: argparse.Namespace) -> int:
             therapydrift_bin=therapydrift_bin,
             wrapper_mode=wrapper_mode,
         )
+    wrote_yagnidrift = False
+    if include_yagnidrift and yagnidrift_bin is not None:
+        wrote_yagnidrift = write_yagnidrift_wrapper(
+            wg_dir,
+            yagnidrift_bin=yagnidrift_bin,
+            wrapper_mode=wrapper_mode,
+        )
 
     updated_gitignore = ensure_speedrift_gitignore(wg_dir)
     if specdrift_bin is not None:
@@ -195,11 +217,14 @@ def cmd_install(args: argparse.Namespace) -> int:
         updated_gitignore = ensure_uxdrift_gitignore(wg_dir) or updated_gitignore
     if include_therapydrift:
         updated_gitignore = ensure_therapydrift_gitignore(wg_dir) or updated_gitignore
+    if include_yagnidrift:
+        updated_gitignore = ensure_yagnidrift_gitignore(wg_dir) or updated_gitignore
 
     created_executor, patched_executors = ensure_executor_guidance(
         wg_dir,
         include_uxdrift=include_uxdrift,
         include_therapydrift=include_therapydrift,
+        include_yagnidrift=include_yagnidrift,
     )
 
     ensured_contracts = False
@@ -217,6 +242,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_depsdrift=wrote_depsdrift,
         wrote_uxdrift=wrote_uxdrift,
         wrote_therapydrift=wrote_therapydrift,
+        wrote_yagnidrift=wrote_yagnidrift,
         updated_gitignore=updated_gitignore,
         created_executor=created_executor,
         patched_executors=patched_executors,
@@ -233,6 +259,8 @@ def cmd_install(args: argparse.Namespace) -> int:
             enabled.append("uxdrift")
         if include_therapydrift:
             enabled.append("therapydrift")
+        if include_yagnidrift:
+            enabled.append("yagnidrift")
         if enabled:
             msg += f" (with {', '.join(enabled)})"
         print(msg)
@@ -388,6 +416,32 @@ def cmd_check(args: argparse.Namespace) -> int:
                 }
                 therapy_rc = 0
 
+        yagni_ran = False
+        yagni_rc = 0
+        yagni_report = None
+        yagnidrift = wg_dir / "yagnidrift"
+        if yagnidrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="yagnidrift"):
+            yagni_ran = True
+            yagni_cmd = [str(yagnidrift), "--dir", str(project_dir), "--json", "wg", "check", "--task", task_id]
+            if args.write_log:
+                yagni_cmd.append("--write-log")
+            if args.create_followups:
+                yagni_cmd.append("--create-followups")
+            yagni_proc = subprocess.run(yagni_cmd, text=True, capture_output=True)
+            yagni_rc = int(yagni_proc.returncode)
+            if yagni_rc in (0, ExitCode.findings):
+                try:
+                    yagni_report = json.loads(yagni_proc.stdout or "{}")
+                except Exception:
+                    yagni_report = {"raw": yagni_proc.stdout}
+            else:
+                yagni_report = {
+                    "error": "yagnidrift failed",
+                    "exit_code": yagni_rc,
+                    "stderr": (yagni_proc.stderr or "")[:4000],
+                }
+                yagni_rc = 0
+
         out_rc = (
             ExitCode.findings
             if (
@@ -397,6 +451,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                 or deps_rc == ExitCode.findings
                 or ux_rc == ExitCode.findings
                 or therapy_rc == ExitCode.findings
+                or yagni_rc == ExitCode.findings
             )
             else ExitCode.ok
         )
@@ -410,6 +465,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                 "depsdrift": {"ran": deps_ran, "exit_code": deps_rc, "report": deps_report},
                 "uxdrift": {"ran": ux_ran, "exit_code": ux_rc, "note": "no standardized json output yet"},
                 "therapydrift": {"ran": therapy_ran, "exit_code": therapy_rc, "report": therapy_report},
+                "yagnidrift": {"ran": yagni_ran, "exit_code": yagni_rc, "report": yagni_report},
             },
         }
         print(json.dumps(combined, indent=2, sort_keys=False))
@@ -484,6 +540,19 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"note: therapydrift failed (exit {therapy_rc}); continuing", file=sys.stderr)
             therapy_rc = 0
 
+    yagni_rc = 0
+    yagnidrift = wg_dir / "yagnidrift"
+    if yagnidrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="yagnidrift"):
+        yagni_cmd = [str(yagnidrift), "--dir", str(project_dir), "wg", "check", "--task", task_id]
+        if args.write_log:
+            yagni_cmd.append("--write-log")
+        if args.create_followups:
+            yagni_cmd.append("--create-followups")
+        yagni_rc = _run(yagni_cmd)
+        if yagni_rc not in (0, ExitCode.findings):
+            print(f"note: yagnidrift failed (exit {yagni_rc}); continuing", file=sys.stderr)
+            yagni_rc = 0
+
     if (
         speed_rc == ExitCode.findings
         or spec_rc == ExitCode.findings
@@ -491,6 +560,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         or deps_rc == ExitCode.findings
         or ux_rc == ExitCode.findings
         or therapy_rc == ExitCode.findings
+        or yagni_rc == ExitCode.findings
     ):
         return ExitCode.findings
     return ExitCode.ok
@@ -549,6 +619,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Best-effort: enable therapydrift integration if found",
     )
     install.add_argument("--therapydrift-bin", help="Path to therapydrift bin/therapydrift (enables therapydrift integration)")
+    install.add_argument(
+        "--with-yagnidrift",
+        action="store_true",
+        help="Best-effort: enable yagnidrift integration if found",
+    )
+    install.add_argument("--yagnidrift-bin", help="Path to yagnidrift bin/yagnidrift (enables yagnidrift integration)")
     install.add_argument(
         "--wrapper-mode",
         choices=["auto", "pinned", "portable"],
