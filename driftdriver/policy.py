@@ -13,6 +13,7 @@ DEFAULT_ORDER = [
     "uxdrift",
     "therapydrift",
     "yagnidrift",
+    "redrift",
 ]
 
 ALLOWED_MODES = {"observe", "advise", "redirect", "heal", "breaker"}
@@ -33,7 +34,7 @@ def _default_policy_text() -> str:
     return (
         "schema = 1\n"
         "mode = \"redirect\"\n"
-        "order = [\"speedrift\", \"specdrift\", \"datadrift\", \"depsdrift\", \"uxdrift\", \"therapydrift\", \"yagnidrift\"]\n"
+        "order = [\"speedrift\", \"specdrift\", \"datadrift\", \"depsdrift\", \"uxdrift\", \"therapydrift\", \"yagnidrift\", \"redrift\"]\n"
         "\n"
         "[recursion]\n"
         "cooldown_seconds = 1800\n"
@@ -120,4 +121,3 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         require_new_evidence=require_new_evidence,
         max_auto_depth=max_auto_depth,
     )
-

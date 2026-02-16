@@ -14,6 +14,7 @@ Today it supports:
 - `uxdrift` (optional, only when a task declares a ```uxdrift block)
 - `therapydrift` (optional, only when a task declares a ```therapydrift block)
 - `yagnidrift` (optional, only when a task declares a ```yagnidrift block)
+- `redrift` (optional, only when a task declares a ```redrift block)
 
 Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
 
@@ -32,6 +33,7 @@ pipx install git+https://github.com/dbmcco/specdrift.git
 pipx install git+https://github.com/dbmcco/uxdrift.git
 pipx install git+https://github.com/dbmcco/therapydrift.git
 pipx install git+https://github.com/dbmcco/yagnidrift.git
+pipx install git+https://github.com/dbmcco/redrift.git
 ```
 
 ## Install Into A Repo
@@ -42,10 +44,10 @@ From the repo you want to work in:
 driftdriver install
 ```
 
-Optional UX + therapy + YAGNI integration:
+Optional UX + therapy + YAGNI + redrift integration:
 
 ```bash
-driftdriver install --with-uxdrift --with-therapydrift --with-yagnidrift
+driftdriver install --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift
 ```
 
 ### Wrapper Modes (Portable vs Pinned)
@@ -59,7 +61,7 @@ By default `driftdriver install` chooses wrapper style automatically:
 If you want to commit `./.workgraph/drifts` (and wrappers) into the repo, use:
 
 ```bash
-driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-yagnidrift
+driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift
 ```
 
 This writes:
@@ -69,6 +71,7 @@ This writes:
 - (optional) `./.workgraph/uxdrift` (wrapper)
 - (optional) `./.workgraph/therapydrift` (wrapper)
 - (optional) `./.workgraph/yagnidrift` (wrapper)
+- (optional) `./.workgraph/redrift` (wrapper)
 - `./.workgraph/drift-policy.toml` (mode/order/recursion defaults)
 - executor prompt guidance under `./.workgraph/executors/*.toml`
 
@@ -79,7 +82,7 @@ This writes:
 ```toml
 schema = 1
 mode = "redirect"
-order = ["speedrift", "specdrift", "datadrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift"]
+order = ["speedrift", "specdrift", "datadrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift", "redrift"]
 
 [recursion]
 cooldown_seconds = 1800
@@ -98,6 +101,23 @@ Modes:
 Notes:
 - `order` controls optional plugin execution order under `./.workgraph/drifts check`.
 - CLI flags still force behavior per run: `--write-log` and `--create-followups`.
+
+## Use Tools Separately
+
+You can run each tool directly without `driftdriver`:
+
+```bash
+speedrift --dir . check --task <id> --write-log --create-followups
+specdrift --dir . wg check --task <id> --write-log --create-followups
+datadrift --dir . wg check --task <id> --write-log --create-followups
+depsdrift --dir . wg check --task <id> --write-log --create-followups
+uxdrift wg --dir . check --task <id> --write-log --create-followups
+therapydrift --dir . wg check --task <id> --write-log --create-followups
+yagnidrift --dir . wg check --task <id> --write-log --create-followups
+redrift --dir . wg check --task <id> --write-log --create-followups
+```
+
+Use `driftdriver` when you want one command (`./.workgraph/drifts check`) that routes by task fences and policy.
 
 ## Per-Task Protocol
 

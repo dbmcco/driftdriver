@@ -11,6 +11,7 @@ SPEEDRIFT_MARKER = "## Speedrift Protocol"
 UXDRIFT_MARKER = "## uxdrift Protocol"
 THERAPYDRIFT_MARKER = "## therapydrift Protocol"
 YAGNIDRIFT_MARKER = "## yagnidrift Protocol"
+REDRIFT_MARKER = "## redrift Protocol"
 SPECDRIFT_MARKER = "## specdrift Protocol"
 SUPERPOWERS_MARKER = "## Superpowers Protocol"
 MODEL_MEDIATED_MARKER = "## Model-Mediated Protocol"
@@ -27,6 +28,7 @@ class InstallResult:
     wrote_uxdrift: bool
     wrote_therapydrift: bool
     wrote_yagnidrift: bool
+    wrote_redrift: bool
     wrote_policy: bool
     updated_gitignore: bool
     created_executor: bool
@@ -72,6 +74,9 @@ def ensure_therapydrift_gitignore(wg_dir: Path) -> bool:
 
 def ensure_yagnidrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".yagnidrift/")
+
+def ensure_redrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".redrift/")
 
 
 def _portable_wrapper_content(tool_name: str) -> str:
@@ -166,6 +171,9 @@ def write_therapydrift_wrapper(wg_dir: Path, *, therapydrift_bin: Path, wrapper_
 def write_yagnidrift_wrapper(wg_dir: Path, *, yagnidrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="yagnidrift", tool_bin=yagnidrift_bin, wrapper_mode=wrapper_mode)
 
+def write_redrift_wrapper(wg_dir: Path, *, redrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="redrift", tool_bin=redrift_bin, wrapper_mode=wrapper_mode)
+
 
 def write_drifts_wrapper(wg_dir: Path) -> bool:
     """
@@ -194,6 +202,7 @@ def _default_claude_executor_text(
     include_uxdrift: bool,
     include_therapydrift: bool,
     include_yagnidrift: bool,
+    include_redrift: bool,
 ) -> str:
     uxdrift = ""
     if include_uxdrift:
@@ -229,6 +238,18 @@ def _default_claude_executor_text(
             "- Or run the unified check (runs yagnidrift when a spec is present):\n"
             f"  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups\n"
             "- Artifacts live under `.workgraph/.yagnidrift/`.\n"
+        )
+
+    redrift = ""
+    if include_redrift:
+        redrift = (
+            "\n"
+            f"{REDRIFT_MARKER}\n"
+            "- If this task includes a `redrift` block (in the description), run:\n"
+            "  ./.workgraph/redrift wg check --task {{task_id}} --write-log --create-followups\n"
+            "- Or run the unified check (runs redrift when a spec is present):\n"
+            f"  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups\n"
+            "- Artifacts live under `.workgraph/.redrift/`.\n"
         )
 
     return f"""[executor]
@@ -270,6 +291,7 @@ Context from dependencies:
 {uxdrift}
 {therapydrift}
 {yagnidrift}
+{redrift}
 
 ## Workgraph Rules
 - Stay focused on this task.
@@ -434,12 +456,39 @@ def _inject_yagnidrift_into_template(body: str) -> str | None:
     return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
 
 
+def _inject_redrift_into_template(body: str) -> str | None:
+    if REDRIFT_MARKER in body:
+        return None
+
+    m = _TEMPLATE_START_RE.search(body)
+    if not m:
+        return None
+
+    start = m.end("prefix")
+    end = body.find('\"\"\"', start)
+    if end == -1:
+        return None
+
+    insert = (
+        "\n"
+        f"{REDRIFT_MARKER}\n"
+        "- If this task includes a `redrift` block (in the description), run:\n"
+        "  ./.workgraph/redrift wg check --task {{task_id}} --write-log --create-followups\n"
+        "- Or run the unified check (runs redrift when a spec is present):\n"
+        "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups\n"
+        "- Artifacts live under `.workgraph/.redrift/`.\n"
+    )
+
+    return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
+
+
 def ensure_executor_guidance(
     wg_dir: Path,
     *,
     include_uxdrift: bool,
     include_therapydrift: bool,
     include_yagnidrift: bool,
+    include_redrift: bool,
 ) -> tuple[bool, list[str]]:
     executors_dir = wg_dir / "executors"
     executors_dir.mkdir(parents=True, exist_ok=True)
@@ -453,6 +502,7 @@ def ensure_executor_guidance(
                 include_uxdrift=include_uxdrift,
                 include_therapydrift=include_therapydrift,
                 include_yagnidrift=include_yagnidrift,
+                include_redrift=include_redrift,
             ),
             encoding="utf-8",
         )
@@ -483,6 +533,12 @@ def ensure_executor_guidance(
 
         if include_yagnidrift:
             new_text = _inject_yagnidrift_into_template(cur)
+            if new_text is not None:
+                cur = new_text
+                changed = True
+
+        if include_redrift:
+            new_text = _inject_redrift_into_template(cur)
             if new_text is not None:
                 cur = new_text
                 changed = True

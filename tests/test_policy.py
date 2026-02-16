@@ -53,11 +53,12 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.max_auto_depth, 1)
 
     def test_ordered_optional_plugins(self) -> None:
-        ordered = _ordered_optional_plugins(["yagnidrift", "specdrift", "unknown", "specdrift"])
+        ordered = _ordered_optional_plugins(["yagnidrift", "specdrift", "unknown", "specdrift", "redrift"])
         self.assertEqual(ordered[0], "yagnidrift")
         self.assertEqual(ordered[1], "specdrift")
-        self.assertEqual(len(ordered), 6)
+        self.assertEqual(len(ordered), 7)
         self.assertIn("uxdrift", ordered)
+        self.assertIn("redrift", ordered)
 
 
 if __name__ == "__main__":

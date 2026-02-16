@@ -22,6 +22,7 @@ Examples:
 - `depsdrift` reads a ` ```depsdrift` block.
 - `therapydrift` reads a ` ```therapydrift` block.
 - `yagnidrift` reads a ` ```yagnidrift` block.
+- `redrift` reads a ` ```redrift` block.
 
 ## CLI Interface
 

@@ -15,6 +15,7 @@ from driftdriver.install import (
     ensure_executor_guidance,
     ensure_datadrift_gitignore,
     ensure_depsdrift_gitignore,
+    ensure_redrift_gitignore,
     ensure_specdrift_gitignore,
     ensure_speedrift_gitignore,
     ensure_therapydrift_gitignore,
@@ -25,6 +26,7 @@ from driftdriver.install import (
     write_depsdrift_wrapper,
     write_drifts_wrapper,
     write_driver_wrapper,
+    write_redrift_wrapper,
     write_specdrift_wrapper,
     write_speedrift_wrapper,
     write_therapydrift_wrapper,
@@ -48,6 +50,7 @@ OPTIONAL_PLUGINS = [
     "uxdrift",
     "therapydrift",
     "yagnidrift",
+    "redrift",
 ]
 
 
@@ -357,6 +360,19 @@ def cmd_install(args: argparse.Namespace) -> int:
         # Best-effort: don't fail install.
         include_yagnidrift = False
 
+    include_redrift = bool(args.with_redrift or args.redrift_bin)
+    redrift_bin = resolve_bin(
+        explicit=Path(args.redrift_bin) if args.redrift_bin else None,
+        env_var="REDRIFT_BIN",
+        which_name="redrift",
+        candidates=[
+            repo_root.parent / "redrift" / "bin" / "redrift",
+        ],
+    )
+    if include_redrift and redrift_bin is None:
+        # Best-effort: don't fail install.
+        include_redrift = False
+
     datadrift_bin = resolve_bin(
         explicit=Path(args.datadrift_bin) if args.datadrift_bin else None,
         env_var="DATADRIFT_BIN",
@@ -416,6 +432,13 @@ def cmd_install(args: argparse.Namespace) -> int:
             yagnidrift_bin=yagnidrift_bin,
             wrapper_mode=wrapper_mode,
         )
+    wrote_redrift = False
+    if include_redrift and redrift_bin is not None:
+        wrote_redrift = write_redrift_wrapper(
+            wg_dir,
+            redrift_bin=redrift_bin,
+            wrapper_mode=wrapper_mode,
+        )
 
     updated_gitignore = ensure_speedrift_gitignore(wg_dir)
     if specdrift_bin is not None:
@@ -430,12 +453,15 @@ def cmd_install(args: argparse.Namespace) -> int:
         updated_gitignore = ensure_therapydrift_gitignore(wg_dir) or updated_gitignore
     if include_yagnidrift:
         updated_gitignore = ensure_yagnidrift_gitignore(wg_dir) or updated_gitignore
+    if include_redrift:
+        updated_gitignore = ensure_redrift_gitignore(wg_dir) or updated_gitignore
 
     created_executor, patched_executors = ensure_executor_guidance(
         wg_dir,
         include_uxdrift=include_uxdrift,
         include_therapydrift=include_therapydrift,
         include_yagnidrift=include_yagnidrift,
+        include_redrift=include_redrift,
     )
     wrote_policy = ensure_drift_policy(wg_dir)
 
@@ -455,6 +481,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_uxdrift=wrote_uxdrift,
         wrote_therapydrift=wrote_therapydrift,
         wrote_yagnidrift=wrote_yagnidrift,
+        wrote_redrift=wrote_redrift,
         wrote_policy=wrote_policy,
         updated_gitignore=updated_gitignore,
         created_executor=created_executor,
@@ -474,6 +501,8 @@ def cmd_install(args: argparse.Namespace) -> int:
             enabled.append("therapydrift")
         if include_yagnidrift:
             enabled.append("yagnidrift")
+        if include_redrift:
+            enabled.append("redrift")
         if enabled:
             msg += f" (with {', '.join(enabled)})"
         print(msg)
@@ -654,6 +683,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Best-effort: enable yagnidrift integration if found",
     )
     install.add_argument("--yagnidrift-bin", help="Path to yagnidrift bin/yagnidrift (enables yagnidrift integration)")
+    install.add_argument(
+        "--with-redrift",
+        action="store_true",
+        help="Best-effort: enable redrift integration if found",
+    )
+    install.add_argument("--redrift-bin", help="Path to redrift bin/redrift (enables redrift integration)")
     install.add_argument(
         "--wrapper-mode",
         choices=["auto", "pinned", "portable"],
