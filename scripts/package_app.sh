@@ -109,7 +109,7 @@ resolve_local_bin() {
   return 1
 }
 
-SPEEDRIFT_BIN="$(resolve_local_bin speedrift speedrift || true)"
+COREDRIFT_BIN="$(resolve_local_bin coredrift coredrift || true)"
 SPECDRIFT_BIN="$(resolve_local_bin specdrift specdrift || true)"
 DATADRIFT_BIN="$(resolve_local_bin datadrift datadrift || true)"
 DEPSDRIFT_BIN="$(resolve_local_bin depsdrift depsdrift || true)"
@@ -118,8 +118,8 @@ THERAPYDRIFT_BIN="$(resolve_local_bin therapydrift therapydrift || true)"
 YAGNIDRIFT_BIN="$(resolve_local_bin yagnidrift yagnidrift || true)"
 REDRIFT_BIN="$(resolve_local_bin redrift redrift || true)"
 
-if [[ -z "$SPEEDRIFT_BIN" ]]; then
-  echo "error: could not find speedrift bin at $EXPERIMENTS_ROOT/speedrift/bin/speedrift" >&2
+if [[ -z "$COREDRIFT_BIN" ]]; then
+  echo "error: could not find coredrift bin at $EXPERIMENTS_ROOT/coredrift/bin/coredrift" >&2
   exit 2
 fi
 
@@ -128,7 +128,7 @@ cmd=(
   --dir "$APP_DIR"
   install
   --wrapper-mode "$WRAPPER_MODE"
-  --speedrift-bin "$SPEEDRIFT_BIN"
+  --coredrift-bin "$COREDRIFT_BIN"
 )
 
 [[ -n "$SPECDRIFT_BIN" ]] && cmd+=(--specdrift-bin "$SPECDRIFT_BIN")
@@ -182,7 +182,7 @@ require_spec_update_when_code_changes = true
 ```therapydrift
 schema = 1
 min_signal_count = 2
-followup_prefixes = ["drift-", "speedrift-pit-", "redrift-"]
+followup_prefixes = ["drift-", "coredrift-pit-", "redrift-"]
 require_recovery_plan = true
 ignore_signal_prefixes = ["Therapydrift"]
 cooldown_seconds = 1800

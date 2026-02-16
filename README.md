@@ -7,7 +7,7 @@ Driftdriver is an orchestrator for **Workgraph-first** agent development.
 - Findings are written back into Workgraph via `wg log` and follow-up tasks, keeping the graph in sync.
 
 Today it supports:
-- `speedrift` (baseline, always-run)
+- `coredrift` (baseline, always-run)
 - `specdrift` (optional, only when a task declares a `specdrift` block)
 - `datadrift` (optional, only when a task declares a `datadrift` block)
 - `depsdrift` (optional, only when a task declares a `depsdrift` block)
@@ -25,7 +25,7 @@ This project is part of the Speedrift suite for Workgraph-first drift control.
 - Suite home: [speedrift-ecosystem](https://github.com/dbmcco/speedrift-ecosystem)
 - Spine: [Workgraph](https://graphwork.github.io/)
 - Orchestrator: [driftdriver](https://github.com/dbmcco/driftdriver)
-- Baseline lane: [speedrift](https://github.com/dbmcco/speedrift)
+- Baseline lane: [coredrift](https://github.com/dbmcco/coredrift)
 - Optional lanes: [specdrift](https://github.com/dbmcco/specdrift), [datadrift](https://github.com/dbmcco/datadrift), [depsdrift](https://github.com/dbmcco/depsdrift), [uxdrift](https://github.com/dbmcco/uxdrift), [therapydrift](https://github.com/dbmcco/therapydrift), [yagnidrift](https://github.com/dbmcco/yagnidrift), [redrift](https://github.com/dbmcco/redrift)
 
 ## Install (CLI)
@@ -36,7 +36,7 @@ Fastest install today is `pipx` from GitHub:
 
 ```bash
 pipx install git+https://github.com/dbmcco/driftdriver.git
-pipx install git+https://github.com/dbmcco/speedrift.git
+pipx install git+https://github.com/dbmcco/coredrift.git
 
 # Optional plugins:
 pipx install git+https://github.com/dbmcco/specdrift.git
@@ -73,7 +73,7 @@ scripts/package_app.sh --app /path/to/app --seed-redrift-task
 
 What it does:
 - installs `driftdriver` wrappers into the target app's `.workgraph/`
-- wires all locally available modules (`speedrift`, `specdrift`, `datadrift`, `depsdrift`, `uxdrift`, `therapydrift`, `yagnidrift`, `redrift`)
+- wires all locally available modules (`coredrift`, `specdrift`, `datadrift`, `depsdrift`, `uxdrift`, `therapydrift`, `yagnidrift`, `redrift`)
 - optionally seeds a starter redrift task with a full-suite fence set
 
 Common flags:
@@ -98,7 +98,7 @@ driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift -
 This writes:
 - `./.workgraph/driftdriver` (wrapper)
 - `./.workgraph/drifts` (single per-repo entrypoint used by agents)
-- `./.workgraph/speedrift` (wrapper)
+- `./.workgraph/coredrift` (wrapper)
 - (optional) `./.workgraph/uxdrift` (wrapper)
 - (optional) `./.workgraph/therapydrift` (wrapper)
 - (optional) `./.workgraph/yagnidrift` (wrapper)
@@ -113,7 +113,7 @@ This writes:
 ```toml
 schema = 1
 mode = "redirect"
-order = ["speedrift", "specdrift", "datadrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift", "redrift"]
+order = ["coredrift", "specdrift", "datadrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift", "redrift"]
 
 [recursion]
 cooldown_seconds = 1800
@@ -138,7 +138,7 @@ Notes:
 You can run each tool directly without `driftdriver`:
 
 ```bash
-speedrift --dir . check --task <id> --write-log --create-followups
+coredrift --dir . check --task <id> --write-log --create-followups
 specdrift --dir . wg check --task <id> --write-log --create-followups
 datadrift --dir . wg check --task <id> --write-log --create-followups
 depsdrift --dir . wg check --task <id> --write-log --create-followups

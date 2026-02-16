@@ -36,22 +36,22 @@ args = ["--print"]
 
 [executor.prompt_template]
 template = """
-## Speedrift Protocol
+## Coredrift Protocol
 - Treat the `wg-contract` block (in the task description) as binding.
 - At start and just before completion, run:
-  ./.workgraph/speedrift check --task {{task_id}} --write-log --create-followups
+  ./.workgraph/coredrift check --task {{task_id}} --write-log --create-followups
 """
 TOML
 
-SPEEDRIFT_DUMMY="$TMPDIR/speedrift-dummy"
-SPEEDRIFT_MARKER="$TMPDIR/speedrift-called.txt"
-cat > "$SPEEDRIFT_DUMMY" <<'SH'
+COREDRIFT_DUMMY="$TMPDIR/coredrift-dummy"
+COREDRIFT_MARKER="$TMPDIR/coredrift-called.txt"
+cat > "$COREDRIFT_DUMMY" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-echo "speedrift $*" >> "${SPEEDRIFT_MARKER:?}"
+echo "coredrift $*" >> "${COREDRIFT_MARKER:?}"
 exit 0
 SH
-chmod +x "$SPEEDRIFT_DUMMY"
+chmod +x "$COREDRIFT_DUMMY"
 
 UXDRIFT_DUMMY="$TMPDIR/uxdrift-dummy"
 UXDRIFT_MARKER="$TMPDIR/uxdrift-called.txt"
@@ -123,7 +123,7 @@ exit 0
 SH
 chmod +x "$REDRIFT_DUMMY"
 
-export SPEEDRIFT_MARKER
+export COREDRIFT_MARKER
 export UXDRIFT_MARKER
 export SPECDRIFT_MARKER
 export DATADRIFT_MARKER
@@ -132,11 +132,11 @@ export THERAPYDRIFT_MARKER
 export YAGNIDRIFT_MARKER
 export REDRIFT_MARKER
 
-"$ROOT/bin/driftdriver" --dir "$TMPDIR" install --no-ensure-contracts --speedrift-bin "$SPEEDRIFT_DUMMY" --specdrift-bin "$SPECDRIFT_DUMMY" --datadrift-bin "$DATADRIFT_DUMMY" --depsdrift-bin "$DEPSDRIFT_DUMMY" --uxdrift-bin "$UXDRIFT_DUMMY" --therapydrift-bin "$THERAPYDRIFT_DUMMY" --yagnidrift-bin "$YAGNIDRIFT_DUMMY" --redrift-bin "$REDRIFT_DUMMY" >/dev/null
+"$ROOT/bin/driftdriver" --dir "$TMPDIR" install --no-ensure-contracts --coredrift-bin "$COREDRIFT_DUMMY" --specdrift-bin "$SPECDRIFT_DUMMY" --datadrift-bin "$DATADRIFT_DUMMY" --depsdrift-bin "$DEPSDRIFT_DUMMY" --uxdrift-bin "$UXDRIFT_DUMMY" --therapydrift-bin "$THERAPYDRIFT_DUMMY" --yagnidrift-bin "$YAGNIDRIFT_DUMMY" --redrift-bin "$REDRIFT_DUMMY" >/dev/null
 
 test -x "$TMPDIR/.workgraph/driftdriver"
 test -x "$TMPDIR/.workgraph/drifts"
-test -x "$TMPDIR/.workgraph/speedrift"
+test -x "$TMPDIR/.workgraph/coredrift"
 test -x "$TMPDIR/.workgraph/specdrift"
 test -x "$TMPDIR/.workgraph/datadrift"
 test -x "$TMPDIR/.workgraph/depsdrift"
@@ -145,14 +145,14 @@ test -x "$TMPDIR/.workgraph/therapydrift"
 test -x "$TMPDIR/.workgraph/yagnidrift"
 test -x "$TMPDIR/.workgraph/redrift"
 
-rg -n "## Speedrift Protocol" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
+rg -n "## Coredrift Protocol" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
 rg -n "\\./\\.workgraph/drifts check" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
 rg -n "## Superpowers Protocol" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
 rg -n "## Model-Mediated Protocol" "$TMPDIR/.workgraph/executors/custom.toml" >/dev/null
-rg -n "## Speedrift Protocol" "$TMPDIR/.workgraph/executors/claude.toml" >/dev/null
+rg -n "## Coredrift Protocol" "$TMPDIR/.workgraph/executors/claude.toml" >/dev/null
 rg -n "## Superpowers Protocol" "$TMPDIR/.workgraph/executors/claude.toml" >/dev/null
 rg -n "## Model-Mediated Protocol" "$TMPDIR/.workgraph/executors/claude.toml" >/dev/null
-rg -n "^\\.speedrift/$" "$TMPDIR/.workgraph/.gitignore" >/dev/null
+rg -n "^\\.coredrift/$" "$TMPDIR/.workgraph/.gitignore" >/dev/null
 rg -n "^\\.specdrift/$" "$TMPDIR/.workgraph/.gitignore" >/dev/null
 rg -n "^\\.datadrift/$" "$TMPDIR/.workgraph/.gitignore" >/dev/null
 rg -n "^\\.depsdrift/$" "$TMPDIR/.workgraph/.gitignore" >/dev/null
@@ -186,10 +186,10 @@ MD
 
 wg add "Core task" --id core-task -d "$(cat "$DESC_FILE")" >/dev/null
 
-echo "1) drifts runs baseline speedrift always"
-rm -f "$SPEEDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
+echo "1) drifts runs baseline coredrift always"
+rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task core-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 test ! -e "$SPECDRIFT_MARKER"
 test ! -e "$DATADRIFT_MARKER"
 test ! -e "$DEPSDRIFT_MARKER"
@@ -226,9 +226,9 @@ MD
 
 wg add "UX task" --id ux-task -d "$(cat "$UX_DESC_FILE")" >/dev/null
 
-rm -f "$SPEEDRIFT_MARKER" "$SPECDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
+rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task ux-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 test ! -e "$SPECDRIFT_MARKER"
 test -s "$UXDRIFT_MARKER"
 test ! -e "$THERAPYDRIFT_MARKER"
@@ -262,9 +262,9 @@ MD
 
 wg add "Spec task" --id spec-task -d "$(cat "$SPEC_DESC_FILE")" >/dev/null
 
-rm -f "$SPEEDRIFT_MARKER" "$SPECDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
+rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task spec-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 test -s "$SPECDRIFT_MARKER"
 test ! -e "$UXDRIFT_MARKER"
 test ! -e "$THERAPYDRIFT_MARKER"
@@ -299,9 +299,9 @@ MD
 
 wg add "Data task" --id data-task -d "$(cat "$DATA_DESC_FILE")" >/dev/null
 
-rm -f "$SPEEDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
+rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task data-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 test ! -e "$SPECDRIFT_MARKER"
 test -s "$DATADRIFT_MARKER"
 test ! -e "$DEPSDRIFT_MARKER"
@@ -312,9 +312,9 @@ test ! -e "$REDRIFT_MARKER"
 echo "ok"
 
 echo "5) drifts wrapper runs unified checks"
-rm -f "$SPEEDRIFT_MARKER"
+rm -f "$COREDRIFT_MARKER"
 ./.workgraph/drifts check --task data-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 echo "ok"
 
 echo "6) drifts runs depsdrift only when task declares a depsdrift block"
@@ -344,9 +344,9 @@ MD
 
 wg add "Deps task" --id deps-task -d "$(cat "$DEPS_DESC_FILE")" >/dev/null
 
-rm -f "$SPEEDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
+rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task deps-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 test ! -e "$SPECDRIFT_MARKER"
 test ! -e "$DATADRIFT_MARKER"
 test -s "$DEPSDRIFT_MARKER"
@@ -374,7 +374,7 @@ auto_followups = true
 ```therapydrift
 schema = 1
 min_signal_count = 2
-followup_prefixes = ["drift-", "speedrift-pit-"]
+followup_prefixes = ["drift-", "coredrift-pit-"]
 require_recovery_plan = true
 ```
 
@@ -382,12 +382,12 @@ Run therapydrift.
 MD
 
 wg add "Therapy task" --id therapy-task -d "$(cat "$THERAPY_DESC_FILE")" >/dev/null
-wg log therapy-task "Speedrift: yellow (scope_drift)" >/dev/null
+wg log therapy-task "Coredrift: yellow (scope_drift)" >/dev/null
 wg log therapy-task "Specdrift: yellow (spec_not_updated)" >/dev/null
 
-rm -f "$SPEEDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
+rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task therapy-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 test ! -e "$SPECDRIFT_MARKER"
 test ! -e "$DATADRIFT_MARKER"
 test ! -e "$DEPSDRIFT_MARKER"
@@ -427,9 +427,9 @@ wg add "Yagni task" --id yagni-task -d "$(cat "$YAGNI_DESC_FILE")" >/dev/null
 mkdir -p src/adapters
 echo "x" > src/adapters/http_adapter.py
 
-rm -f "$SPEEDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
+rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task yagni-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 test ! -e "$SPECDRIFT_MARKER"
 test ! -e "$DATADRIFT_MARKER"
 test ! -e "$DEPSDRIFT_MARKER"
@@ -469,9 +469,9 @@ MD
 
 wg add "Redrift task" --id redrift-task -d "$(cat "$REDRIFT_DESC_FILE")" >/dev/null
 
-rm -f "$SPEEDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
+rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task redrift-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER"
+test -s "$COREDRIFT_MARKER"
 test ! -e "$SPECDRIFT_MARKER"
 test ! -e "$DATADRIFT_MARKER"
 test ! -e "$DEPSDRIFT_MARKER"
@@ -505,24 +505,24 @@ args = ["--print"]
 
 [executor.prompt_template]
 template = """
-## Speedrift Protocol
+## Coredrift Protocol
 - Treat the `wg-contract` block (in the task description) as binding.
 - At start and just before completion, run:
-  ./.workgraph/speedrift check --task {{task_id}} --write-log --create-followups
+  ./.workgraph/coredrift check --task {{task_id}} --write-log --create-followups
 """
 TOML
 
 BIN_DIR="$TMPDIR2/bin"
 mkdir -p "$BIN_DIR"
 
-SPEEDRIFT_MARKER_2="$TMPDIR2/speedrift-called.txt"
-cat > "$BIN_DIR/speedrift" <<'SH'
+COREDRIFT_MARKER_2="$TMPDIR2/coredrift-called.txt"
+cat > "$BIN_DIR/coredrift" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-echo "speedrift $*" >> "${SPEEDRIFT_MARKER_2:?}"
+echo "coredrift $*" >> "${COREDRIFT_MARKER_2:?}"
 exit 0
 SH
-chmod +x "$BIN_DIR/speedrift"
+chmod +x "$BIN_DIR/coredrift"
 
 UXDRIFT_MARKER_2="$TMPDIR2/uxdrift-called.txt"
 cat > "$BIN_DIR/uxdrift" <<'SH'
@@ -587,7 +587,7 @@ exit 0
 SH
 chmod +x "$BIN_DIR/redrift"
 
-export SPEEDRIFT_MARKER_2
+export COREDRIFT_MARKER_2
 export UXDRIFT_MARKER_2
 export SPECDRIFT_MARKER_2
 export DATADRIFT_MARKER_2
@@ -603,7 +603,7 @@ export PATH="$BIN_DIR:$ROOT/bin:$PATH"
 
 test -x "$TMPDIR2/.workgraph/driftdriver"
 test -x "$TMPDIR2/.workgraph/drifts"
-test -x "$TMPDIR2/.workgraph/speedrift"
+test -x "$TMPDIR2/.workgraph/coredrift"
 test -x "$TMPDIR2/.workgraph/specdrift"
 test -x "$TMPDIR2/.workgraph/datadrift"
 test -x "$TMPDIR2/.workgraph/depsdrift"
@@ -613,7 +613,7 @@ test -x "$TMPDIR2/.workgraph/yagnidrift"
 test -x "$TMPDIR2/.workgraph/redrift"
 
 rg -n "^TOOL=\\\"driftdriver\\\"$" "$TMPDIR2/.workgraph/driftdriver" >/dev/null
-rg -n "^TOOL=\\\"speedrift\\\"$" "$TMPDIR2/.workgraph/speedrift" >/dev/null
+rg -n "^TOOL=\\\"coredrift\\\"$" "$TMPDIR2/.workgraph/coredrift" >/dev/null
 rg -n "^TOOL=\\\"specdrift\\\"$" "$TMPDIR2/.workgraph/specdrift" >/dev/null
 rg -n "^TOOL=\\\"datadrift\\\"$" "$TMPDIR2/.workgraph/datadrift" >/dev/null
 rg -n "^TOOL=\\\"depsdrift\\\"$" "$TMPDIR2/.workgraph/depsdrift" >/dev/null
@@ -641,9 +641,9 @@ MD
 
 wg add "Core task" --id core-task -d "$(cat "$DESC_FILE_2")" >/dev/null
 
-rm -f "$SPEEDRIFT_MARKER_2" "$SPECDRIFT_MARKER_2" "$DATADRIFT_MARKER_2" "$DEPSDRIFT_MARKER_2" "$UXDRIFT_MARKER_2" "$THERAPYDRIFT_MARKER_2" "$YAGNIDRIFT_MARKER_2" "$REDRIFT_MARKER_2"
+rm -f "$COREDRIFT_MARKER_2" "$SPECDRIFT_MARKER_2" "$DATADRIFT_MARKER_2" "$DEPSDRIFT_MARKER_2" "$UXDRIFT_MARKER_2" "$THERAPYDRIFT_MARKER_2" "$YAGNIDRIFT_MARKER_2" "$REDRIFT_MARKER_2"
 ./.workgraph/drifts check --task core-task --write-log --create-followups >/dev/null
-test -s "$SPEEDRIFT_MARKER_2"
+test -s "$COREDRIFT_MARKER_2"
 test ! -e "$THERAPYDRIFT_MARKER_2"
 test ! -e "$YAGNIDRIFT_MARKER_2"
 test ! -e "$REDRIFT_MARKER_2"

@@ -47,7 +47,7 @@ Output:
 
 ## Orchestration Rules (driftdriver)
 
-- `speedrift` is the baseline check (always-run).
+- `coredrift` is the baseline check (always-run).
 - Optional plugins run only when:
   - the wrapper exists in `./.workgraph/<drift>` (installed), and
   - the task declares ` ```<drift>` in its description.

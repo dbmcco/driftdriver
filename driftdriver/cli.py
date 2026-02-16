@@ -17,7 +17,7 @@ from driftdriver.install import (
     ensure_depsdrift_gitignore,
     ensure_redrift_gitignore,
     ensure_specdrift_gitignore,
-    ensure_speedrift_gitignore,
+    ensure_coredrift_gitignore,
     ensure_therapydrift_gitignore,
     ensure_uxdrift_gitignore,
     ensure_yagnidrift_gitignore,
@@ -28,7 +28,7 @@ from driftdriver.install import (
     write_driver_wrapper,
     write_redrift_wrapper,
     write_specdrift_wrapper,
-    write_speedrift_wrapper,
+    write_coredrift_wrapper,
     write_therapydrift_wrapper,
     write_uxdrift_wrapper,
     write_yagnidrift_wrapper,
@@ -300,16 +300,16 @@ def cmd_install(args: argparse.Namespace) -> int:
         print("error: could not find driftdriver; set $DRIFTDRIVER_BIN", file=sys.stderr)
         return ExitCode.usage
 
-    speedrift_bin = resolve_bin(
-        explicit=Path(args.speedrift_bin) if args.speedrift_bin else None,
-        env_var="SPEEDRIFT_BIN",
-        which_name="speedrift",
+    coredrift_bin = resolve_bin(
+        explicit=Path(args.coredrift_bin) if args.coredrift_bin else None,
+        env_var="COREDRIFT_BIN",
+        which_name="coredrift",
         candidates=[
-            repo_root.parent / "speedrift" / "bin" / "speedrift",
+            repo_root.parent / "coredrift" / "bin" / "coredrift",
         ],
     )
-    if speedrift_bin is None:
-        print("error: could not find speedrift; pass --speedrift-bin or set $SPEEDRIFT_BIN", file=sys.stderr)
+    if coredrift_bin is None:
+        print("error: could not find coredrift; pass --coredrift-bin or set $COREDRIFT_BIN", file=sys.stderr)
         return ExitCode.usage
 
     specdrift_bin = resolve_bin(
@@ -393,19 +393,19 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     if wrapper_mode == "auto":
         # Choose portable only when the core tools are installed on PATH.
-        wrapper_mode = "portable" if (shutil.which("driftdriver") and shutil.which("speedrift")) else "pinned"
+        wrapper_mode = "portable" if (shutil.which("driftdriver") and shutil.which("coredrift")) else "pinned"
 
     if wrapper_mode == "portable":
         if not shutil.which("driftdriver"):
             print("error: --wrapper-mode portable requires driftdriver on PATH", file=sys.stderr)
             return ExitCode.usage
-        if not shutil.which("speedrift"):
-            print("error: --wrapper-mode portable requires speedrift on PATH", file=sys.stderr)
+        if not shutil.which("coredrift"):
+            print("error: --wrapper-mode portable requires coredrift on PATH", file=sys.stderr)
             return ExitCode.usage
 
     wrote_driver = write_driver_wrapper(wg_dir, driver_bin=driver_bin, wrapper_mode=wrapper_mode)
     wrote_drifts = write_drifts_wrapper(wg_dir)
-    wrote_speedrift = write_speedrift_wrapper(wg_dir, speedrift_bin=speedrift_bin, wrapper_mode=wrapper_mode)
+    wrote_coredrift = write_coredrift_wrapper(wg_dir, coredrift_bin=coredrift_bin, wrapper_mode=wrapper_mode)
     wrote_specdrift = False
     if specdrift_bin is not None:
         wrote_specdrift = write_specdrift_wrapper(wg_dir, specdrift_bin=specdrift_bin, wrapper_mode=wrapper_mode)
@@ -440,7 +440,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             wrapper_mode=wrapper_mode,
         )
 
-    updated_gitignore = ensure_speedrift_gitignore(wg_dir)
+    updated_gitignore = ensure_coredrift_gitignore(wg_dir)
     if specdrift_bin is not None:
         updated_gitignore = ensure_specdrift_gitignore(wg_dir) or updated_gitignore
     if datadrift_bin is not None:
@@ -467,14 +467,14 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     ensured_contracts = False
     if not args.no_ensure_contracts:
-        # Delegate to speedrift, since it owns the wg-contract format and defaults.
-        subprocess.check_call([str(wg_dir / "speedrift"), "--dir", str(project_dir), "ensure-contracts", "--apply"])
+        # Delegate to coredrift, since it owns the wg-contract format and defaults.
+        subprocess.check_call([str(wg_dir / "coredrift"), "--dir", str(project_dir), "ensure-contracts", "--apply"])
         ensured_contracts = True
 
     result = InstallResult(
         wrote_drifts=wrote_drifts,
         wrote_driver=wrote_driver,
-        wrote_speedrift=wrote_speedrift,
+        wrote_coredrift=wrote_coredrift,
         wrote_specdrift=wrote_specdrift,
         wrote_datadrift=wrote_datadrift,
         wrote_depsdrift=wrote_depsdrift,
@@ -524,13 +524,13 @@ def cmd_check(args: argparse.Namespace) -> int:
     force_write_log = bool(args.write_log)
     force_create_followups = bool(args.create_followups)
 
-    speedrift = wg_dir / "speedrift"
-    if not speedrift.exists():
-        print("error: .workgraph/speedrift not found; run driftdriver install first", file=sys.stderr)
+    coredrift = wg_dir / "coredrift"
+    if not coredrift.exists():
+        print("error: .workgraph/coredrift not found; run driftdriver install first", file=sys.stderr)
         return ExitCode.usage
 
-    speed_cmd = [str(speedrift), "--dir", str(project_dir), "check", "--task", task_id]
-    speed_write_log, speed_followups = _mode_flags(mode=mode, plugin="speedrift")
+    speed_cmd = [str(coredrift), "--dir", str(project_dir), "check", "--task", task_id]
+    speed_write_log, speed_followups = _mode_flags(mode=mode, plugin="coredrift")
     speed_write_log = speed_write_log or force_write_log
     speed_followups = speed_followups or force_create_followups
     if speed_write_log:
@@ -551,7 +551,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             speed_report = {"raw": speed_proc.stdout}
 
         plugin_results: dict[str, dict[str, Any]] = {}
-        rc_by_plugin: dict[str, int] = {"speedrift": speed_rc}
+        rc_by_plugin: dict[str, int] = {"coredrift": speed_rc}
         for plugin in ordered_plugins:
             result = _run_optional_plugin_json(
                 plugin=plugin,
@@ -571,7 +571,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             else ExitCode.ok
         )
         plugins_json: dict[str, Any] = {
-            "speedrift": {"ran": True, "exit_code": speed_rc, "report": speed_report},
+            "coredrift": {"ran": True, "exit_code": speed_rc, "report": speed_report},
         }
         for plugin in OPTIONAL_PLUGINS:
             result = plugin_results.get(plugin, {"ran": False, "exit_code": 0, "report": None})
@@ -605,7 +605,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     if speed_rc not in (0, ExitCode.findings):
         return speed_rc
 
-    rc_by_plugin: dict[str, int] = {"speedrift": speed_rc}
+    rc_by_plugin: dict[str, int] = {"coredrift": speed_rc}
     for plugin in ordered_plugins:
         rc_by_plugin[plugin] = _run_optional_plugin_text(
             plugin=plugin,
@@ -628,19 +628,19 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
     """
     Run drift "pit wall" loops.
 
-    Today this delegates to baseline speedrift's monitor+redirect orchestrator.
+    Today this delegates to baseline coredrift's monitor+redirect orchestrator.
     """
 
     wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
     project_dir = wg_dir.parent
 
-    speedrift = wg_dir / "speedrift"
-    if not speedrift.exists():
-        print("error: .workgraph/speedrift not found; run driftdriver install first", file=sys.stderr)
+    coredrift = wg_dir / "coredrift"
+    if not coredrift.exists():
+        print("error: .workgraph/coredrift not found; run driftdriver install first", file=sys.stderr)
         return ExitCode.usage
 
     cmd = [
-        str(speedrift),
+        str(coredrift),
         "--dir",
         str(project_dir),
         "orchestrate",
@@ -665,7 +665,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     install = sub.add_parser("install", help="Install Driftdriver into a workgraph repo")
-    install.add_argument("--speedrift-bin", help="Path to speedrift bin/speedrift (required if not discoverable)")
+    install.add_argument("--coredrift-bin", help="Path to coredrift bin/coredrift (required if not discoverable)")
     install.add_argument("--specdrift-bin", help="Path to specdrift bin/specdrift (optional)")
     install.add_argument("--datadrift-bin", help="Path to datadrift bin/datadrift (optional)")
     install.add_argument("--depsdrift-bin", help="Path to depsdrift bin/depsdrift (optional)")
@@ -700,14 +700,14 @@ def main(argv: list[str] | None = None) -> int:
 
     check = sub.add_parser(
         "check",
-        help="Unified check (speedrift always; optional drifts run when task declares fenced specs)",
+        help="Unified check (coredrift always; optional drifts run when task declares fenced specs)",
     )
     check.add_argument("--task", help="Task id to check")
     check.add_argument("--write-log", action="store_true", help="Write summary into wg log")
     check.add_argument("--create-followups", action="store_true", help="Create follow-up tasks for findings")
     check.set_defaults(func=cmd_check)
 
-    orch = sub.add_parser("orchestrate", help="Run continuous drift monitor+redirect loops (delegates to speedrift)")
+    orch = sub.add_parser("orchestrate", help="Run continuous drift monitor+redirect loops (delegates to coredrift)")
     orch.add_argument("--interval", default=30, help="Monitor poll interval seconds (default: 30)")
     orch.add_argument("--redirect-interval", default=5, help="Redirect poll interval seconds (default: 5)")
     orch.add_argument("--write-log", action="store_true", help="Write a drift summary to wg log (redirect agent)")

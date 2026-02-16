@@ -19,7 +19,7 @@ cd driftdriver
 scripts/package_app.sh --app /path/to/app --seed-redrift-task
 ```
 
-`driftdriver` always runs `speedrift`, then optional modules based on:
+`driftdriver` always runs `coredrift`, then optional modules based on:
 - tool installed in `./.workgraph/<module>`
 - fenced block present in task description (` ```specdrift`, ` ```redrift`, etc.)
 - policy order in `./.workgraph/drift-policy.toml`
@@ -27,7 +27,7 @@ scripts/package_app.sh --app /path/to/app --seed-redrift-task
 ## Standalone Commands
 
 ```bash
-speedrift --dir . check --task <id> --write-log --create-followups
+coredrift --dir . check --task <id> --write-log --create-followups
 specdrift --dir . wg check --task <id> --write-log --create-followups
 datadrift --dir . wg check --task <id> --write-log --create-followups
 depsdrift --dir . wg check --task <id> --write-log --create-followups
@@ -39,7 +39,7 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 
 ## Per-Module Playbook
 
-### speedrift
+### coredrift
 
 - Standalone: baseline drift checks on every task.
 - Together: always on in `driftdriver`.
@@ -47,7 +47,7 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 ### specdrift
 
 - Standalone: docs/contracts must track code.
-- Together: combine with `speedrift`; pair with `redrift` in v2 programs.
+- Together: combine with `coredrift`; pair with `redrift` in v2 programs.
 
 ### datadrift
 
@@ -57,12 +57,12 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 ### depsdrift
 
 - Standalone: lockfile/manifest consistency.
-- Together: combine with `speedrift`, optionally `datadrift`.
+- Together: combine with `coredrift`, optionally `datadrift`.
 
 ### uxdrift
 
 - Standalone: runtime UI evidence (screenshots/network/console).
-- Together: combine with `specdrift` and `speedrift`.
+- Together: combine with `specdrift` and `coredrift`.
 
 ### therapydrift
 
@@ -72,7 +72,7 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 ### yagnidrift
 
 - Standalone: speculative abstraction and overbuild checks.
-- Together: combine with `speedrift` and `therapydrift`.
+- Together: combine with `coredrift` and `therapydrift`.
 
 ### redrift
 
@@ -81,7 +81,7 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 
 ## Suggested Stacks
 
-- Product feature stack: `speedrift + specdrift + uxdrift`
-- Backend migration stack: `speedrift + datadrift + depsdrift + redrift`
-- Stabilization stack: `speedrift + therapydrift + yagnidrift`
-- Brownfield v2 stack: `speedrift + redrift + specdrift + datadrift + therapydrift`
+- Product feature stack: `coredrift + specdrift + uxdrift`
+- Backend migration stack: `coredrift + datadrift + depsdrift + redrift`
+- Stabilization stack: `coredrift + therapydrift + yagnidrift`
+- Brownfield v2 stack: `coredrift + redrift + specdrift + datadrift + therapydrift`

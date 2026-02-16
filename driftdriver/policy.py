@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 DEFAULT_ORDER = [
-    "speedrift",
+    "coredrift",
     "specdrift",
     "datadrift",
     "depsdrift",
@@ -34,7 +34,7 @@ def _default_policy_text() -> str:
     return (
         "schema = 1\n"
         "mode = \"redirect\"\n"
-        "order = [\"speedrift\", \"specdrift\", \"datadrift\", \"depsdrift\", \"uxdrift\", \"therapydrift\", \"yagnidrift\", \"redrift\"]\n"
+        "order = [\"coredrift\", \"specdrift\", \"datadrift\", \"depsdrift\", \"uxdrift\", \"therapydrift\", \"yagnidrift\", \"redrift\"]\n"
         "\n"
         "[recursion]\n"
         "cooldown_seconds = 1800\n"
@@ -92,8 +92,8 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     if isinstance(order_raw, list):
         order = [str(x).strip() for x in order_raw if str(x).strip()]
         # Keep baseline first; append any missing defaults.
-        if "speedrift" not in order:
-            order = ["speedrift", *order]
+        if "coredrift" not in order:
+            order = ["coredrift", *order]
         for p in DEFAULT_ORDER:
             if p not in order:
                 order.append(p)

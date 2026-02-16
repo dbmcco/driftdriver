@@ -7,7 +7,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-SPEEDRIFT_MARKER = "## Speedrift Protocol"
+COREDRIFT_MARKER = "## Coredrift Protocol"
 UXDRIFT_MARKER = "## uxdrift Protocol"
 THERAPYDRIFT_MARKER = "## therapydrift Protocol"
 YAGNIDRIFT_MARKER = "## yagnidrift Protocol"
@@ -21,7 +21,7 @@ MODEL_MEDIATED_MARKER = "## Model-Mediated Protocol"
 class InstallResult:
     wrote_drifts: bool
     wrote_driver: bool
-    wrote_speedrift: bool
+    wrote_coredrift: bool
     wrote_specdrift: bool
     wrote_datadrift: bool
     wrote_depsdrift: bool
@@ -52,8 +52,8 @@ def _ensure_line_in_file(path: Path, line: str) -> bool:
     return True
 
 
-def ensure_speedrift_gitignore(wg_dir: Path) -> bool:
-    return _ensure_line_in_file(wg_dir / ".gitignore", ".speedrift/")
+def ensure_coredrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".coredrift/")
 
 
 def ensure_specdrift_gitignore(wg_dir: Path) -> bool:
@@ -148,8 +148,8 @@ def write_driver_wrapper(wg_dir: Path, *, driver_bin: Path, wrapper_mode: str = 
     return write_tool_wrapper(wg_dir, tool_name="driftdriver", tool_bin=driver_bin, wrapper_mode=wrapper_mode)
 
 
-def write_speedrift_wrapper(wg_dir: Path, *, speedrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
-    return write_tool_wrapper(wg_dir, tool_name="speedrift", tool_bin=speedrift_bin, wrapper_mode=wrapper_mode)
+def write_coredrift_wrapper(wg_dir: Path, *, coredrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="coredrift", tool_bin=coredrift_bin, wrapper_mode=wrapper_mode)
 
 
 def write_specdrift_wrapper(wg_dir: Path, *, specdrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
@@ -269,12 +269,12 @@ Description:
 Context from dependencies:
 {{{{task_context}}}}
 
-{SPEEDRIFT_MARKER}
+{COREDRIFT_MARKER}
 - Treat the `wg-contract` block (in the task description) as binding.
 - At start and just before completion, run:
   ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups
 - If you need to change scope, update touch globs:
-  ./.workgraph/speedrift contract set-touch --task {{{{task_id}}}} <globs...>
+  ./.workgraph/coredrift contract set-touch --task {{{{task_id}}}} <globs...>
 - If `hardening_in_core` is flagged, avoid adding guardrails in the core task; do/complete the `harden:` follow-up task instead.
 
 {SUPERPOWERS_MARKER}
@@ -305,11 +305,11 @@ Context from dependencies:
 _TEMPLATE_START_RE = re.compile(r'(?P<prefix>\btemplate\s*=\s*"""\r?\n)', re.MULTILINE)
 
 
-def _inject_speedrift_into_template(body: str) -> str | None:
+def _inject_coredrift_into_template(body: str) -> str | None:
     changed = False
     cur = body
 
-    old = "  ./.workgraph/speedrift check --task {{task_id}} --write-log --create-followups"
+    old = "  ./.workgraph/coredrift check --task {{task_id}} --write-log --create-followups"
     new = "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups"
     if old in cur:
         cur = cur.replace(old, new)
@@ -324,7 +324,7 @@ def _inject_speedrift_into_template(body: str) -> str | None:
     if end == -1:
         return cur if changed else None
 
-    if SPEEDRIFT_MARKER in cur:
+    if COREDRIFT_MARKER in cur:
         inserts: list[str] = []
         if SUPERPOWERS_MARKER not in cur:
             inserts.append(
@@ -353,12 +353,12 @@ def _inject_speedrift_into_template(body: str) -> str | None:
 
     insert = (
         "\n"
-        f"{SPEEDRIFT_MARKER}\n"
+        f"{COREDRIFT_MARKER}\n"
         "- Treat the `wg-contract` block (in the task description) as binding.\n"
         "- At start and just before completion, run:\n"
         "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups\n"
         "- If you need to change scope, update touch globs:\n"
-        "  ./.workgraph/speedrift contract set-touch --task {{task_id}} <globs...>\n"
+        "  ./.workgraph/coredrift contract set-touch --task {{task_id}} <globs...>\n"
         "- If `hardening_in_core` is flagged, avoid adding guardrails in the core task; do/complete the `harden:` follow-up task instead.\n"
         "\n"
         f"{SUPERPOWERS_MARKER}\n"
@@ -514,7 +514,7 @@ def ensure_executor_guidance(
         cur = text
         changed = False
 
-        new_text = _inject_speedrift_into_template(cur)
+        new_text = _inject_coredrift_into_template(cur)
         if new_text is not None:
             cur = new_text
             changed = True

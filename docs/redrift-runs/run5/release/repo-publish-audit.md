@@ -5,7 +5,7 @@ Generated from local workspace module repos.
 | Repo | Path | Has Origin Remote | Branch | Working Tree | Notes |
 |---|---|---|---|---|---|
 | driftdriver | /Users/braydon/projects/experiments/driftdriver | yes | main | clean |  |
-| speedrift | /Users/braydon/projects/experiments/speedrift | yes | main | clean |  |
+| coredrift | /Users/braydon/projects/experiments/coredrift | yes | main | clean |  |
 | redrift | /Users/braydon/projects/experiments/redrift | yes | main | clean |  |
 | specdrift | /Users/braydon/projects/experiments/specdrift | yes | main | clean |  |
 | datadrift | /Users/braydon/projects/experiments/datadrift | yes | main | clean |  |

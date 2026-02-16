@@ -20,7 +20,7 @@ class PolicyTests(unittest.TestCase):
 
             p = load_drift_policy(wg_dir)
             self.assertEqual(p.mode, "redirect")
-            self.assertIn("speedrift", p.order)
+            self.assertIn("coredrift", p.order)
             self.assertIn("specdrift", p.order)
             self.assertGreaterEqual(p.max_auto_depth, 1)
 
@@ -46,7 +46,7 @@ class PolicyTests(unittest.TestCase):
 
             p = load_drift_policy(wg_dir)
             self.assertEqual(p.mode, "redirect")
-            self.assertEqual(p.order[0], "speedrift")
+            self.assertEqual(p.order[0], "coredrift")
             self.assertIn("yagnidrift", p.order)
             self.assertEqual(p.cooldown_seconds, 0)
             self.assertEqual(p.max_auto_actions_per_hour, 0)
