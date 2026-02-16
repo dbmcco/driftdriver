@@ -56,6 +56,8 @@ From the repo you want to work in:
 driftdriver install
 ```
 
+Note: baseline lane was renamed from `speedrift` to `coredrift`.
+
 Optional UX + therapy + YAGNI + redrift integration:
 
 ```bash
