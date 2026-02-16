@@ -13,3 +13,6 @@
 ## Remaining Before External Publish
 - Configure and verify remotes for all module repos.
 - Add one ecosystem pre-publish smoke command.
+
+## Triage
+- Stale advisory follow-ups abandoned as superseded by completed lane.
