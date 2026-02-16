@@ -10,7 +10,7 @@ Generated from local workspace module repos.
 | specdrift | /Users/braydon/projects/experiments/specdrift | yes | main | clean |  |
 | datadrift | /Users/braydon/projects/experiments/datadrift | yes | main | clean |  |
 | depsdrift | /Users/braydon/projects/experiments/depsdrift | yes | main | clean |  |
-| uxdrift | /Users/braydon/projects/experiments/uxdrift | yes | main | dirty | uncommitted local changes |
+| uxdrift | /Users/braydon/projects/experiments/uxdrift | yes | main | clean | wrapper path fix committed and pushed |
 | therapydrift | /Users/braydon/projects/experiments/therapydrift | yes | main | clean |  |
 | yagnidrift | /Users/braydon/projects/experiments/yagnidrift | yes | main | clean |  |
 
@@ -19,4 +19,4 @@ Generated from local workspace module repos.
 - Core lane mechanics: **ready**
 - Core docs and run flow: **ready**
 - Repo remote provisioning: **ready**
-- Full ecosystem publication: **near-ready** (remaining local dirtiness: `uxdrift`)
+- Full ecosystem publication: **ready**
