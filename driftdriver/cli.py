@@ -5,8 +5,10 @@ import json
 import subprocess
 import sys
 import shutil
+from datetime import datetime, timezone
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from driftdriver.install import (
     InstallResult,
@@ -29,6 +31,7 @@ from driftdriver.install import (
     write_uxdrift_wrapper,
     write_yagnidrift_wrapper,
 )
+from driftdriver.policy import ensure_drift_policy, load_drift_policy
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
 
 
@@ -36,6 +39,16 @@ class ExitCode:
     ok = 0
     findings = 3
     usage = 2
+
+
+OPTIONAL_PLUGINS = [
+    "specdrift",
+    "datadrift",
+    "depsdrift",
+    "uxdrift",
+    "therapydrift",
+    "yagnidrift",
+]
 
 
 def _run(cmd: list[str]) -> int:
@@ -56,6 +69,204 @@ def _task_has_fence(*, wg_dir: Path, task_id: str, fence: str) -> bool:
         return False
     desc = str(t.get("description") or "")
     return f"```{fence}" in desc
+
+
+def _ordered_optional_plugins(policy_order: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw in policy_order:
+        plugin = str(raw or "").strip()
+        if plugin in OPTIONAL_PLUGINS and plugin not in seen:
+            ordered.append(plugin)
+            seen.add(plugin)
+    for plugin in OPTIONAL_PLUGINS:
+        if plugin not in seen:
+            ordered.append(plugin)
+    return ordered
+
+
+def _plugin_supports_json(plugin: str) -> bool:
+    return plugin != "uxdrift"
+
+
+def _plugin_cmd(
+    *,
+    plugin: str,
+    plugin_bin: Path,
+    project_dir: Path,
+    task_id: str,
+    want_json: bool,
+    write_log: bool,
+    create_followups: bool,
+) -> list[str]:
+    if plugin == "uxdrift":
+        cmd = [str(plugin_bin), "wg", "--dir", str(project_dir), "check", "--task", task_id]
+    else:
+        cmd = [str(plugin_bin), "--dir", str(project_dir)]
+        if want_json and _plugin_supports_json(plugin):
+            cmd.append("--json")
+        cmd.extend(["wg", "check", "--task", task_id])
+    if write_log:
+        cmd.append("--write-log")
+    if create_followups:
+        cmd.append("--create-followups")
+    return cmd
+
+
+def _run_optional_plugin_json(
+    *,
+    plugin: str,
+    wg_dir: Path,
+    project_dir: Path,
+    task_id: str,
+    mode: str,
+    force_write_log: bool,
+    force_create_followups: bool,
+) -> dict[str, Any]:
+    plugin_bin = wg_dir / plugin
+    if not plugin_bin.exists():
+        return {"ran": False, "exit_code": 0, "report": None}
+    if not _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence=plugin):
+        return {"ran": False, "exit_code": 0, "report": None}
+
+    write_log, create_followups = _mode_flags(mode=mode, plugin=plugin)
+    write_log = write_log or force_write_log
+    create_followups = create_followups or force_create_followups
+    cmd = _plugin_cmd(
+        plugin=plugin,
+        plugin_bin=plugin_bin,
+        project_dir=project_dir,
+        task_id=task_id,
+        want_json=True,
+        write_log=write_log,
+        create_followups=create_followups,
+    )
+    proc = subprocess.run(cmd, text=True, capture_output=True)
+    rc = int(proc.returncode)
+    if rc in (ExitCode.ok, ExitCode.findings):
+        if _plugin_supports_json(plugin):
+            try:
+                report: Any = json.loads(proc.stdout or "{}")
+            except Exception:
+                report = {"raw": proc.stdout}
+            return {"ran": True, "exit_code": rc, "report": report}
+        return {"ran": True, "exit_code": rc, "report": None}
+
+    # Optional plugins are best-effort: preserve an error report, but do not fail unified checks.
+    err_report = {
+        "error": f"{plugin} failed",
+        "exit_code": rc,
+        "stderr": (proc.stderr or "")[:4000],
+    }
+    return {"ran": True, "exit_code": 0, "report": err_report}
+
+
+def _run_optional_plugin_text(
+    *,
+    plugin: str,
+    wg_dir: Path,
+    project_dir: Path,
+    task_id: str,
+    mode: str,
+    force_write_log: bool,
+    force_create_followups: bool,
+) -> int:
+    plugin_bin = wg_dir / plugin
+    if not plugin_bin.exists():
+        return 0
+    if not _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence=plugin):
+        return 0
+
+    write_log, create_followups = _mode_flags(mode=mode, plugin=plugin)
+    write_log = write_log or force_write_log
+    create_followups = create_followups or force_create_followups
+    cmd = _plugin_cmd(
+        plugin=plugin,
+        plugin_bin=plugin_bin,
+        project_dir=project_dir,
+        task_id=task_id,
+        want_json=False,
+        write_log=write_log,
+        create_followups=create_followups,
+    )
+    rc = int(_run(cmd))
+    if rc in (ExitCode.ok, ExitCode.findings):
+        return rc
+    print(f"note: {plugin} failed (exit {rc}); continuing", file=sys.stderr)
+    return 0
+
+
+def _mode_flags(*, mode: str, plugin: str) -> tuple[bool, bool]:
+    """
+    Returns (write_log, create_followups) for a plugin under the policy mode.
+    """
+
+    m = str(mode or "redirect").strip().lower()
+    if m == "observe":
+        return (False, False)
+    if m == "advise":
+        return (True, False)
+    if m == "redirect":
+        return (True, True)
+    if m == "heal":
+        if plugin == "therapydrift":
+            return (True, True)
+        return (True, False)
+    if m == "breaker":
+        return (True, False)
+    return (True, True)
+
+
+def _ensure_breaker_task(*, wg_dir: Path, task_id: str) -> str:
+    """
+    Create deterministic breaker escalation task if missing.
+    Returns the task id.
+    """
+
+    breaker_id = f"drift-breaker-{task_id}"
+    try:
+        subprocess.check_output(
+            ["wg", "--dir", str(wg_dir), "show", breaker_id, "--json"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        return breaker_id
+    except Exception:
+        pass
+
+    ts = datetime.now(timezone.utc).isoformat()
+    desc = (
+        "Circuit-breaker escalation for repeated drift.\n\n"
+        f"Origin task: {task_id}\n"
+        f"Triggered at: {ts}\n\n"
+        "Run a bounded recovery pass:\n"
+        "- review open drift follow-ups\n"
+        "- tighten wg-contract touch scope\n"
+        "- close or merge stale remediation tasks\n"
+        "- re-run `./.workgraph/drifts check --task "
+        + task_id
+        + " --write-log --create-followups`\n"
+    )
+    subprocess.check_call(
+        [
+            "wg",
+            "--dir",
+            str(wg_dir),
+            "add",
+            f"breaker: {task_id}",
+            "--id",
+            breaker_id,
+            "--blocked-by",
+            task_id,
+            "-d",
+            desc,
+            "-t",
+            "drift",
+            "-t",
+            "breaker",
+        ]
+    )
+    return breaker_id
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -226,6 +437,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         include_therapydrift=include_therapydrift,
         include_yagnidrift=include_yagnidrift,
     )
+    wrote_policy = ensure_drift_policy(wg_dir)
 
     ensured_contracts = False
     if not args.no_ensure_contracts:
@@ -243,6 +455,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_uxdrift=wrote_uxdrift,
         wrote_therapydrift=wrote_therapydrift,
         wrote_yagnidrift=wrote_yagnidrift,
+        wrote_policy=wrote_policy,
         updated_gitignore=updated_gitignore,
         created_executor=created_executor,
         patched_executors=patched_executors,
@@ -276,6 +489,11 @@ def cmd_check(args: argparse.Namespace) -> int:
     wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
     project_dir = wg_dir.parent
     task_id = str(args.task)
+    policy = load_drift_policy(wg_dir)
+    mode = policy.mode
+    ordered_plugins = _ordered_optional_plugins(policy.order)
+    force_write_log = bool(args.write_log)
+    force_create_followups = bool(args.create_followups)
 
     speedrift = wg_dir / "speedrift"
     if not speedrift.exists():
@@ -283,9 +501,12 @@ def cmd_check(args: argparse.Namespace) -> int:
         return ExitCode.usage
 
     speed_cmd = [str(speedrift), "--dir", str(project_dir), "check", "--task", task_id]
-    if args.write_log:
+    speed_write_log, speed_followups = _mode_flags(mode=mode, plugin="speedrift")
+    speed_write_log = speed_write_log or force_write_log
+    speed_followups = speed_followups or force_create_followups
+    if speed_write_log:
         speed_cmd.append("--write-log")
-    if args.create_followups:
+    if speed_followups:
         speed_cmd.append("--create-followups")
     if args.json:
         # JSON mode: capture sub-tool outputs and emit a single combined JSON object.
@@ -300,174 +521,54 @@ def cmd_check(args: argparse.Namespace) -> int:
         except Exception:
             speed_report = {"raw": speed_proc.stdout}
 
-        specdrift = wg_dir / "specdrift"
-        spec_ran = False
-        spec_rc = 0
-        spec_report = None
-        if specdrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="specdrift"):
-            spec_ran = True
-            spec_cmd = [str(specdrift), "--dir", str(project_dir), "--json", "wg", "check", "--task", task_id]
-            if args.write_log:
-                spec_cmd.append("--write-log")
-            if args.create_followups:
-                spec_cmd.append("--create-followups")
-            spec_proc = subprocess.run(spec_cmd, text=True, capture_output=True)
-            spec_rc = int(spec_proc.returncode)
-            if spec_rc in (0, ExitCode.findings):
-                try:
-                    spec_report = json.loads(spec_proc.stdout or "{}")
-                except Exception:
-                    spec_report = {"raw": spec_proc.stdout}
-            else:
-                spec_report = {"error": "specdrift failed", "exit_code": spec_rc, "stderr": (spec_proc.stderr or "")[:4000]}
-                # Best-effort: don't hard-fail the unified check on optional plugin errors.
-                spec_rc = 0
-
-        datadrift = wg_dir / "datadrift"
-        data_ran = False
-        data_rc = 0
-        data_report = None
-        if datadrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="datadrift"):
-            data_ran = True
-            data_cmd = [str(datadrift), "--dir", str(project_dir), "--json", "wg", "check", "--task", task_id]
-            if args.write_log:
-                data_cmd.append("--write-log")
-            if args.create_followups:
-                data_cmd.append("--create-followups")
-            data_proc = subprocess.run(data_cmd, text=True, capture_output=True)
-            data_rc = int(data_proc.returncode)
-            if data_rc in (0, ExitCode.findings):
-                try:
-                    data_report = json.loads(data_proc.stdout or "{}")
-                except Exception:
-                    data_report = {"raw": data_proc.stdout}
-            else:
-                data_report = {
-                    "error": "datadrift failed",
-                    "exit_code": data_rc,
-                    "stderr": (data_proc.stderr or "")[:4000],
-                }
-                data_rc = 0
-
-        depsdrift = wg_dir / "depsdrift"
-        deps_ran = False
-        deps_rc = 0
-        deps_report = None
-        if depsdrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="depsdrift"):
-            deps_ran = True
-            deps_cmd = [str(depsdrift), "--dir", str(project_dir), "--json", "wg", "check", "--task", task_id]
-            if args.write_log:
-                deps_cmd.append("--write-log")
-            if args.create_followups:
-                deps_cmd.append("--create-followups")
-            deps_proc = subprocess.run(deps_cmd, text=True, capture_output=True)
-            deps_rc = int(deps_proc.returncode)
-            if deps_rc in (0, ExitCode.findings):
-                try:
-                    deps_report = json.loads(deps_proc.stdout or "{}")
-                except Exception:
-                    deps_report = {"raw": deps_proc.stdout}
-            else:
-                deps_report = {
-                    "error": "depsdrift failed",
-                    "exit_code": deps_rc,
-                    "stderr": (deps_proc.stderr or "")[:4000],
-                }
-                deps_rc = 0
-
-        ux_ran = False
-        ux_rc = 0
-        uxdrift = wg_dir / "uxdrift"
-        if uxdrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="uxdrift"):
-            ux_ran = True
-            ux_cmd = [str(uxdrift), "wg", "--dir", str(project_dir), "check", "--task", task_id]
-            if args.write_log:
-                ux_cmd.append("--write-log")
-            if args.create_followups:
-                ux_cmd.append("--create-followups")
-            ux_proc = subprocess.run(ux_cmd, text=True, capture_output=True)
-            ux_rc = int(ux_proc.returncode)
-            if ux_rc not in (0, ExitCode.findings):
-                ux_rc = 0
-
-        therapy_ran = False
-        therapy_rc = 0
-        therapy_report = None
-        therapydrift = wg_dir / "therapydrift"
-        if therapydrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="therapydrift"):
-            therapy_ran = True
-            therapy_cmd = [str(therapydrift), "--dir", str(project_dir), "--json", "wg", "check", "--task", task_id]
-            if args.write_log:
-                therapy_cmd.append("--write-log")
-            if args.create_followups:
-                therapy_cmd.append("--create-followups")
-            therapy_proc = subprocess.run(therapy_cmd, text=True, capture_output=True)
-            therapy_rc = int(therapy_proc.returncode)
-            if therapy_rc in (0, ExitCode.findings):
-                try:
-                    therapy_report = json.loads(therapy_proc.stdout or "{}")
-                except Exception:
-                    therapy_report = {"raw": therapy_proc.stdout}
-            else:
-                therapy_report = {
-                    "error": "therapydrift failed",
-                    "exit_code": therapy_rc,
-                    "stderr": (therapy_proc.stderr or "")[:4000],
-                }
-                therapy_rc = 0
-
-        yagni_ran = False
-        yagni_rc = 0
-        yagni_report = None
-        yagnidrift = wg_dir / "yagnidrift"
-        if yagnidrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="yagnidrift"):
-            yagni_ran = True
-            yagni_cmd = [str(yagnidrift), "--dir", str(project_dir), "--json", "wg", "check", "--task", task_id]
-            if args.write_log:
-                yagni_cmd.append("--write-log")
-            if args.create_followups:
-                yagni_cmd.append("--create-followups")
-            yagni_proc = subprocess.run(yagni_cmd, text=True, capture_output=True)
-            yagni_rc = int(yagni_proc.returncode)
-            if yagni_rc in (0, ExitCode.findings):
-                try:
-                    yagni_report = json.loads(yagni_proc.stdout or "{}")
-                except Exception:
-                    yagni_report = {"raw": yagni_proc.stdout}
-            else:
-                yagni_report = {
-                    "error": "yagnidrift failed",
-                    "exit_code": yagni_rc,
-                    "stderr": (yagni_proc.stderr or "")[:4000],
-                }
-                yagni_rc = 0
+        plugin_results: dict[str, dict[str, Any]] = {}
+        rc_by_plugin: dict[str, int] = {"speedrift": speed_rc}
+        for plugin in ordered_plugins:
+            result = _run_optional_plugin_json(
+                plugin=plugin,
+                wg_dir=wg_dir,
+                project_dir=project_dir,
+                task_id=task_id,
+                mode=mode,
+                force_write_log=force_write_log,
+                force_create_followups=force_create_followups,
+            )
+            plugin_results[plugin] = result
+            rc_by_plugin[plugin] = int(result.get("exit_code", 0))
 
         out_rc = (
             ExitCode.findings
-            if (
-                speed_rc == ExitCode.findings
-                or spec_rc == ExitCode.findings
-                or data_rc == ExitCode.findings
-                or deps_rc == ExitCode.findings
-                or ux_rc == ExitCode.findings
-                or therapy_rc == ExitCode.findings
-                or yagni_rc == ExitCode.findings
-            )
+            if any(rc == ExitCode.findings for rc in rc_by_plugin.values())
             else ExitCode.ok
         )
+        plugins_json: dict[str, Any] = {
+            "speedrift": {"ran": True, "exit_code": speed_rc, "report": speed_report},
+        }
+        for plugin in OPTIONAL_PLUGINS:
+            result = plugin_results.get(plugin, {"ran": False, "exit_code": 0, "report": None})
+            if plugin == "uxdrift":
+                plugins_json[plugin] = {
+                    "ran": bool(result.get("ran")),
+                    "exit_code": int(result.get("exit_code", 0)),
+                    "note": "no standardized json output yet",
+                }
+            else:
+                plugins_json[plugin] = {
+                    "ran": bool(result.get("ran")),
+                    "exit_code": int(result.get("exit_code", 0)),
+                    "report": result.get("report"),
+                }
+
         combined = {
             "task_id": task_id,
             "exit_code": out_rc,
-            "plugins": {
-                "speedrift": {"ran": True, "exit_code": speed_rc, "report": speed_report},
-                "specdrift": {"ran": spec_ran, "exit_code": spec_rc, "report": spec_report},
-                "datadrift": {"ran": data_ran, "exit_code": data_rc, "report": data_report},
-                "depsdrift": {"ran": deps_ran, "exit_code": deps_rc, "report": deps_report},
-                "uxdrift": {"ran": ux_ran, "exit_code": ux_rc, "note": "no standardized json output yet"},
-                "therapydrift": {"ran": therapy_ran, "exit_code": therapy_rc, "report": therapy_report},
-                "yagnidrift": {"ran": yagni_ran, "exit_code": yagni_rc, "report": yagni_report},
-            },
+            "mode": mode,
+            "policy_order": ordered_plugins,
+            "plugins": plugins_json,
         }
+        if mode == "breaker" and out_rc == ExitCode.findings:
+            breaker_id = _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
+            combined["breaker_task_id"] = breaker_id
         print(json.dumps(combined, indent=2, sort_keys=False))
         return out_rc
 
@@ -475,93 +576,21 @@ def cmd_check(args: argparse.Namespace) -> int:
     if speed_rc not in (0, ExitCode.findings):
         return speed_rc
 
-    spec_rc = 0
-    specdrift = wg_dir / "specdrift"
-    if specdrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="specdrift"):
-        spec_cmd = [str(specdrift), "--dir", str(project_dir), "wg", "check", "--task", task_id]
-        if args.write_log:
-            spec_cmd.append("--write-log")
-        if args.create_followups:
-            spec_cmd.append("--create-followups")
-        spec_rc = _run(spec_cmd)
-        if spec_rc not in (0, ExitCode.findings):
-            print(f"note: specdrift failed (exit {spec_rc}); continuing", file=sys.stderr)
-            spec_rc = 0
+    rc_by_plugin: dict[str, int] = {"speedrift": speed_rc}
+    for plugin in ordered_plugins:
+        rc_by_plugin[plugin] = _run_optional_plugin_text(
+            plugin=plugin,
+            wg_dir=wg_dir,
+            project_dir=project_dir,
+            task_id=task_id,
+            mode=mode,
+            force_write_log=force_write_log,
+            force_create_followups=force_create_followups,
+        )
 
-    data_rc = 0
-    datadrift = wg_dir / "datadrift"
-    if datadrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="datadrift"):
-        data_cmd = [str(datadrift), "--dir", str(project_dir), "wg", "check", "--task", task_id]
-        if args.write_log:
-            data_cmd.append("--write-log")
-        if args.create_followups:
-            data_cmd.append("--create-followups")
-        data_rc = _run(data_cmd)
-        if data_rc not in (0, ExitCode.findings):
-            print(f"note: datadrift failed (exit {data_rc}); continuing", file=sys.stderr)
-            data_rc = 0
-
-    deps_rc = 0
-    depsdrift = wg_dir / "depsdrift"
-    if depsdrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="depsdrift"):
-        deps_cmd = [str(depsdrift), "--dir", str(project_dir), "wg", "check", "--task", task_id]
-        if args.write_log:
-            deps_cmd.append("--write-log")
-        if args.create_followups:
-            deps_cmd.append("--create-followups")
-        deps_rc = _run(deps_cmd)
-        if deps_rc not in (0, ExitCode.findings):
-            print(f"note: depsdrift failed (exit {deps_rc}); continuing", file=sys.stderr)
-            deps_rc = 0
-
-    ux_rc = 0
-    uxdrift = wg_dir / "uxdrift"
-    if uxdrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="uxdrift"):
-        ux_cmd = [str(uxdrift), "wg", "--dir", str(project_dir), "check", "--task", task_id]
-        if args.write_log:
-            ux_cmd.append("--write-log")
-        if args.create_followups:
-            ux_cmd.append("--create-followups")
-        ux_rc = _run(ux_cmd)
-        if ux_rc not in (0, ExitCode.findings):
-            print(f"note: uxdrift failed (exit {ux_rc}); continuing", file=sys.stderr)
-            ux_rc = 0
-
-    therapy_rc = 0
-    therapydrift = wg_dir / "therapydrift"
-    if therapydrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="therapydrift"):
-        therapy_cmd = [str(therapydrift), "--dir", str(project_dir), "wg", "check", "--task", task_id]
-        if args.write_log:
-            therapy_cmd.append("--write-log")
-        if args.create_followups:
-            therapy_cmd.append("--create-followups")
-        therapy_rc = _run(therapy_cmd)
-        if therapy_rc not in (0, ExitCode.findings):
-            print(f"note: therapydrift failed (exit {therapy_rc}); continuing", file=sys.stderr)
-            therapy_rc = 0
-
-    yagni_rc = 0
-    yagnidrift = wg_dir / "yagnidrift"
-    if yagnidrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="yagnidrift"):
-        yagni_cmd = [str(yagnidrift), "--dir", str(project_dir), "wg", "check", "--task", task_id]
-        if args.write_log:
-            yagni_cmd.append("--write-log")
-        if args.create_followups:
-            yagni_cmd.append("--create-followups")
-        yagni_rc = _run(yagni_cmd)
-        if yagni_rc not in (0, ExitCode.findings):
-            print(f"note: yagnidrift failed (exit {yagni_rc}); continuing", file=sys.stderr)
-            yagni_rc = 0
-
-    if (
-        speed_rc == ExitCode.findings
-        or spec_rc == ExitCode.findings
-        or data_rc == ExitCode.findings
-        or deps_rc == ExitCode.findings
-        or ux_rc == ExitCode.findings
-        or therapy_rc == ExitCode.findings
-        or yagni_rc == ExitCode.findings
-    ):
+    if any(rc == ExitCode.findings for rc in rc_by_plugin.values()):
+        if mode == "breaker":
+            _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
         return ExitCode.findings
     return ExitCode.ok
 

@@ -27,6 +27,7 @@ class InstallResult:
     wrote_uxdrift: bool
     wrote_therapydrift: bool
     wrote_yagnidrift: bool
+    wrote_policy: bool
     updated_gitignore: bool
     created_executor: bool
     patched_executors: list[str]

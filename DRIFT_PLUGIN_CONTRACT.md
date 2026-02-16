@@ -51,3 +51,6 @@ Output:
   - the wrapper exists in `./.workgraph/<drift>` (installed), and
   - the task declares ` ```<drift>` in its description.
 - Optional plugin failures must be **best-effort** (warn and continue).
+- Execution order is controlled by `./.workgraph/drift-policy.toml` (`order = [...]`).
+- Automation behavior is controlled by policy mode:
+  - `observe`, `advise`, `redirect`, `heal`, `breaker`.

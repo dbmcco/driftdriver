@@ -69,7 +69,35 @@ This writes:
 - (optional) `./.workgraph/uxdrift` (wrapper)
 - (optional) `./.workgraph/therapydrift` (wrapper)
 - (optional) `./.workgraph/yagnidrift` (wrapper)
+- `./.workgraph/drift-policy.toml` (mode/order/recursion defaults)
 - executor prompt guidance under `./.workgraph/executors/*.toml`
+
+## Drift Policy
+
+`driftdriver install` creates `./.workgraph/drift-policy.toml`:
+
+```toml
+schema = 1
+mode = "redirect"
+order = ["speedrift", "specdrift", "datadrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift"]
+
+[recursion]
+cooldown_seconds = 1800
+max_auto_actions_per_hour = 2
+require_new_evidence = true
+max_auto_depth = 2
+```
+
+Modes:
+- `observe`: no logs, no follow-ups
+- `advise`: logs only
+- `redirect`: logs + follow-ups
+- `heal`: only `therapydrift` auto-followups; others log only
+- `breaker`: logs only + creates `drift-breaker-<task_id>` if findings persist
+
+Notes:
+- `order` controls optional plugin execution order under `./.workgraph/drifts check`.
+- CLI flags still force behavior per run: `--write-log` and `--create-followups`.
 
 ## Per-Task Protocol
 
