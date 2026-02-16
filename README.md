@@ -50,6 +50,25 @@ Optional UX + therapy + YAGNI + redrift integration:
 driftdriver install --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift
 ```
 
+## Package Any App (Self-Serve)
+
+If you're working from this mono-workspace and want one command to package an app with local drift tool bins:
+
+```bash
+cd driftdriver
+scripts/package_app.sh --app /path/to/app --seed-redrift-task
+```
+
+What it does:
+- installs `driftdriver` wrappers into the target app's `.workgraph/`
+- wires all locally available modules (`speedrift`, `specdrift`, `datadrift`, `depsdrift`, `uxdrift`, `therapydrift`, `yagnidrift`, `redrift`)
+- optionally seeds a starter redrift task with a full-suite fence set
+
+Common flags:
+- `--wrapper-mode auto|pinned|portable` (default: `auto`)
+- `--skip-contracts` (skip `ensure-contracts` during install)
+- `--seed-redrift-task` (create a starter migration/rebuild task)
+
 ### Wrapper Modes (Portable vs Pinned)
 
 By default `driftdriver install` chooses wrapper style automatically:

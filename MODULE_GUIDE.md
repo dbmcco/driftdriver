@@ -12,6 +12,13 @@ Use one command and let fences + policy route modules:
 ./.workgraph/drifts check --task <id> --write-log --create-followups
 ```
 
+Fastest packaging path from this workspace:
+
+```bash
+cd driftdriver
+scripts/package_app.sh --app /path/to/app --seed-redrift-task
+```
+
 `driftdriver` always runs `speedrift`, then optional modules based on:
 - tool installed in `./.workgraph/<module>`
 - fenced block present in task description (` ```specdrift`, ` ```redrift`, etc.)
