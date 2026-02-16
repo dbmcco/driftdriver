@@ -119,6 +119,9 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 
 Use `driftdriver` when you want one command (`./.workgraph/drifts check`) that routes by task fences and policy.
 
+Detailed per-module standalone vs combined playbooks:
+- `MODULE_GUIDE.md`
+
 ## Per-Task Protocol
 
 Agents should run (at task start and before completion):
