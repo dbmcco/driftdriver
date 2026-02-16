@@ -20,6 +20,7 @@ Examples:
 - `specdrift` reads a ` ```specdrift` block.
 - `datadrift` reads a ` ```datadrift` block.
 - `depsdrift` reads a ` ```depsdrift` block.
+- `therapydrift` reads a ` ```therapydrift` block.
 
 ## CLI Interface
 

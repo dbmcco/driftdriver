@@ -12,6 +12,7 @@ Today it supports:
 - `datadrift` (optional, only when a task declares a ```datadrift block)
 - `depsdrift` (optional, only when a task declares a ```depsdrift block)
 - `uxdrift` (optional, only when a task declares a ```uxdrift block)
+- `therapydrift` (optional, only when a task declares a ```therapydrift block)
 
 Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
 
@@ -28,6 +29,7 @@ pipx install git+https://github.com/dbmcco/speedrift.git
 # Optional plugins:
 pipx install git+https://github.com/dbmcco/specdrift.git
 pipx install git+https://github.com/dbmcco/uxdrift.git
+pipx install git+https://github.com/dbmcco/therapydrift.git
 ```
 
 ## Install Into A Repo
@@ -38,10 +40,10 @@ From the repo you want to work in:
 driftdriver install
 ```
 
-Optional UX integration:
+Optional UX + therapy integration:
 
 ```bash
-driftdriver install --with-uxdrift
+driftdriver install --with-uxdrift --with-therapydrift
 ```
 
 ### Wrapper Modes (Portable vs Pinned)
@@ -55,7 +57,7 @@ By default `driftdriver install` chooses wrapper style automatically:
 If you want to commit `./.workgraph/drifts` (and wrappers) into the repo, use:
 
 ```bash
-driftdriver install --wrapper-mode portable --with-uxdrift
+driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift
 ```
 
 This writes:
@@ -63,6 +65,7 @@ This writes:
 - `./.workgraph/drifts` (single per-repo entrypoint used by agents)
 - `./.workgraph/speedrift` (wrapper)
 - (optional) `./.workgraph/uxdrift` (wrapper)
+- (optional) `./.workgraph/therapydrift` (wrapper)
 - executor prompt guidance under `./.workgraph/executors/*.toml`
 
 ## Per-Task Protocol

@@ -15,6 +15,7 @@ from driftdriver.install import (
     ensure_depsdrift_gitignore,
     ensure_specdrift_gitignore,
     ensure_speedrift_gitignore,
+    ensure_therapydrift_gitignore,
     ensure_uxdrift_gitignore,
     resolve_bin,
     write_datadrift_wrapper,
@@ -23,6 +24,7 @@ from driftdriver.install import (
     write_driver_wrapper,
     write_specdrift_wrapper,
     write_speedrift_wrapper,
+    write_therapydrift_wrapper,
     write_uxdrift_wrapper,
 )
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
@@ -116,6 +118,19 @@ def cmd_install(args: argparse.Namespace) -> int:
         # Best-effort: don't fail install.
         include_uxdrift = False
 
+    include_therapydrift = bool(args.with_therapydrift or args.therapydrift_bin)
+    therapydrift_bin = resolve_bin(
+        explicit=Path(args.therapydrift_bin) if args.therapydrift_bin else None,
+        env_var="THERAPYDRIFT_BIN",
+        which_name="therapydrift",
+        candidates=[
+            repo_root.parent / "therapydrift" / "bin" / "therapydrift",
+        ],
+    )
+    if include_therapydrift and therapydrift_bin is None:
+        # Best-effort: don't fail install.
+        include_therapydrift = False
+
     datadrift_bin = resolve_bin(
         explicit=Path(args.datadrift_bin) if args.datadrift_bin else None,
         env_var="DATADRIFT_BIN",
@@ -161,6 +176,13 @@ def cmd_install(args: argparse.Namespace) -> int:
     wrote_uxdrift = False
     if include_uxdrift and uxdrift_bin is not None:
         wrote_uxdrift = write_uxdrift_wrapper(wg_dir, uxdrift_bin=uxdrift_bin, wrapper_mode=wrapper_mode)
+    wrote_therapydrift = False
+    if include_therapydrift and therapydrift_bin is not None:
+        wrote_therapydrift = write_therapydrift_wrapper(
+            wg_dir,
+            therapydrift_bin=therapydrift_bin,
+            wrapper_mode=wrapper_mode,
+        )
 
     updated_gitignore = ensure_speedrift_gitignore(wg_dir)
     if specdrift_bin is not None:
@@ -171,8 +193,14 @@ def cmd_install(args: argparse.Namespace) -> int:
         updated_gitignore = ensure_depsdrift_gitignore(wg_dir) or updated_gitignore
     if include_uxdrift:
         updated_gitignore = ensure_uxdrift_gitignore(wg_dir) or updated_gitignore
+    if include_therapydrift:
+        updated_gitignore = ensure_therapydrift_gitignore(wg_dir) or updated_gitignore
 
-    created_executor, patched_executors = ensure_executor_guidance(wg_dir, include_uxdrift=include_uxdrift)
+    created_executor, patched_executors = ensure_executor_guidance(
+        wg_dir,
+        include_uxdrift=include_uxdrift,
+        include_therapydrift=include_therapydrift,
+    )
 
     ensured_contracts = False
     if not args.no_ensure_contracts:
@@ -188,6 +216,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_datadrift=wrote_datadrift,
         wrote_depsdrift=wrote_depsdrift,
         wrote_uxdrift=wrote_uxdrift,
+        wrote_therapydrift=wrote_therapydrift,
         updated_gitignore=updated_gitignore,
         created_executor=created_executor,
         patched_executors=patched_executors,
@@ -199,8 +228,13 @@ def cmd_install(args: argparse.Namespace) -> int:
         print(json.dumps(asdict(result), indent=2, sort_keys=False))
     else:
         msg = f"Installed Driftdriver into {wg_dir}"
+        enabled: list[str] = []
         if include_uxdrift:
-            msg += " (with uxdrift)"
+            enabled.append("uxdrift")
+        if include_therapydrift:
+            enabled.append("therapydrift")
+        if enabled:
+            msg += f" (with {', '.join(enabled)})"
         print(msg)
 
     return ExitCode.ok
@@ -328,6 +362,32 @@ def cmd_check(args: argparse.Namespace) -> int:
             if ux_rc not in (0, ExitCode.findings):
                 ux_rc = 0
 
+        therapy_ran = False
+        therapy_rc = 0
+        therapy_report = None
+        therapydrift = wg_dir / "therapydrift"
+        if therapydrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="therapydrift"):
+            therapy_ran = True
+            therapy_cmd = [str(therapydrift), "--dir", str(project_dir), "--json", "wg", "check", "--task", task_id]
+            if args.write_log:
+                therapy_cmd.append("--write-log")
+            if args.create_followups:
+                therapy_cmd.append("--create-followups")
+            therapy_proc = subprocess.run(therapy_cmd, text=True, capture_output=True)
+            therapy_rc = int(therapy_proc.returncode)
+            if therapy_rc in (0, ExitCode.findings):
+                try:
+                    therapy_report = json.loads(therapy_proc.stdout or "{}")
+                except Exception:
+                    therapy_report = {"raw": therapy_proc.stdout}
+            else:
+                therapy_report = {
+                    "error": "therapydrift failed",
+                    "exit_code": therapy_rc,
+                    "stderr": (therapy_proc.stderr or "")[:4000],
+                }
+                therapy_rc = 0
+
         out_rc = (
             ExitCode.findings
             if (
@@ -336,6 +396,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                 or data_rc == ExitCode.findings
                 or deps_rc == ExitCode.findings
                 or ux_rc == ExitCode.findings
+                or therapy_rc == ExitCode.findings
             )
             else ExitCode.ok
         )
@@ -348,6 +409,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                 "datadrift": {"ran": data_ran, "exit_code": data_rc, "report": data_report},
                 "depsdrift": {"ran": deps_ran, "exit_code": deps_rc, "report": deps_report},
                 "uxdrift": {"ran": ux_ran, "exit_code": ux_rc, "note": "no standardized json output yet"},
+                "therapydrift": {"ran": therapy_ran, "exit_code": therapy_rc, "report": therapy_report},
             },
         }
         print(json.dumps(combined, indent=2, sort_keys=False))
@@ -409,12 +471,26 @@ def cmd_check(args: argparse.Namespace) -> int:
             print(f"note: uxdrift failed (exit {ux_rc}); continuing", file=sys.stderr)
             ux_rc = 0
 
+    therapy_rc = 0
+    therapydrift = wg_dir / "therapydrift"
+    if therapydrift.exists() and _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence="therapydrift"):
+        therapy_cmd = [str(therapydrift), "--dir", str(project_dir), "wg", "check", "--task", task_id]
+        if args.write_log:
+            therapy_cmd.append("--write-log")
+        if args.create_followups:
+            therapy_cmd.append("--create-followups")
+        therapy_rc = _run(therapy_cmd)
+        if therapy_rc not in (0, ExitCode.findings):
+            print(f"note: therapydrift failed (exit {therapy_rc}); continuing", file=sys.stderr)
+            therapy_rc = 0
+
     if (
         speed_rc == ExitCode.findings
         or spec_rc == ExitCode.findings
         or data_rc == ExitCode.findings
         or deps_rc == ExitCode.findings
         or ux_rc == ExitCode.findings
+        or therapy_rc == ExitCode.findings
     ):
         return ExitCode.findings
     return ExitCode.ok
@@ -468,6 +544,12 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--with-uxdrift", action="store_true", help="Best-effort: enable uxdrift integration if found")
     install.add_argument("--uxdrift-bin", help="Path to uxdrift bin/uxdrift (enables uxdrift integration)")
     install.add_argument(
+        "--with-therapydrift",
+        action="store_true",
+        help="Best-effort: enable therapydrift integration if found",
+    )
+    install.add_argument("--therapydrift-bin", help="Path to therapydrift bin/therapydrift (enables therapydrift integration)")
+    install.add_argument(
         "--wrapper-mode",
         choices=["auto", "pinned", "portable"],
         default="auto",
@@ -476,7 +558,10 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--no-ensure-contracts", action="store_true", help="Do not inject default contracts into tasks")
     install.set_defaults(func=cmd_install)
 
-    check = sub.add_parser("check", help="Unified check (speedrift always; specdrift/uxdrift when task declares specs)")
+    check = sub.add_parser(
+        "check",
+        help="Unified check (speedrift always; optional drifts run when task declares fenced specs)",
+    )
     check.add_argument("--task", help="Task id to check")
     check.add_argument("--write-log", action="store_true", help="Write summary into wg log")
     check.add_argument("--create-followups", action="store_true", help="Create follow-up tasks for findings")

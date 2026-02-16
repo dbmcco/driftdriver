@@ -9,6 +9,7 @@ from pathlib import Path
 
 SPEEDRIFT_MARKER = "## Speedrift Protocol"
 UXDRIFT_MARKER = "## uxdrift Protocol"
+THERAPYDRIFT_MARKER = "## therapydrift Protocol"
 SPECDRIFT_MARKER = "## specdrift Protocol"
 SUPERPOWERS_MARKER = "## Superpowers Protocol"
 MODEL_MEDIATED_MARKER = "## Model-Mediated Protocol"
@@ -23,6 +24,7 @@ class InstallResult:
     wrote_datadrift: bool
     wrote_depsdrift: bool
     wrote_uxdrift: bool
+    wrote_therapydrift: bool
     updated_gitignore: bool
     created_executor: bool
     patched_executors: list[str]
@@ -61,6 +63,9 @@ def ensure_depsdrift_gitignore(wg_dir: Path) -> bool:
 
 def ensure_uxdrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".uxdrift/")
+
+def ensure_therapydrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".therapydrift/")
 
 
 def _portable_wrapper_content(tool_name: str) -> str:
@@ -149,6 +154,9 @@ def write_depsdrift_wrapper(wg_dir: Path, *, depsdrift_bin: Path, wrapper_mode: 
 def write_uxdrift_wrapper(wg_dir: Path, *, uxdrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="uxdrift", tool_bin=uxdrift_bin, wrapper_mode=wrapper_mode)
 
+def write_therapydrift_wrapper(wg_dir: Path, *, therapydrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="therapydrift", tool_bin=therapydrift_bin, wrapper_mode=wrapper_mode)
+
 
 def write_drifts_wrapper(wg_dir: Path) -> bool:
     """
@@ -171,7 +179,7 @@ def write_drifts_wrapper(wg_dir: Path) -> bool:
     return changed
 
 
-def _default_claude_executor_text(*, project_dir: Path, include_uxdrift: bool) -> str:
+def _default_claude_executor_text(*, project_dir: Path, include_uxdrift: bool, include_therapydrift: bool) -> str:
     uxdrift = ""
     if include_uxdrift:
         uxdrift = (
@@ -182,6 +190,18 @@ def _default_claude_executor_text(*, project_dir: Path, include_uxdrift: bool) -
             "- Or run the unified check (runs uxdrift when a spec is present):\n"
             f"  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups\n"
             "- If it fails due to missing URL, set `url = \"...\"` in the `uxdrift` block or pass --url.\n"
+        )
+
+    therapydrift = ""
+    if include_therapydrift:
+        therapydrift = (
+            "\n"
+            f"{THERAPYDRIFT_MARKER}\n"
+            "- If this task includes a `therapydrift` block (in the description), run:\n"
+            "  ./.workgraph/therapydrift wg check --task {{task_id}} --write-log --create-followups\n"
+            "- Or run the unified check (runs therapydrift when a spec is present):\n"
+            f"  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups\n"
+            "- Artifacts live under `.workgraph/.therapydrift/`.\n"
         )
 
     return f"""[executor]
@@ -221,6 +241,7 @@ Context from dependencies:
 - If a Model-Mediated Architecture skill is available, apply it (model decides; code executes).
 - Log key decisions/deviations in `wg log`, and prefer follow-up tasks over bloating the current task.
 {uxdrift}
+{therapydrift}
 
 ## Workgraph Rules
 - Stay focused on this task.
@@ -333,7 +354,33 @@ def _inject_uxdrift_into_template(body: str) -> str | None:
     return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
 
 
-def ensure_executor_guidance(wg_dir: Path, *, include_uxdrift: bool) -> tuple[bool, list[str]]:
+def _inject_therapydrift_into_template(body: str) -> str | None:
+    if THERAPYDRIFT_MARKER in body:
+        return None
+
+    m = _TEMPLATE_START_RE.search(body)
+    if not m:
+        return None
+
+    start = m.end("prefix")
+    end = body.find('\"\"\"', start)
+    if end == -1:
+        return None
+
+    insert = (
+        "\n"
+        f"{THERAPYDRIFT_MARKER}\n"
+        "- If this task includes a `therapydrift` block (in the description), run:\n"
+        "  ./.workgraph/therapydrift wg check --task {{task_id}} --write-log --create-followups\n"
+        "- Or run the unified check (runs therapydrift when a spec is present):\n"
+        "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups\n"
+        "- Artifacts live under `.workgraph/.therapydrift/`.\n"
+    )
+
+    return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
+
+
+def ensure_executor_guidance(wg_dir: Path, *, include_uxdrift: bool, include_therapydrift: bool) -> tuple[bool, list[str]]:
     executors_dir = wg_dir / "executors"
     executors_dir.mkdir(parents=True, exist_ok=True)
 
@@ -341,7 +388,11 @@ def ensure_executor_guidance(wg_dir: Path, *, include_uxdrift: bool) -> tuple[bo
     claude_path = executors_dir / "claude.toml"
     if not claude_path.exists():
         claude_path.write_text(
-            _default_claude_executor_text(project_dir=wg_dir.parent, include_uxdrift=include_uxdrift),
+            _default_claude_executor_text(
+                project_dir=wg_dir.parent,
+                include_uxdrift=include_uxdrift,
+                include_therapydrift=include_therapydrift,
+            ),
             encoding="utf-8",
         )
         created = True
@@ -359,6 +410,12 @@ def ensure_executor_guidance(wg_dir: Path, *, include_uxdrift: bool) -> tuple[bo
 
         if include_uxdrift:
             new_text = _inject_uxdrift_into_template(cur)
+            if new_text is not None:
+                cur = new_text
+                changed = True
+
+        if include_therapydrift:
+            new_text = _inject_therapydrift_into_template(cur)
             if new_text is not None:
                 cur = new_text
                 changed = True
