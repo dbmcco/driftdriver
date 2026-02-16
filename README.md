@@ -8,15 +8,24 @@ Driftdriver is an orchestrator for **Workgraph-first** agent development.
 
 Today it supports:
 - `speedrift` (baseline, always-run)
-- `specdrift` (optional, only when a task declares a ```specdrift block)
-- `datadrift` (optional, only when a task declares a ```datadrift block)
-- `depsdrift` (optional, only when a task declares a ```depsdrift block)
-- `uxdrift` (optional, only when a task declares a ```uxdrift block)
-- `therapydrift` (optional, only when a task declares a ```therapydrift block)
-- `yagnidrift` (optional, only when a task declares a ```yagnidrift block)
-- `redrift` (optional, only when a task declares a ```redrift block)
+- `specdrift` (optional, only when a task declares a `specdrift` block)
+- `datadrift` (optional, only when a task declares a `datadrift` block)
+- `depsdrift` (optional, only when a task declares a `depsdrift` block)
+- `uxdrift` (optional, only when a task declares a `uxdrift` block)
+- `therapydrift` (optional, only when a task declares a `therapydrift` block)
+- `yagnidrift` (optional, only when a task declares a `yagnidrift` block)
+- `redrift` (optional, only when a task declares a `redrift` block)
 
 Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
+
+## Ecosystem Map
+
+This project is part of the Speedrift suite for Workgraph-first drift control.
+
+- Spine: [Workgraph](https://graphwork.github.io/)
+- Orchestrator: [driftdriver](https://github.com/dbmcco/driftdriver)
+- Baseline lane: [speedrift](https://github.com/dbmcco/speedrift)
+- Optional lanes: [specdrift](https://github.com/dbmcco/specdrift), [datadrift](https://github.com/dbmcco/datadrift), [depsdrift](https://github.com/dbmcco/depsdrift), [uxdrift](https://github.com/dbmcco/uxdrift), [therapydrift](https://github.com/dbmcco/therapydrift), [yagnidrift](https://github.com/dbmcco/yagnidrift), [redrift](https://github.com/dbmcco/redrift)
 
 ## Install (CLI)
 
@@ -30,6 +39,8 @@ pipx install git+https://github.com/dbmcco/speedrift.git
 
 # Optional plugins:
 pipx install git+https://github.com/dbmcco/specdrift.git
+pipx install git+https://github.com/dbmcco/datadrift.git
+pipx install git+https://github.com/dbmcco/depsdrift.git
 pipx install git+https://github.com/dbmcco/uxdrift.git
 pipx install git+https://github.com/dbmcco/therapydrift.git
 pipx install git+https://github.com/dbmcco/yagnidrift.git
