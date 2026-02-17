@@ -19,6 +19,7 @@ Examples:
 - `uxdrift` reads a ` ```uxdrift` block.
 - `specdrift` reads a ` ```specdrift` block.
 - `datadrift` reads a ` ```datadrift` block.
+- `archdrift` reads a ` ```archdrift` block.
 - `depsdrift` reads a ` ```depsdrift` block.
 - `therapydrift` reads a ` ```therapydrift` block.
 - `yagnidrift` reads a ` ```yagnidrift` block.
@@ -50,7 +51,10 @@ Output:
 - `coredrift` is the baseline check (always-run).
 - Optional plugins run only when:
   - the wrapper exists in `./.workgraph/<drift>` (installed), and
-  - the task declares ` ```<drift>` in its description.
+  - selected by lane strategy:
+    - `--lane-strategy fences`: task declares ` ```<drift>` in description
+    - `--lane-strategy auto` (default): fences plus complexity/rebuild preflight escalation
+    - `--lane-strategy all`: run all installed optional plugins
 - Optional plugin failures must be **best-effort** (warn and continue).
 - Execution order is controlled by `./.workgraph/drift-policy.toml` (`order = [...]`).
 - Automation behavior is controlled by policy mode:

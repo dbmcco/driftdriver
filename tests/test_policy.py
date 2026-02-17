@@ -56,7 +56,8 @@ class PolicyTests(unittest.TestCase):
         ordered = _ordered_optional_plugins(["yagnidrift", "specdrift", "unknown", "specdrift", "redrift"])
         self.assertEqual(ordered[0], "yagnidrift")
         self.assertEqual(ordered[1], "specdrift")
-        self.assertEqual(len(ordered), 7)
+        self.assertEqual(len(ordered), 8)
+        self.assertIn("archdrift", ordered)
         self.assertIn("uxdrift", ordered)
         self.assertIn("redrift", ordered)
 

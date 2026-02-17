@@ -9,6 +9,7 @@ DEFAULT_ORDER = [
     "coredrift",
     "specdrift",
     "datadrift",
+    "archdrift",
     "depsdrift",
     "uxdrift",
     "therapydrift",
@@ -34,7 +35,7 @@ def _default_policy_text() -> str:
     return (
         "schema = 1\n"
         "mode = \"redirect\"\n"
-        "order = [\"coredrift\", \"specdrift\", \"datadrift\", \"depsdrift\", \"uxdrift\", \"therapydrift\", \"yagnidrift\", \"redrift\"]\n"
+        "order = [\"coredrift\", \"specdrift\", \"datadrift\", \"archdrift\", \"depsdrift\", \"uxdrift\", \"therapydrift\", \"yagnidrift\", \"redrift\"]\n"
         "\n"
         "[recursion]\n"
         "cooldown_seconds = 1800\n"

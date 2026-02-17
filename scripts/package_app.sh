@@ -112,6 +112,7 @@ resolve_local_bin() {
 COREDRIFT_BIN="$(resolve_local_bin coredrift coredrift || true)"
 SPECDRIFT_BIN="$(resolve_local_bin specdrift specdrift || true)"
 DATADRIFT_BIN="$(resolve_local_bin datadrift datadrift || true)"
+ARCHDRIFT_BIN="$(resolve_local_bin archdrift archdrift || true)"
 DEPSDRIFT_BIN="$(resolve_local_bin depsdrift depsdrift || true)"
 UXDRIFT_BIN="$(resolve_local_bin uxdrift uxdrift || true)"
 THERAPYDRIFT_BIN="$(resolve_local_bin therapydrift therapydrift || true)"
@@ -133,6 +134,7 @@ cmd=(
 
 [[ -n "$SPECDRIFT_BIN" ]] && cmd+=(--specdrift-bin "$SPECDRIFT_BIN")
 [[ -n "$DATADRIFT_BIN" ]] && cmd+=(--datadrift-bin "$DATADRIFT_BIN")
+[[ -n "$ARCHDRIFT_BIN" ]] && cmd+=(--archdrift-bin "$ARCHDRIFT_BIN")
 [[ -n "$DEPSDRIFT_BIN" ]] && cmd+=(--depsdrift-bin "$DEPSDRIFT_BIN")
 [[ -n "$UXDRIFT_BIN" ]] && cmd+=(--uxdrift-bin "$UXDRIFT_BIN")
 [[ -n "$THERAPYDRIFT_BIN" ]] && cmd+=(--therapydrift-bin "$THERAPYDRIFT_BIN")
@@ -226,6 +228,20 @@ schema = 1
 migrations = ["src/db/migrations/**", "db/migrations/**"]
 schema_files = ["src/db/schema.sql", "db/schema.sql", "docs/**"]
 require_schema_update_when_code_changes = true
+```
+EOF
+    fi
+
+    if [[ -d "$APP_DIR/docs/architecture" || -d "$APP_DIR/docs/design" || -d "$APP_DIR/docs/adr" ]]; then
+      cat >> "$DESC_FILE" <<'EOF'
+
+```archdrift
+schema = 1
+architecture_docs = ["docs/architecture/**", "docs/design/**", "docs/adr/**", "README.md"]
+code_paths = ["src/**", "app/**", "web/**", "server/**"]
+require_arch_update_when_code_changes = true
+require_redrift_arch_artifacts = true
+redrift_required_artifacts = ["design/v2-architecture.md", "design/adr.md"]
 ```
 EOF
     fi

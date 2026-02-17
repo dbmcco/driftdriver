@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import shutil
@@ -12,6 +13,7 @@ from typing import Any
 
 from driftdriver.install import (
     InstallResult,
+    ensure_archdrift_gitignore,
     ensure_executor_guidance,
     ensure_datadrift_gitignore,
     ensure_depsdrift_gitignore,
@@ -22,6 +24,7 @@ from driftdriver.install import (
     ensure_uxdrift_gitignore,
     ensure_yagnidrift_gitignore,
     resolve_bin,
+    write_archdrift_wrapper,
     write_datadrift_wrapper,
     write_depsdrift_wrapper,
     write_drifts_wrapper,
@@ -46,12 +49,42 @@ class ExitCode:
 OPTIONAL_PLUGINS = [
     "specdrift",
     "datadrift",
+    "archdrift",
     "depsdrift",
     "uxdrift",
     "therapydrift",
     "yagnidrift",
     "redrift",
 ]
+
+LANE_STRATEGIES = ("auto", "fences", "all")
+FULL_SUITE_TRIGGER_FENCES = {"redrift"}
+FULL_SUITE_TRIGGER_PHRASES = (
+    "full suite",
+    "all lanes",
+    "all drifts",
+    "all tools",
+    "run every drift",
+    "complex app",
+    "complex application",
+    "app redo",
+    "data redo",
+)
+COMPLEXITY_KEYWORDS = (
+    "rewrite",
+    "rebuild",
+    "migration",
+    "respec",
+    "architecture",
+    "frontend",
+    "backend",
+    "full-stack",
+    "full stack",
+    "schema",
+    "database",
+    "ux",
+    "multi-agent",
+)
 
 
 def _run(cmd: list[str]) -> int:
@@ -65,12 +98,15 @@ def _ensure_wg_init(project_dir: Path) -> None:
     subprocess.check_call(["wg", "init"], cwd=str(project_dir))
 
 
-def _task_has_fence(*, wg_dir: Path, task_id: str, fence: str) -> bool:
+def _load_task(*, wg_dir: Path, task_id: str) -> dict[str, Any] | None:
     wg = load_workgraph(wg_dir)
-    t = wg.tasks.get(task_id)
-    if not t:
+    return wg.tasks.get(task_id)
+
+
+def _task_has_fence(*, task: dict[str, Any] | None, fence: str) -> bool:
+    if not task:
         return False
-    desc = str(t.get("description") or "")
+    desc = str(task.get("description") or "")
     return f"```{fence}" in desc
 
 
@@ -90,6 +126,120 @@ def _ordered_optional_plugins(policy_order: list[str]) -> list[str]:
 
 def _plugin_supports_json(plugin: str) -> bool:
     return plugin != "uxdrift"
+
+
+def _extract_contract_int(*, description: str, key: str) -> int | None:
+    m = re.search(rf"(?m)^\s*{re.escape(key)}\s*=\s*(\d+)\b", description)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
+def _task_text(task: dict[str, Any] | None) -> str:
+    if not task:
+        return ""
+    title = str(task.get("title") or "")
+    desc = str(task.get("description") or "")
+    tags = task.get("tags")
+    tags_text = ""
+    if isinstance(tags, list):
+        tags_text = " ".join(str(t) for t in tags)
+    return f"{title}\n{tags_text}\n{desc}".lower()
+
+
+def _should_run_full_suite(*, task: dict[str, Any] | None) -> tuple[bool, list[str]]:
+    if not task:
+        return (False, [])
+
+    reasons: list[str] = []
+    desc = str(task.get("description") or "")
+    text = _task_text(task)
+
+    for fence in sorted(FULL_SUITE_TRIGGER_FENCES):
+        if _task_has_fence(task=task, fence=fence):
+            reasons.append(f"{fence} fence declared")
+
+    phrase_hits = [p for p in FULL_SUITE_TRIGGER_PHRASES if p in text]
+    if phrase_hits:
+        reasons.append(f"explicit full-suite intent ({', '.join(phrase_hits[:3])})")
+
+    complexity_points = 0
+    blocked_by = task.get("blocked_by")
+    if isinstance(blocked_by, list) and len(blocked_by) >= 3:
+        complexity_points += 1
+        reasons.append(f"{len(blocked_by)} upstream dependencies")
+
+    max_files = _extract_contract_int(description=desc, key="max_files")
+    if max_files is not None and max_files >= 30:
+        complexity_points += 1
+        reasons.append(f"wg-contract max_files={max_files}")
+
+    max_loc = _extract_contract_int(description=desc, key="max_loc")
+    if max_loc is not None and max_loc >= 1000:
+        complexity_points += 1
+        reasons.append(f"wg-contract max_loc={max_loc}")
+
+    keyword_hits = [kw for kw in COMPLEXITY_KEYWORDS if kw in text]
+    if len(keyword_hits) >= 2:
+        complexity_points += 1
+        reasons.append(f"complexity keywords ({', '.join(keyword_hits[:3])})")
+
+    if phrase_hits:
+        return (True, reasons)
+    if any(_task_has_fence(task=task, fence=f) for f in FULL_SUITE_TRIGGER_FENCES):
+        return (True, reasons)
+    if complexity_points >= 2:
+        return (True, reasons)
+    return (False, [])
+
+
+def _select_optional_plugins(
+    *,
+    task: dict[str, Any] | None,
+    ordered_plugins: list[str],
+    lane_strategy: str,
+) -> tuple[set[str], dict[str, Any]]:
+    strategy = str(lane_strategy or "auto").strip().lower()
+    if strategy not in LANE_STRATEGIES:
+        strategy = "auto"
+
+    selected: set[str] = set()
+    plugin_reasons: dict[str, str] = {}
+    for plugin in ordered_plugins:
+        if _task_has_fence(task=task, fence=plugin):
+            selected.add(plugin)
+            plugin_reasons[plugin] = "task fence"
+
+    full_suite = False
+    full_suite_reasons: list[str] = []
+    if strategy == "all":
+        full_suite = True
+        full_suite_reasons = ["lane strategy forced all optional plugins"]
+    elif strategy == "auto":
+        full_suite, full_suite_reasons = _should_run_full_suite(task=task)
+
+    if full_suite:
+        for plugin in ordered_plugins:
+            if plugin in selected:
+                plugin_reasons[plugin] = f"{plugin_reasons[plugin]} + preflight full-suite"
+            else:
+                plugin_reasons[plugin] = "preflight full-suite"
+            selected.add(plugin)
+
+    lane_plan = {
+        "strategy": strategy,
+        "full_suite": full_suite,
+        "reasons": list(full_suite_reasons),
+        "selected_plugins": [p for p in ordered_plugins if p in selected],
+        "plugin_reasons": {
+            p: plugin_reasons.get(p, "not selected")
+            for p in OPTIONAL_PLUGINS
+        },
+    }
+    return (selected, lane_plan)
 
 
 def _plugin_cmd(
@@ -119,6 +269,7 @@ def _plugin_cmd(
 def _run_optional_plugin_json(
     *,
     plugin: str,
+    enabled: bool,
     wg_dir: Path,
     project_dir: Path,
     task_id: str,
@@ -129,7 +280,7 @@ def _run_optional_plugin_json(
     plugin_bin = wg_dir / plugin
     if not plugin_bin.exists():
         return {"ran": False, "exit_code": 0, "report": None}
-    if not _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence=plugin):
+    if not enabled:
         return {"ran": False, "exit_code": 0, "report": None}
 
     write_log, create_followups = _mode_flags(mode=mode, plugin=plugin)
@@ -167,6 +318,7 @@ def _run_optional_plugin_json(
 def _run_optional_plugin_text(
     *,
     plugin: str,
+    enabled: bool,
     wg_dir: Path,
     project_dir: Path,
     task_id: str,
@@ -177,7 +329,7 @@ def _run_optional_plugin_text(
     plugin_bin = wg_dir / plugin
     if not plugin_bin.exists():
         return 0
-    if not _task_has_fence(wg_dir=wg_dir, task_id=task_id, fence=plugin):
+    if not enabled:
         return 0
 
     write_log, create_followups = _mode_flags(mode=mode, plugin=plugin)
@@ -382,6 +534,15 @@ def cmd_install(args: argparse.Namespace) -> int:
         ],
     )
 
+    archdrift_bin = resolve_bin(
+        explicit=Path(args.archdrift_bin) if args.archdrift_bin else None,
+        env_var="ARCHDRIFT_BIN",
+        which_name="archdrift",
+        candidates=[
+            repo_root.parent / "archdrift" / "bin" / "archdrift",
+        ],
+    )
+
     depsdrift_bin = resolve_bin(
         explicit=Path(args.depsdrift_bin) if args.depsdrift_bin else None,
         env_var="DEPSDRIFT_BIN",
@@ -412,6 +573,9 @@ def cmd_install(args: argparse.Namespace) -> int:
     wrote_datadrift = False
     if datadrift_bin is not None:
         wrote_datadrift = write_datadrift_wrapper(wg_dir, datadrift_bin=datadrift_bin, wrapper_mode=wrapper_mode)
+    wrote_archdrift = False
+    if archdrift_bin is not None:
+        wrote_archdrift = write_archdrift_wrapper(wg_dir, archdrift_bin=archdrift_bin, wrapper_mode=wrapper_mode)
     wrote_depsdrift = False
     if depsdrift_bin is not None:
         wrote_depsdrift = write_depsdrift_wrapper(wg_dir, depsdrift_bin=depsdrift_bin, wrapper_mode=wrapper_mode)
@@ -445,6 +609,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         updated_gitignore = ensure_specdrift_gitignore(wg_dir) or updated_gitignore
     if datadrift_bin is not None:
         updated_gitignore = ensure_datadrift_gitignore(wg_dir) or updated_gitignore
+    if archdrift_bin is not None:
+        updated_gitignore = ensure_archdrift_gitignore(wg_dir) or updated_gitignore
     if depsdrift_bin is not None:
         updated_gitignore = ensure_depsdrift_gitignore(wg_dir) or updated_gitignore
     if include_uxdrift:
@@ -458,6 +624,7 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     created_executor, patched_executors = ensure_executor_guidance(
         wg_dir,
+        include_archdrift=bool(archdrift_bin),
         include_uxdrift=include_uxdrift,
         include_therapydrift=include_therapydrift,
         include_yagnidrift=include_yagnidrift,
@@ -477,6 +644,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_coredrift=wrote_coredrift,
         wrote_specdrift=wrote_specdrift,
         wrote_datadrift=wrote_datadrift,
+        wrote_archdrift=wrote_archdrift,
         wrote_depsdrift=wrote_depsdrift,
         wrote_uxdrift=wrote_uxdrift,
         wrote_therapydrift=wrote_therapydrift,
@@ -521,6 +689,12 @@ def cmd_check(args: argparse.Namespace) -> int:
     policy = load_drift_policy(wg_dir)
     mode = policy.mode
     ordered_plugins = _ordered_optional_plugins(policy.order)
+    task = _load_task(wg_dir=wg_dir, task_id=task_id)
+    selected_plugins, lane_plan = _select_optional_plugins(
+        task=task,
+        ordered_plugins=ordered_plugins,
+        lane_strategy=getattr(args, "lane_strategy", "auto"),
+    )
     force_write_log = bool(args.write_log)
     force_create_followups = bool(args.create_followups)
 
@@ -555,6 +729,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         for plugin in ordered_plugins:
             result = _run_optional_plugin_json(
                 plugin=plugin,
+                enabled=(plugin in selected_plugins),
                 wg_dir=wg_dir,
                 project_dir=project_dir,
                 task_id=task_id,
@@ -592,6 +767,8 @@ def cmd_check(args: argparse.Namespace) -> int:
             "task_id": task_id,
             "exit_code": out_rc,
             "mode": mode,
+            "lane_strategy": lane_plan["strategy"],
+            "lane_plan": lane_plan,
             "policy_order": ordered_plugins,
             "plugins": plugins_json,
         }
@@ -605,10 +782,15 @@ def cmd_check(args: argparse.Namespace) -> int:
     if speed_rc not in (0, ExitCode.findings):
         return speed_rc
 
+    if lane_plan["full_suite"]:
+        reason_text = ", ".join(str(r) for r in lane_plan["reasons"]) or "preflight criteria matched"
+        print(f"note: lane preflight selected full suite ({reason_text})", file=sys.stderr)
+
     rc_by_plugin: dict[str, int] = {"coredrift": speed_rc}
     for plugin in ordered_plugins:
         rc_by_plugin[plugin] = _run_optional_plugin_text(
             plugin=plugin,
+            enabled=(plugin in selected_plugins),
             wg_dir=wg_dir,
             project_dir=project_dir,
             task_id=task_id,
@@ -668,6 +850,7 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--coredrift-bin", help="Path to coredrift bin/coredrift (required if not discoverable)")
     install.add_argument("--specdrift-bin", help="Path to specdrift bin/specdrift (optional)")
     install.add_argument("--datadrift-bin", help="Path to datadrift bin/datadrift (optional)")
+    install.add_argument("--archdrift-bin", help="Path to archdrift bin/archdrift (optional)")
     install.add_argument("--depsdrift-bin", help="Path to depsdrift bin/depsdrift (optional)")
     install.add_argument("--with-uxdrift", action="store_true", help="Best-effort: enable uxdrift integration if found")
     install.add_argument("--uxdrift-bin", help="Path to uxdrift bin/uxdrift (enables uxdrift integration)")
@@ -700,9 +883,15 @@ def main(argv: list[str] | None = None) -> int:
 
     check = sub.add_parser(
         "check",
-        help="Unified check (coredrift always; optional drifts run when task declares fenced specs)",
+        help="Unified check (coredrift always; optional drifts selected by lane strategy)",
     )
     check.add_argument("--task", help="Task id to check")
+    check.add_argument(
+        "--lane-strategy",
+        choices=LANE_STRATEGIES,
+        default="auto",
+        help="Optional lane routing: auto (default), fences, or all.",
+    )
     check.add_argument("--write-log", action="store_true", help="Write summary into wg log")
     check.add_argument("--create-followups", action="store_true", help="Create follow-up tasks for findings")
     check.set_defaults(func=cmd_check)

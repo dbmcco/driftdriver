@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 COREDRIFT_MARKER = "## Coredrift Protocol"
+ARCHDRIFT_MARKER = "## archdrift Protocol"
 UXDRIFT_MARKER = "## uxdrift Protocol"
 THERAPYDRIFT_MARKER = "## therapydrift Protocol"
 YAGNIDRIFT_MARKER = "## yagnidrift Protocol"
@@ -24,6 +25,7 @@ class InstallResult:
     wrote_coredrift: bool
     wrote_specdrift: bool
     wrote_datadrift: bool
+    wrote_archdrift: bool
     wrote_depsdrift: bool
     wrote_uxdrift: bool
     wrote_therapydrift: bool
@@ -61,6 +63,9 @@ def ensure_specdrift_gitignore(wg_dir: Path) -> bool:
 
 def ensure_datadrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".datadrift/")
+
+def ensure_archdrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".archdrift/")
 
 def ensure_depsdrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".depsdrift/")
@@ -158,6 +163,9 @@ def write_specdrift_wrapper(wg_dir: Path, *, specdrift_bin: Path, wrapper_mode: 
 def write_datadrift_wrapper(wg_dir: Path, *, datadrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="datadrift", tool_bin=datadrift_bin, wrapper_mode=wrapper_mode)
 
+def write_archdrift_wrapper(wg_dir: Path, *, archdrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="archdrift", tool_bin=archdrift_bin, wrapper_mode=wrapper_mode)
+
 def write_depsdrift_wrapper(wg_dir: Path, *, depsdrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="depsdrift", tool_bin=depsdrift_bin, wrapper_mode=wrapper_mode)
 
@@ -199,11 +207,24 @@ def write_drifts_wrapper(wg_dir: Path) -> bool:
 def _default_claude_executor_text(
     *,
     project_dir: Path,
+    include_archdrift: bool,
     include_uxdrift: bool,
     include_therapydrift: bool,
     include_yagnidrift: bool,
     include_redrift: bool,
 ) -> str:
+    archdrift = ""
+    if include_archdrift:
+        archdrift = (
+            "\n"
+            f"{ARCHDRIFT_MARKER}\n"
+            "- If this task includes an `archdrift` block (in the description), run:\n"
+            f"  ./.workgraph/archdrift wg check --task {{{{task_id}}}} --write-log --create-followups\n"
+            "- Or run the unified check (auto/all strategy can include archdrift):\n"
+            f"  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups\n"
+            "- Artifacts live under `.workgraph/.archdrift/`.\n"
+        )
+
     uxdrift = ""
     if include_uxdrift:
         uxdrift = (
@@ -288,6 +309,7 @@ Context from dependencies:
 - Separate pipes vs decisions (facts/execution vs judgment).
 - If a Model-Mediated Architecture skill is available, apply it (model decides; code executes).
 - Log key decisions/deviations in `wg log`, and prefer follow-up tasks over bloating the current task.
+{archdrift}
 {uxdrift}
 {therapydrift}
 {yagnidrift}
@@ -404,6 +426,32 @@ def _inject_uxdrift_into_template(body: str) -> str | None:
     return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
 
 
+def _inject_archdrift_into_template(body: str) -> str | None:
+    if ARCHDRIFT_MARKER in body:
+        return None
+
+    m = _TEMPLATE_START_RE.search(body)
+    if not m:
+        return None
+
+    start = m.end("prefix")
+    end = body.find('\"\"\"', start)
+    if end == -1:
+        return None
+
+    insert = (
+        "\n"
+        f"{ARCHDRIFT_MARKER}\n"
+        "- If this task includes an `archdrift` block (in the description), run:\n"
+        "  ./.workgraph/archdrift wg check --task {{task_id}} --write-log --create-followups\n"
+        "- Or run the unified check (auto/all strategy can include archdrift):\n"
+        "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups\n"
+        "- Artifacts live under `.workgraph/.archdrift/`.\n"
+    )
+
+    return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
+
+
 def _inject_therapydrift_into_template(body: str) -> str | None:
     if THERAPYDRIFT_MARKER in body:
         return None
@@ -485,6 +533,7 @@ def _inject_redrift_into_template(body: str) -> str | None:
 def ensure_executor_guidance(
     wg_dir: Path,
     *,
+    include_archdrift: bool,
     include_uxdrift: bool,
     include_therapydrift: bool,
     include_yagnidrift: bool,
@@ -499,6 +548,7 @@ def ensure_executor_guidance(
         claude_path.write_text(
             _default_claude_executor_text(
                 project_dir=wg_dir.parent,
+                include_archdrift=include_archdrift,
                 include_uxdrift=include_uxdrift,
                 include_therapydrift=include_therapydrift,
                 include_yagnidrift=include_yagnidrift,
@@ -518,6 +568,12 @@ def ensure_executor_guidance(
         if new_text is not None:
             cur = new_text
             changed = True
+
+        if include_archdrift:
+            new_text = _inject_archdrift_into_template(cur)
+            if new_text is not None:
+                cur = new_text
+                changed = True
 
         if include_uxdrift:
             new_text = _inject_uxdrift_into_template(cur)

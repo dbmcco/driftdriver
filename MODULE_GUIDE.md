@@ -21,8 +21,14 @@ scripts/package_app.sh --app /path/to/app --seed-redrift-task
 
 `driftdriver` always runs `coredrift`, then optional modules based on:
 - tool installed in `./.workgraph/<module>`
-- fenced block present in task description (` ```specdrift`, ` ```redrift`, etc.)
+- lane strategy (`--lane-strategy auto|fences|all`)
+- fenced block present in task description (` ```specdrift`, ` ```redrift`, etc.) when strategy uses fences
 - policy order in `./.workgraph/drift-policy.toml`
+
+Defaults:
+- `auto`: fence-based routing plus full-suite escalation for complex/rebuild tasks
+- `fences`: strict fence-only routing
+- `all`: run all installed optional modules
 
 ## Standalone Commands
 
@@ -30,6 +36,7 @@ scripts/package_app.sh --app /path/to/app --seed-redrift-task
 coredrift --dir . check --task <id> --write-log --create-followups
 specdrift --dir . wg check --task <id> --write-log --create-followups
 datadrift --dir . wg check --task <id> --write-log --create-followups
+archdrift --dir . wg check --task <id> --write-log --create-followups
 depsdrift --dir . wg check --task <id> --write-log --create-followups
 uxdrift wg --dir . check --task <id> --write-log --create-followups
 therapydrift --dir . wg check --task <id> --write-log --create-followups
@@ -52,7 +59,12 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 ### datadrift
 
 - Standalone: schema/migration consistency.
-- Together: combine with `depsdrift` and `redrift`.
+- Together: combine with `archdrift`, `depsdrift`, and `redrift`.
+
+### archdrift
+
+- Standalone: architecture intent vs implementation drift.
+- Together: combine with `redrift` and `uxdrift` for rebuild and product loops.
 
 ### depsdrift
 
@@ -77,11 +89,11 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 ### redrift
 
 - Standalone: brownfield re-spec/rebuild artifact discipline.
-- Together: combine with `specdrift`, `datadrift`, and `therapydrift`.
+- Together: combine with `specdrift`, `datadrift`, `archdrift`, and `therapydrift`.
 
 ## Suggested Stacks
 
 - Product feature stack: `coredrift + specdrift + uxdrift`
-- Backend migration stack: `coredrift + datadrift + depsdrift + redrift`
+- Backend migration stack: `coredrift + datadrift + archdrift + depsdrift + redrift`
 - Stabilization stack: `coredrift + therapydrift + yagnidrift`
-- Brownfield v2 stack: `coredrift + redrift + specdrift + datadrift + therapydrift`
+- Brownfield v2 stack: `coredrift + redrift + specdrift + datadrift + archdrift + therapydrift`

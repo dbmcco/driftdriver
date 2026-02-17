@@ -8,13 +8,14 @@ Driftdriver is an orchestrator for **Workgraph-first** agent development.
 
 Today it supports:
 - `coredrift` (baseline, always-run)
-- `specdrift` (optional, only when a task declares a `specdrift` block)
-- `datadrift` (optional, only when a task declares a `datadrift` block)
-- `depsdrift` (optional, only when a task declares a `depsdrift` block)
-- `uxdrift` (optional, only when a task declares a `uxdrift` block)
-- `therapydrift` (optional, only when a task declares a `therapydrift` block)
-- `yagnidrift` (optional, only when a task declares a `yagnidrift` block)
-- `redrift` (optional, only when a task declares a `redrift` block)
+- `specdrift` (optional)
+- `datadrift` (optional)
+- `archdrift` (optional)
+- `depsdrift` (optional)
+- `uxdrift` (optional)
+- `therapydrift` (optional)
+- `yagnidrift` (optional)
+- `redrift` (optional)
 
 Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
 
@@ -26,7 +27,7 @@ This project is part of the Speedrift suite for Workgraph-first drift control.
 - Spine: [Workgraph](https://graphwork.github.io/)
 - Orchestrator: [driftdriver](https://github.com/dbmcco/driftdriver)
 - Baseline lane: [coredrift](https://github.com/dbmcco/coredrift)
-- Optional lanes: [specdrift](https://github.com/dbmcco/specdrift), [datadrift](https://github.com/dbmcco/datadrift), [depsdrift](https://github.com/dbmcco/depsdrift), [uxdrift](https://github.com/dbmcco/uxdrift), [therapydrift](https://github.com/dbmcco/therapydrift), [yagnidrift](https://github.com/dbmcco/yagnidrift), [redrift](https://github.com/dbmcco/redrift)
+- Optional lanes: [specdrift](https://github.com/dbmcco/specdrift), [datadrift](https://github.com/dbmcco/datadrift), [archdrift](https://github.com/dbmcco/archdrift), [depsdrift](https://github.com/dbmcco/depsdrift), [uxdrift](https://github.com/dbmcco/uxdrift), [therapydrift](https://github.com/dbmcco/therapydrift), [yagnidrift](https://github.com/dbmcco/yagnidrift), [redrift](https://github.com/dbmcco/redrift)
 
 ## Install (CLI)
 
@@ -41,6 +42,7 @@ pipx install git+https://github.com/dbmcco/coredrift.git
 # Optional plugins:
 pipx install git+https://github.com/dbmcco/specdrift.git
 pipx install git+https://github.com/dbmcco/datadrift.git
+pipx install git+https://github.com/dbmcco/archdrift.git
 pipx install git+https://github.com/dbmcco/depsdrift.git
 pipx install git+https://github.com/dbmcco/uxdrift.git
 pipx install git+https://github.com/dbmcco/therapydrift.git
@@ -75,7 +77,7 @@ scripts/package_app.sh --app /path/to/app --seed-redrift-task
 
 What it does:
 - installs `driftdriver` wrappers into the target app's `.workgraph/`
-- wires all locally available modules (`coredrift`, `specdrift`, `datadrift`, `depsdrift`, `uxdrift`, `therapydrift`, `yagnidrift`, `redrift`)
+- wires all locally available modules (`coredrift`, `specdrift`, `datadrift`, `archdrift`, `depsdrift`, `uxdrift`, `therapydrift`, `yagnidrift`, `redrift`)
 - optionally seeds a starter redrift task with a full-suite fence set
 
 Common flags:
@@ -101,6 +103,7 @@ This writes:
 - `./.workgraph/driftdriver` (wrapper)
 - `./.workgraph/drifts` (single per-repo entrypoint used by agents)
 - `./.workgraph/coredrift` (wrapper)
+- (optional) `./.workgraph/archdrift` (wrapper)
 - (optional) `./.workgraph/uxdrift` (wrapper)
 - (optional) `./.workgraph/therapydrift` (wrapper)
 - (optional) `./.workgraph/yagnidrift` (wrapper)
@@ -115,7 +118,7 @@ This writes:
 ```toml
 schema = 1
 mode = "redirect"
-order = ["coredrift", "specdrift", "datadrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift", "redrift"]
+order = ["coredrift", "specdrift", "datadrift", "archdrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift", "redrift"]
 
 [recursion]
 cooldown_seconds = 1800
@@ -134,6 +137,10 @@ Modes:
 Notes:
 - `order` controls optional plugin execution order under `./.workgraph/drifts check`.
 - CLI flags still force behavior per run: `--write-log` and `--create-followups`.
+- Lane routing is controlled per run with `--lane-strategy`:
+  - `auto` (default): respects task fences and escalates to full-suite for complex/rebuild tasks.
+  - `fences`: only run optional lanes explicitly fenced in task description.
+  - `all`: run every installed optional lane.
 
 ## Use Tools Separately
 
@@ -143,6 +150,7 @@ You can run each tool directly without `driftdriver`:
 coredrift --dir . check --task <id> --write-log --create-followups
 specdrift --dir . wg check --task <id> --write-log --create-followups
 datadrift --dir . wg check --task <id> --write-log --create-followups
+archdrift --dir . wg check --task <id> --write-log --create-followups
 depsdrift --dir . wg check --task <id> --write-log --create-followups
 uxdrift wg --dir . check --task <id> --write-log --create-followups
 therapydrift --dir . wg check --task <id> --write-log --create-followups
@@ -150,7 +158,7 @@ yagnidrift --dir . wg check --task <id> --write-log --create-followups
 redrift --dir . wg check --task <id> --write-log --create-followups
 ```
 
-Use `driftdriver` when you want one command (`./.workgraph/drifts check`) that routes by task fences and policy.
+Use `driftdriver` when you want one command (`./.workgraph/drifts check`) that routes by lane strategy + policy.
 
 Detailed per-module standalone vs combined playbooks:
 - `MODULE_GUIDE.md`
@@ -161,6 +169,12 @@ Agents should run (at task start and before completion):
 
 ```bash
 ./.workgraph/drifts check --task <id> --write-log --create-followups
+```
+
+For complex apps or rebuild programs, use:
+
+```bash
+./.workgraph/drifts check --task <id> --lane-strategy all --write-log --create-followups
 ```
 
 Exit codes:
