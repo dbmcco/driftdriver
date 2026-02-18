@@ -75,6 +75,8 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 
 - Standalone: runtime UI evidence (screenshots/network/console).
 - Together: combine with `specdrift` and `coredrift`.
+- For consistent UX judgment, prefer POV-guided runs:
+  - `uxdrift wg --dir . check --task <id> --llm --pov doet-norman-v1 --write-log --create-followups`
 
 ### therapydrift
 
