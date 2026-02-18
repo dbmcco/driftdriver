@@ -171,6 +171,19 @@ Agents should run (at task start and before completion):
 ./.workgraph/drifts check --task <id> --write-log --create-followups
 ```
 
+For UX-heavy tasks, define an `uxdrift` fence on the task and keep using the same command:
+
+````md
+```uxdrift
+schema = 1
+url = "http://localhost:3000"
+pages = ["/", "/checkout"]
+llm = true
+pov = "doet-norman-v1"
+pov_focus = ["discoverability", "feedback", "error_prevention_recovery"]
+```
+````
+
 For complex apps or rebuild programs, use:
 
 ```bash
