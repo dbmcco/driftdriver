@@ -30,6 +30,16 @@ Defaults:
 - `fences`: strict fence-only routing
 - `all`: run all installed optional modules
 
+Update hygiene:
+- `driftdriver` can preflight ecosystem updates before each `check` (see `[updates]` in `drift-policy.toml`).
+- Run `driftdriver updates --force` any time you want a manual self-update decision checkpoint.
+
+Queue + health hygiene:
+- `driftdriver queue --limit 10` shows ranked ready drift follow-ups + duplicate groups.
+- `driftdriver doctor` reports wrapper compatibility, contract coverage, loop pressure, and risk state.
+- `driftdriver doctor --fix` reapplies wrapper install + contract hygiene, then re-reports.
+- `driftdriver run --task <id>` runs check + normalized action plan + top next drift actions.
+
 ## Standalone Commands
 
 ```bash

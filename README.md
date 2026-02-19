@@ -125,6 +125,19 @@ cooldown_seconds = 1800
 max_auto_actions_per_hour = 2
 require_new_evidence = true
 max_auto_depth = 2
+
+[contracts]
+auto_ensure = true
+
+[updates]
+enabled = true
+check_interval_seconds = 21600
+create_followup = false
+
+[loop_safety]
+max_redrift_depth = 2
+max_ready_drift_followups = 20
+block_followup_creation = true
 ```
 
 Modes:
@@ -137,10 +150,33 @@ Modes:
 Notes:
 - `order` controls optional plugin execution order under `./.workgraph/drifts check`.
 - CLI flags still force behavior per run: `--write-log` and `--create-followups`.
+- Contract hygiene: if `[contracts].auto_ensure = true`, driftdriver runs `coredrift ensure-contracts --apply` before checks.
+- Update preflight runs before `check` when `[updates].enabled = true`.
+  - If ecosystem repo heads changed, driftdriver prints a decision prompt:
+    - `Decision needed: should the model/toolchain self-update now?`
+  - Update checks are cached by `check_interval_seconds` in `./.workgraph/.driftdriver/update-state.json`.
+  - If `create_followup = true`, driftdriver creates a deterministic follow-up task per origin task.
+- Loop safety: if `[loop_safety]` thresholds are exceeded, driftdriver downgrades the run to advisory mode (logs yes, new follow-ups no).
 - Lane routing is controlled per run with `--lane-strategy`:
   - `auto` (default): respects task fences and escalates to full-suite for complex/rebuild tasks.
   - `fences`: only run optional lanes explicitly fenced in task description.
   - `all`: run every installed optional lane.
+
+Manual update check:
+
+```bash
+driftdriver updates
+driftdriver updates --force
+driftdriver updates --json --force
+
+# health + queue controls
+driftdriver doctor
+driftdriver doctor --fix
+driftdriver queue --limit 10
+
+# one-shot flow: check + normalized actions + next queued drift tasks
+driftdriver run --task <id>
+```
 
 ## Use Tools Separately
 
