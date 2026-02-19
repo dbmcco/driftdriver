@@ -21,6 +21,7 @@ from driftdriver.health import (
     has_contract,
     is_active,
     is_drift_task,
+    normalize_drift_key,
     rank_ready_drift_queue,
     redrift_depth,
 )
@@ -613,7 +614,7 @@ def _compute_loop_safety(*, wg_dir: Path, task_id: str, policy: Any) -> dict[str
     tasks = list(wg.tasks.values())
     tasks_by_id = {str(t.get("id") or ""): t for t in tasks}
 
-    depth = redrift_depth(task_id)
+    depth = redrift_depth(task_id) if str(task_id).startswith("redrift-") else 0
     max_depth = int(getattr(policy, "loop_max_redrift_depth", 2))
     if max_depth < 0:
         max_depth = 0
@@ -782,6 +783,89 @@ def _doctor_report(*, wg_dir: Path, policy: Any) -> dict[str, Any]:
         "active_missing_contract_count": len(missing_contract_ids),
         "active_missing_contract_sample": missing_contract_ids[:10],
         "issues": issues,
+    }
+
+
+def _compact_plan(*, tasks: list[dict[str, Any]], max_ready: int, max_redrift_depth: int) -> dict[str, Any]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for task in tasks:
+        if not is_drift_task(task) or not is_active(task):
+            continue
+        key = normalize_drift_key(task)
+        grouped.setdefault(key, []).append(task)
+
+    def _created_epoch(task: dict[str, Any]) -> int:
+        raw = str(task.get("created_at") or "").strip()
+        if not raw:
+            return 0
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except Exception:
+            return 0
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+
+    duplicate_groups: list[dict[str, Any]] = []
+    abandon_ids: list[str] = []
+    for key, rows in grouped.items():
+        if len(rows) <= 1:
+            continue
+        ordered = sorted(
+            rows,
+            key=lambda t: (
+                0 if str(t.get("status") or "") == "in-progress" else 1,
+                _created_epoch(t),
+                str(t.get("id") or ""),
+            ),
+        )
+        keep = str(ordered[0].get("id") or "")
+        drop = [str(t.get("id") or "") for t in ordered[1:] if str(t.get("id") or "")]
+        if drop:
+            duplicate_groups.append(
+                {
+                    "key": key,
+                    "keep_task_id": keep,
+                    "abandon_task_ids": drop,
+                }
+            )
+            abandon_ids.extend(drop)
+
+    depth_exceeded_ids: list[str] = []
+    depth_limit = max(0, int(max_redrift_depth))
+    for task in tasks:
+        if not is_drift_task(task) or not is_active(task):
+            continue
+        task_id = str(task.get("id") or "")
+        if (
+            task_id.startswith("redrift-")
+            and redrift_depth(task_id) > depth_limit
+            and str(task.get("status") or "") != "in-progress"
+        ):
+            depth_exceeded_ids.append(task_id)
+
+    if depth_exceeded_ids:
+        abandon_ids.extend(depth_exceeded_ids)
+
+    ready = rank_ready_drift_queue(tasks, limit=10_000)
+    safe_max_ready = max(0, int(max_ready))
+    overflow = ready[safe_max_ready:] if len(ready) > safe_max_ready else []
+    overflow_ids = [str(item.get("task_id") or "") for item in overflow if str(item.get("task_id") or "")]
+
+    # Don't defer tasks that are already being abandoned as duplicates.
+    abandon_set = set(abandon_ids)
+    overflow_ids = [tid for tid in overflow_ids if tid not in abandon_set]
+
+    return {
+        "duplicate_groups": duplicate_groups,
+        "depth_exceeded_redrift_task_ids": sorted(set(depth_exceeded_ids)),
+        "abandon_task_ids": sorted(set(abandon_ids)),
+        "ready_drift_before": len(ready),
+        "max_ready_drift": safe_max_ready,
+        "max_redrift_depth": depth_limit,
+        "defer_task_ids": overflow_ids,
     }
 
 
@@ -1343,6 +1427,88 @@ def cmd_queue(args: argparse.Namespace) -> int:
     return ExitCode.ok
 
 
+def cmd_compact(args: argparse.Namespace) -> int:
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    policy = load_drift_policy(wg_dir)
+    wg = load_workgraph(wg_dir)
+    tasks = list(wg.tasks.values())
+
+    max_ready_default = int(getattr(policy, "loop_max_ready_drift_followups", 20))
+    max_ready_raw = getattr(args, "max_ready", None)
+    max_ready = max_ready_default if max_ready_raw is None else int(max_ready_raw)
+    if max_ready < 0:
+        max_ready = 0
+    max_redrift_depth = int(getattr(policy, "loop_max_redrift_depth", 2))
+    if max_redrift_depth < 0:
+        max_redrift_depth = 0
+    defer_hours = int(getattr(args, "defer_hours", 24))
+    if defer_hours < 1:
+        defer_hours = 1
+
+    plan = _compact_plan(tasks=tasks, max_ready=max_ready, max_redrift_depth=max_redrift_depth)
+    applied_abandoned: list[str] = []
+    applied_deferred: list[str] = []
+    errors: list[str] = []
+
+    if bool(getattr(args, "apply", False)):
+        for task_id in plan["abandon_task_ids"]:
+            try:
+                subprocess.check_call(["wg", "--dir", str(wg_dir), "abandon", task_id], stdout=subprocess.DEVNULL)
+                applied_abandoned.append(task_id)
+            except Exception as e:
+                errors.append(f"abandon {task_id}: {e}")
+
+        for task_id in plan["defer_task_ids"]:
+            try:
+                subprocess.check_call(
+                    ["wg", "--dir", str(wg_dir), "reschedule", task_id, "--after", str(defer_hours)],
+                    stdout=subprocess.DEVNULL,
+                )
+                applied_deferred.append(task_id)
+            except Exception as e:
+                errors.append(f"reschedule {task_id}: {e}")
+
+    after_tasks = list(load_workgraph(wg_dir).tasks.values())
+    score_before = compute_scoreboard(tasks)
+    score_after = compute_scoreboard(after_tasks)
+
+    report = {
+        "applied": bool(getattr(args, "apply", False)),
+        "defer_hours": defer_hours,
+        "plan": plan,
+        "applied_abandoned": applied_abandoned,
+        "applied_deferred": applied_deferred,
+        "errors": errors,
+        "scoreboard_before": score_before,
+        "scoreboard_after": score_after,
+    }
+
+    as_json = bool(getattr(args, "json", False))
+    if as_json:
+        print(json.dumps(report, indent=2, sort_keys=False))
+    else:
+        print(f"Applied: {report['applied']}")
+        print(
+            f"Plan: abandon={len(plan['abandon_task_ids'])} defer={len(plan['defer_task_ids'])} "
+            f"(ready {plan['ready_drift_before']} -> target {plan['max_ready_drift']})"
+        )
+        if report["applied"]:
+            print(f"Applied abandon={len(applied_abandoned)} defer={len(applied_deferred)}")
+        if errors:
+            print("Errors:")
+            for item in errors[:8]:
+                print(f"- {item}")
+        print(
+            "Scoreboard: "
+            f"{score_before.get('status')} -> {score_after.get('status')}, "
+            f"ready_drift {score_before.get('ready_drift')} -> {score_after.get('ready_drift')}"
+        )
+
+    if errors:
+        return ExitCode.usage
+    return ExitCode.ok
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
     project_dir = wg_dir.parent
@@ -1553,6 +1719,20 @@ def main(argv: list[str] | None = None) -> int:
     doctor.add_argument("--json", action="store_true", help="JSON output")
     doctor.add_argument("--fix", action="store_true", help="Reinstall wrappers + run contract hygiene before reporting")
     doctor.set_defaults(func=cmd_doctor)
+
+    compact = sub.add_parser(
+        "compact",
+        help="Compact drift queue by abandoning duplicate follow-ups and deferring overflow ready items",
+    )
+    compact.add_argument("--json", action="store_true", help="JSON output")
+    compact.add_argument("--apply", action="store_true", help="Apply compaction actions (default: dry-run)")
+    compact.add_argument(
+        "--max-ready",
+        type=int,
+        help="Ready drift queue cap for overflow defer (default: policy loop_safety.max_ready_drift_followups)",
+    )
+    compact.add_argument("--defer-hours", type=int, default=24, help="Reschedule overflow items by this many hours")
+    compact.set_defaults(func=cmd_compact)
 
     run = sub.add_parser("run", help="One-shot operation: check + normalized actions + next queued drift tasks")
     run.add_argument("--task", help="Task id to run")

@@ -38,6 +38,8 @@ Queue + health hygiene:
 - `driftdriver queue --limit 10` shows ranked ready drift follow-ups + duplicate groups.
 - `driftdriver doctor` reports wrapper compatibility, contract coverage, loop pressure, and risk state.
 - `driftdriver doctor --fix` reapplies wrapper install + contract hygiene, then re-reports.
+- `driftdriver compact` previews duplicate/overflow queue compaction (dry-run).
+- `driftdriver compact --apply` abandons duplicate drift tasks and reschedules overflow ready items.
 - `driftdriver run --task <id>` runs check + normalized action plan + top next drift actions.
 
 ## Standalone Commands

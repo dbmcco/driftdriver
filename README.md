@@ -173,6 +173,8 @@ driftdriver updates --json --force
 driftdriver doctor
 driftdriver doctor --fix
 driftdriver queue --limit 10
+driftdriver compact
+driftdriver compact --apply
 
 # one-shot flow: check + normalized actions + next queued drift tasks
 driftdriver run --task <id>

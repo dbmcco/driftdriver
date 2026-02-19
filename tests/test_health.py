@@ -59,6 +59,14 @@ class HealthTests(unittest.TestCase):
                 "created_at": "2026-02-18T12:01:00+00:00",
             },
             {
+                "id": "drift-scope-parent-2",
+                "title": "scope: Parent",
+                "status": "open",
+                "blocked_by": ["parent-2"],
+                "created_at": "2026-02-18T12:01:30+00:00",
+                "not_before": "2099-01-01T00:00:00+00:00",
+            },
+            {
                 "id": "redrift-build-redrift-app",
                 "title": "redrift build: redrift analyze: App",
                 "status": "open",
@@ -76,7 +84,8 @@ class HealthTests(unittest.TestCase):
         ranked = rank_ready_drift_queue(tasks, limit=10)
         self.assertGreaterEqual(len(ranked), 3)
         self.assertEqual(ranked[0]["task_id"], "coredrift-pit-parent-1")
-        self.assertEqual(normalize_drift_key(tasks[4]), "app")
+        self.assertNotIn("drift-scope-parent-2", [x["task_id"] for x in ranked])
+        self.assertEqual(normalize_drift_key(tasks[5]), "app")
 
         dups = find_duplicate_open_drift_groups(tasks)
         self.assertEqual(len(dups), 1)

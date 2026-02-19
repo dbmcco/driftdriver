@@ -142,6 +142,21 @@ def _task_epoch(task: dict[str, Any]) -> int:
     return int(dt.timestamp())
 
 
+def _future_not_before(task: dict[str, Any]) -> bool:
+    raw = str(task.get("not_before") or "").strip()
+    if not raw:
+        return False
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except Exception:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp()) > int(datetime.now(timezone.utc).timestamp())
+
+
 def _queue_priority(task: dict[str, Any]) -> int:
     task_id = str(task.get("id") or "")
     title = str(task.get("title") or "").lower()
@@ -167,6 +182,8 @@ def rank_ready_drift_queue(tasks: list[dict[str, Any]], *, limit: int = 10) -> l
         if not is_drift_task(task):
             continue
         if not is_active(task):
+            continue
+        if _future_not_before(task):
             continue
         if not blockers_done(task, tasks_by_id):
             continue
@@ -200,7 +217,10 @@ def compute_scoreboard(tasks: list[dict[str, Any]]) -> dict[str, Any]:
 
     max_depth = 0
     for t in active_drift:
-        max_depth = max(max_depth, redrift_depth(str(t.get("id") or "")))
+        task_id = str(t.get("id") or "")
+        if not task_id.startswith("redrift-"):
+            continue
+        max_depth = max(max_depth, redrift_depth(task_id))
 
     duplicate_groups = find_duplicate_open_drift_groups(tasks)
     active_ratio = (len(active_drift) / active_total) if active_total else 0.0
