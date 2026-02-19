@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import subprocess
 import sys
 import shutil
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from driftdriver.health import (
+    blockers_done,
+    compute_scoreboard,
+    detect_cycle_from,
+    find_duplicate_open_drift_groups,
+    has_contract,
+    is_active,
+    is_drift_task,
+    rank_ready_drift_queue,
+    redrift_depth,
+)
 from driftdriver.install import (
     InstallResult,
     ensure_archdrift_gitignore,
@@ -37,6 +50,7 @@ from driftdriver.install import (
     write_yagnidrift_wrapper,
 )
 from driftdriver.policy import ensure_drift_policy, load_drift_policy
+from driftdriver.updates import check_ecosystem_updates, summarize_updates
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
 
 
@@ -424,6 +438,393 @@ def _ensure_breaker_task(*, wg_dir: Path, task_id: str) -> str:
     return breaker_id
 
 
+def _update_errors(result: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    repos = result.get("repos")
+    if not isinstance(repos, list):
+        return errors
+    for entry in repos:
+        if not isinstance(entry, dict):
+            continue
+        error = str(entry.get("error") or "").strip()
+        if not error:
+            continue
+        tool = str(entry.get("tool") or "unknown")
+        errors.append(f"{tool}: {error}")
+    return errors
+
+
+def _wg_log_message(*, wg_dir: Path, task_id: str, message: str) -> None:
+    try:
+        subprocess.check_call(
+            ["wg", "--dir", str(wg_dir), "log", task_id, message],
+            stdout=subprocess.DEVNULL,
+        )
+    except Exception:
+        print("note: could not write update preflight summary into wg log", file=sys.stderr)
+
+
+def _ensure_update_followup_task(*, wg_dir: Path, task_id: str, summary: str) -> str:
+    followup_id = f"drift-self-update-{task_id}"
+    try:
+        subprocess.check_output(
+            ["wg", "--dir", str(wg_dir), "show", followup_id, "--json"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        return followup_id
+    except Exception:
+        pass
+
+    ts = datetime.now(timezone.utc).isoformat()
+    desc = (
+        "Speedrift ecosystem updates were detected during driftdriver preflight.\n\n"
+        f"Origin task: {task_id}\n"
+        f"Detected at: {ts}\n\n"
+        "Decision needed: should the model/toolchain self-update now?\n\n"
+        "Expected action:\n"
+        "- review new commits in ecosystem repos\n"
+        "- decide update now vs defer and log rationale\n"
+        "- if updating, rerun `./.workgraph/drifts check --task "
+        + task_id
+        + " --write-log --create-followups`\n\n"
+        "Preflight summary:\n"
+        f"{summary}\n"
+    )
+    subprocess.check_call(
+        [
+            "wg",
+            "--dir",
+            str(wg_dir),
+            "add",
+            f"self-update decision: {task_id}",
+            "--id",
+            followup_id,
+            "--blocked-by",
+            task_id,
+            "-d",
+            desc,
+            "-t",
+            "drift",
+            "-t",
+            "updates",
+        ]
+    )
+    return followup_id
+
+
+def _run_update_preflight(
+    *,
+    wg_dir: Path,
+    policy: Any,
+    task_id: str,
+    write_log: bool,
+    create_followups: bool,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "enabled": bool(getattr(policy, "updates_enabled", True)),
+        "checked": False,
+        "skipped": False,
+        "has_updates": False,
+        "updates": [],
+        "errors": [],
+        "summary": None,
+        "followup_task_id": None,
+    }
+    if not out["enabled"]:
+        return out
+
+    interval = int(getattr(policy, "updates_check_interval_seconds", 21600))
+    if interval < 0:
+        interval = 0
+    try:
+        result = check_ecosystem_updates(
+            wg_dir=wg_dir,
+            interval_seconds=interval,
+            force=False,
+        )
+    except Exception as e:
+        out["errors"] = [str(e)]
+        print(f"note: ecosystem update preflight failed: {e}", file=sys.stderr)
+        return out
+    out["checked"] = True
+    out["skipped"] = bool(result.get("skipped"))
+    out["checked_at"] = result.get("checked_at")
+    out["interval_seconds"] = int(result.get("interval_seconds", interval))
+    out["elapsed_seconds"] = int(result.get("elapsed_seconds", 0))
+    out["has_updates"] = bool(result.get("has_updates"))
+    out["updates"] = result.get("updates") or []
+    out["errors"] = _update_errors(result)
+
+    if out["errors"]:
+        print("note: ecosystem update preflight had lookup errors:", file=sys.stderr)
+        for error in out["errors"][:6]:
+            print(f"  - {error}", file=sys.stderr)
+
+    if out["has_updates"]:
+        summary = summarize_updates(result)
+        out["summary"] = summary
+        print(summary, file=sys.stderr)
+        if write_log:
+            _wg_log_message(wg_dir=wg_dir, task_id=task_id, message=summary.replace("\n", " | "))
+        should_create_followup = create_followups or bool(getattr(policy, "updates_create_followup", False))
+        if should_create_followup:
+            try:
+                out["followup_task_id"] = _ensure_update_followup_task(
+                    wg_dir=wg_dir,
+                    task_id=task_id,
+                    summary=summary,
+                )
+            except Exception as e:
+                print(f"note: could not create update follow-up task: {e}", file=sys.stderr)
+
+    return out
+
+
+def _maybe_auto_ensure_contracts(*, wg_dir: Path, project_dir: Path, policy: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "enabled": bool(getattr(policy, "contracts_auto_ensure", True)),
+        "attempted": False,
+        "applied": False,
+        "error": None,
+    }
+    if not out["enabled"]:
+        return out
+
+    coredrift = wg_dir / "coredrift"
+    if not coredrift.exists():
+        out["error"] = "coredrift wrapper not found"
+        return out
+
+    out["attempted"] = True
+    cmd = [str(coredrift), "--dir", str(project_dir), "ensure-contracts", "--apply"]
+    proc = subprocess.run(cmd, text=True, capture_output=True)
+    if int(proc.returncode) != 0:
+        out["error"] = (proc.stderr or proc.stdout or "ensure-contracts failed").strip()[:1000]
+        print("note: contract auto-ensure failed; continuing", file=sys.stderr)
+        return out
+
+    out["applied"] = True
+    return out
+
+
+def _compute_loop_safety(*, wg_dir: Path, task_id: str, policy: Any) -> dict[str, Any]:
+    wg = load_workgraph(wg_dir)
+    tasks = list(wg.tasks.values())
+    tasks_by_id = {str(t.get("id") or ""): t for t in tasks}
+
+    depth = redrift_depth(task_id)
+    max_depth = int(getattr(policy, "loop_max_redrift_depth", 2))
+    if max_depth < 0:
+        max_depth = 0
+
+    ready_queue = rank_ready_drift_queue(tasks, limit=10_000)
+    ready_count = len(ready_queue)
+    max_ready = int(getattr(policy, "loop_max_ready_drift_followups", 20))
+    if max_ready < 0:
+        max_ready = 0
+
+    has_cycle = detect_cycle_from(task_id, tasks_by_id)
+    reasons: list[str] = []
+    if depth > max_depth:
+        reasons.append(f"redrift_depth_exceeded ({depth} > {max_depth})")
+    if ready_count > max_ready:
+        reasons.append(f"ready_drift_queue_exceeded ({ready_count} > {max_ready})")
+    if has_cycle:
+        reasons.append("blocked_by_cycle_detected")
+
+    block = bool(getattr(policy, "loop_block_followup_creation", True)) and bool(reasons)
+    return {
+        "max_redrift_depth": max_depth,
+        "observed_redrift_depth": depth,
+        "max_ready_drift_followups": max_ready,
+        "ready_drift_followups": ready_count,
+        "blocked_by_cycle": has_cycle,
+        "followups_blocked": block,
+        "reasons": reasons,
+    }
+
+
+def _wrapper_commands_available(*, wrapper: Path) -> list[str]:
+    if not wrapper.exists():
+        return []
+    proc = subprocess.run([str(wrapper), "--help"], text=True, capture_output=True)
+    text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    found: list[str] = []
+    for name in ("install", "check", "updates", "doctor", "queue", "run", "orchestrate"):
+        if re.search(rf"\b{name}\b", text):
+            found.append(name)
+    return found
+
+
+def _collect_findings(plugins: dict[str, Any]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for plugin, payload in plugins.items():
+        report = payload.get("report") if isinstance(payload, dict) else None
+        if not isinstance(report, dict):
+            continue
+        findings = report.get("findings")
+        if not isinstance(findings, list):
+            continue
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            kind = str(finding.get("kind") or "").strip()
+            if not kind:
+                continue
+            pairs.append((plugin, kind))
+    return pairs
+
+
+def _normalize_actions(plugins: dict[str, Any]) -> list[dict[str, str]]:
+    kind_to_action = {
+        "missing_contract": "scope",
+        "scope_drift": "scope",
+        "hardening_in_core": "harden",
+        "dependency_drift": "respec",
+        "missing_redrift_artifacts": "respec",
+        "phase_incomplete_analyze": "respec",
+        "phase_incomplete_respec": "respec",
+        "phase_incomplete_design": "respec",
+        "phase_incomplete_build": "respec",
+        "repeated_drift_signals": "harden",
+        "unresolved_drift_followups": "harden",
+        "missing_recovery_plan": "harden",
+    }
+    out: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for plugin, kind in _collect_findings(plugins):
+        action = kind_to_action.get(kind, "ignore-with-rationale")
+        key = (action, kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"action": action, "kind": kind, "source": plugin})
+    return out
+
+
+def _doctor_report(*, wg_dir: Path, policy: Any) -> dict[str, Any]:
+    wg = load_workgraph(wg_dir)
+    tasks = list(wg.tasks.values())
+    wrappers = {
+        "driftdriver": (wg_dir / "driftdriver").exists(),
+        "drifts": (wg_dir / "drifts").exists(),
+        "coredrift": (wg_dir / "coredrift").exists(),
+    }
+    commands = _wrapper_commands_available(wrapper=wg_dir / "drifts")
+    score = compute_scoreboard(tasks)
+
+    active_tasks = [t for t in tasks if is_active(t)]
+    missing_contract_ids = [str(t.get("id") or "") for t in active_tasks if not has_contract(t)]
+
+    issues: list[dict[str, str]] = []
+    required_commands = {"check", "updates", "doctor", "queue", "run"}
+    missing_commands = sorted(list(required_commands - set(commands)))
+    if missing_commands:
+        issues.append(
+            {
+                "severity": "high",
+                "kind": "wrapper_outdated",
+                "message": f"drifts wrapper misses commands: {', '.join(missing_commands)}",
+            }
+        )
+
+    if score["active_contract_coverage"] < 0.9:
+        issues.append(
+            {
+                "severity": "high" if score["active_contract_coverage"] < 0.7 else "medium",
+                "kind": "contract_coverage",
+                "message": f"active contract coverage is {score['active_contract_coverage']:.2f}",
+            }
+        )
+
+    max_depth = int(getattr(policy, "loop_max_redrift_depth", 2))
+    if int(score["max_redrift_depth"]) > max_depth:
+        issues.append(
+            {
+                "severity": "high",
+                "kind": "loop_depth",
+                "message": f"max redrift depth {score['max_redrift_depth']} exceeds policy limit {max_depth}",
+            }
+        )
+
+    max_ready = int(getattr(policy, "loop_max_ready_drift_followups", 20))
+    if int(score["ready_drift"]) > max_ready:
+        issues.append(
+            {
+                "severity": "high",
+                "kind": "queue_pressure",
+                "message": f"ready drift queue {score['ready_drift']} exceeds policy limit {max_ready}",
+            }
+        )
+
+    duplicate_groups = score.get("duplicate_open_drift_groups") or []
+    if duplicate_groups:
+        issues.append(
+            {
+                "severity": "medium",
+                "kind": "duplicate_followups",
+                "message": f"{len(duplicate_groups)} duplicate open drift groups detected",
+            }
+        )
+
+    status = "healthy"
+    if any(i["severity"] == "high" for i in issues):
+        status = "risk"
+    elif issues:
+        status = "watch"
+
+    return {
+        "status": status,
+        "wrappers": wrappers,
+        "commands_available": commands,
+        "scoreboard": score,
+        "active_missing_contract_count": len(missing_contract_ids),
+        "active_missing_contract_sample": missing_contract_ids[:10],
+        "issues": issues,
+    }
+
+
+def _repair_wrappers(*, wg_dir: Path) -> int:
+    include_ux = (wg_dir / "uxdrift").exists()
+    include_therapy = (wg_dir / "therapydrift").exists()
+    include_yagni = (wg_dir / "yagnidrift").exists()
+    include_redrift = (wg_dir / "redrift").exists()
+    args = argparse.Namespace(
+        dir=str(wg_dir.parent),
+        json=False,
+        coredrift_bin=None,
+        specdrift_bin=None,
+        datadrift_bin=None,
+        archdrift_bin=None,
+        depsdrift_bin=None,
+        with_uxdrift=include_ux,
+        uxdrift_bin=None,
+        with_therapydrift=include_therapy,
+        therapydrift_bin=None,
+        with_yagnidrift=include_yagni,
+        yagnidrift_bin=None,
+        with_redrift=include_redrift,
+        redrift_bin=None,
+        wrapper_mode="portable",
+        no_ensure_contracts=False,
+    )
+    return cmd_install(args)
+
+
+def _invoke_check_json(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    capture = io.StringIO()
+    with redirect_stdout(capture):
+        rc = cmd_check(args)
+    raw = capture.getvalue().strip()
+    if not raw:
+        return (int(rc), {})
+    try:
+        return (int(rc), json.loads(raw))
+    except Exception:
+        return (int(rc), {"raw": raw})
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     project_dir = Path.cwd()
     if args.dir:
@@ -687,26 +1088,51 @@ def cmd_check(args: argparse.Namespace) -> int:
     project_dir = wg_dir.parent
     task_id = str(args.task)
     policy = load_drift_policy(wg_dir)
-    mode = policy.mode
     ordered_plugins = _ordered_optional_plugins(policy.order)
-    task = _load_task(wg_dir=wg_dir, task_id=task_id)
-    selected_plugins, lane_plan = _select_optional_plugins(
-        task=task,
-        ordered_plugins=ordered_plugins,
-        lane_strategy=getattr(args, "lane_strategy", "auto"),
-    )
-    force_write_log = bool(args.write_log)
-    force_create_followups = bool(args.create_followups)
 
     coredrift = wg_dir / "coredrift"
     if not coredrift.exists():
         print("error: .workgraph/coredrift not found; run driftdriver install first", file=sys.stderr)
         return ExitCode.usage
 
-    speed_cmd = [str(coredrift), "--dir", str(project_dir), "check", "--task", task_id]
-    speed_write_log, speed_followups = _mode_flags(mode=mode, plugin="coredrift")
+    contract_ensure = _maybe_auto_ensure_contracts(wg_dir=wg_dir, project_dir=project_dir, policy=policy)
+
+    task = _load_task(wg_dir=wg_dir, task_id=task_id)
+    selected_plugins, lane_plan = _select_optional_plugins(
+        task=task,
+        ordered_plugins=ordered_plugins,
+        lane_strategy=getattr(args, "lane_strategy", "auto"),
+    )
+
+    force_write_log = bool(args.write_log)
+    force_create_followups = bool(args.create_followups)
+    loop_safety = _compute_loop_safety(wg_dir=wg_dir, task_id=task_id, policy=policy)
+    effective_force_create_followups = force_create_followups
+
+    mode = policy.mode
+    effective_mode = mode
+    if loop_safety["followups_blocked"] and mode not in {"observe", "advise"}:
+        effective_mode = "advise"
+        effective_force_create_followups = False
+        reason_text = ", ".join(loop_safety["reasons"]) or "loop safety guard"
+        print(
+            f"note: loop safety blocked follow-up creation ({reason_text}); running in advise mode for this check",
+            file=sys.stderr,
+        )
+
+    speed_write_log, speed_followups = _mode_flags(mode=effective_mode, plugin="coredrift")
     speed_write_log = speed_write_log or force_write_log
-    speed_followups = speed_followups or force_create_followups
+    speed_followups = speed_followups or effective_force_create_followups
+
+    update_preflight = _run_update_preflight(
+        wg_dir=wg_dir,
+        policy=policy,
+        task_id=task_id,
+        write_log=speed_write_log,
+        create_followups=effective_force_create_followups,
+    )
+
+    speed_cmd = [str(coredrift), "--dir", str(project_dir), "check", "--task", task_id]
     if speed_write_log:
         speed_cmd.append("--write-log")
     if speed_followups:
@@ -733,9 +1159,9 @@ def cmd_check(args: argparse.Namespace) -> int:
                 wg_dir=wg_dir,
                 project_dir=project_dir,
                 task_id=task_id,
-                mode=mode,
+                mode=effective_mode,
                 force_write_log=force_write_log,
-                force_create_followups=force_create_followups,
+                force_create_followups=effective_force_create_followups,
             )
             plugin_results[plugin] = result
             rc_by_plugin[plugin] = int(result.get("exit_code", 0))
@@ -767,10 +1193,15 @@ def cmd_check(args: argparse.Namespace) -> int:
             "task_id": task_id,
             "exit_code": out_rc,
             "mode": mode,
+            "effective_mode": effective_mode,
+            "contract_auto_ensure": contract_ensure,
+            "loop_safety": loop_safety,
+            "update_preflight": update_preflight,
             "lane_strategy": lane_plan["strategy"],
             "lane_plan": lane_plan,
             "policy_order": ordered_plugins,
             "plugins": plugins_json,
+            "action_plan": _normalize_actions(plugins_json),
         }
         if mode == "breaker" and out_rc == ExitCode.findings:
             breaker_id = _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
@@ -794,9 +1225,9 @@ def cmd_check(args: argparse.Namespace) -> int:
             wg_dir=wg_dir,
             project_dir=project_dir,
             task_id=task_id,
-            mode=mode,
+            mode=effective_mode,
             force_write_log=force_write_log,
-            force_create_followups=force_create_followups,
+            force_create_followups=effective_force_create_followups,
         )
 
     if any(rc == ExitCode.findings for rc in rc_by_plugin.values()):
@@ -804,6 +1235,216 @@ def cmd_check(args: argparse.Namespace) -> int:
             _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
         return ExitCode.findings
     return ExitCode.ok
+
+
+def cmd_updates(args: argparse.Namespace) -> int:
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    policy = load_drift_policy(wg_dir)
+    enabled = bool(policy.updates_enabled)
+    force = bool(getattr(args, "force", False))
+
+    if not enabled and not force:
+        message = "Update checks disabled in drift-policy.toml ([updates].enabled = false)."
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "enabled": False,
+                        "checked": False,
+                        "skipped": True,
+                        "has_updates": False,
+                        "updates": [],
+                        "errors": [],
+                        "message": message,
+                    },
+                    indent=2,
+                    sort_keys=False,
+                )
+            )
+        else:
+            print(message)
+        return ExitCode.ok
+
+    interval = int(policy.updates_check_interval_seconds)
+    if interval < 0:
+        interval = 0
+    result = check_ecosystem_updates(
+        wg_dir=wg_dir,
+        interval_seconds=interval,
+        force=force,
+    )
+    errors = _update_errors(result)
+    has_updates = bool(result.get("has_updates"))
+
+    if args.json:
+        output: dict[str, Any] = {
+            "enabled": enabled,
+            "checked": True,
+            "force": force,
+            "skipped": bool(result.get("skipped")),
+            "checked_at": result.get("checked_at"),
+            "interval_seconds": int(result.get("interval_seconds", interval)),
+            "elapsed_seconds": int(result.get("elapsed_seconds", 0)),
+            "has_updates": has_updates,
+            "updates": result.get("updates") or [],
+            "errors": errors,
+        }
+        if has_updates:
+            output["summary"] = summarize_updates(result)
+        print(json.dumps(output, indent=2, sort_keys=False))
+        return ExitCode.findings if has_updates else ExitCode.ok
+
+    if bool(result.get("skipped")):
+        elapsed = int(result.get("elapsed_seconds", 0))
+        interval_seconds = int(result.get("interval_seconds", interval))
+        print(f"Update check skipped: interval not elapsed ({elapsed}s < {interval_seconds}s).")
+    elif has_updates:
+        print(summarize_updates(result))
+    else:
+        print("No ecosystem updates detected.")
+
+    if errors:
+        print("Update check errors:", file=sys.stderr)
+        for error in errors[:6]:
+            print(f"- {error}", file=sys.stderr)
+
+    return ExitCode.findings if has_updates else ExitCode.ok
+
+
+def cmd_queue(args: argparse.Namespace) -> int:
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    wg = load_workgraph(wg_dir)
+    tasks = list(wg.tasks.values())
+
+    limit = int(getattr(args, "limit", 10))
+    if limit < 1:
+        limit = 1
+    ready = rank_ready_drift_queue(tasks, limit=limit)
+    duplicates = find_duplicate_open_drift_groups(tasks)
+    out = {
+        "ready_drift": ready,
+        "duplicate_open_drift_groups": duplicates,
+        "scoreboard": compute_scoreboard(tasks),
+    }
+
+    as_json = bool(getattr(args, "json", False))
+    if as_json:
+        print(json.dumps(out, indent=2, sort_keys=False))
+        return ExitCode.ok
+
+    print(f"Ready drift queue: {len(ready)}")
+    for item in ready:
+        print(f"- {item['task_id']} [p={item['priority']}] {item['title']}")
+
+    if duplicates:
+        print(f"\nDuplicate drift groups: {len(duplicates)}")
+        for group in duplicates[:5]:
+            print(f"- {group['key']} ({group['count']}): {', '.join(group['task_ids'][:4])}")
+    return ExitCode.ok
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    project_dir = wg_dir.parent
+    policy = load_drift_policy(wg_dir)
+    notes: list[str] = []
+
+    if bool(getattr(args, "fix", False)):
+        rc = _repair_wrappers(wg_dir=wg_dir)
+        if rc != ExitCode.ok:
+            notes.append("wrapper repair failed")
+        ensured = _maybe_auto_ensure_contracts(wg_dir=wg_dir, project_dir=project_dir, policy=policy)
+        if ensured.get("error"):
+            notes.append("contract auto-ensure failed during fix")
+
+    report = _doctor_report(wg_dir=wg_dir, policy=policy)
+    if notes:
+        report["notes"] = notes
+
+    as_json = bool(getattr(args, "json", False))
+    if as_json:
+        print(json.dumps(report, indent=2, sort_keys=False))
+    else:
+        print(f"Doctor status: {report['status']}")
+        score = report.get("scoreboard") or {}
+        print(
+            "Scoreboard: "
+            f"active={score.get('active_tasks', 0)} "
+            f"active_drift={score.get('active_drift', 0)} "
+            f"ready_drift={score.get('ready_drift', 0)} "
+            f"contract_coverage={float(score.get('active_contract_coverage', 0.0)):.2f}"
+        )
+        issues = report.get("issues") or []
+        if issues:
+            print("Issues:")
+            for issue in issues:
+                print(f"- [{issue['severity']}] {issue['kind']}: {issue['message']}")
+        else:
+            print("Issues: none")
+
+    return ExitCode.findings if report.get("status") != "healthy" else ExitCode.ok
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    if not args.task:
+        print("error: --task is required", file=sys.stderr)
+        return ExitCode.usage
+
+    check_args = argparse.Namespace(
+        dir=args.dir,
+        task=args.task,
+        lane_strategy=getattr(args, "lane_strategy", "auto"),
+        write_log=True,
+        create_followups=True,
+        json=True,
+    )
+    rc, check_report = _invoke_check_json(check_args)
+
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    wg = load_workgraph(wg_dir)
+    tasks = list(wg.tasks.values())
+    max_next = int(getattr(args, "max_next", 3))
+    if max_next < 1:
+        max_next = 1
+    next_actions = rank_ready_drift_queue(tasks, limit=max_next)
+    duplicates = find_duplicate_open_drift_groups(tasks)
+    out = {
+        "exit_code": rc,
+        "check": check_report,
+        "next_actions": next_actions,
+        "duplicate_open_drift_groups": duplicates,
+        "scoreboard": compute_scoreboard(tasks),
+    }
+
+    as_json = bool(getattr(args, "json", False))
+    if as_json:
+        print(json.dumps(out, indent=2, sort_keys=False))
+        return int(rc)
+
+    print(f"Run exit code: {rc}")
+    action_plan = check_report.get("action_plan") if isinstance(check_report, dict) else None
+    if isinstance(action_plan, list) and action_plan:
+        print("Normalized actions:")
+        for item in action_plan[:5]:
+            if not isinstance(item, dict):
+                continue
+            action = str(item.get("action") or "")
+            kind = str(item.get("kind") or "")
+            source = str(item.get("source") or "")
+            print(f"- {action}: {kind} ({source})")
+    else:
+        print("Normalized actions: none")
+
+    print("Next actions:")
+    if not next_actions:
+        print("- none")
+    else:
+        for item in next_actions:
+            print(f"- {item['task_id']} [p={item['priority']}] {item['title']}")
+
+    if duplicates:
+        print(f"Duplicate open drift groups: {len(duplicates)}")
+    return int(rc)
 
 
 def cmd_orchestrate(args: argparse.Namespace) -> int:
@@ -872,6 +1513,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Best-effort: enable redrift integration if found",
     )
     install.add_argument("--redrift-bin", help="Path to redrift bin/redrift (enables redrift integration)")
+    install.add_argument("--json", action="store_true", help="JSON output")
     install.add_argument(
         "--wrapper-mode",
         choices=["auto", "pinned", "portable"],
@@ -892,9 +1534,37 @@ def main(argv: list[str] | None = None) -> int:
         default="auto",
         help="Optional lane routing: auto (default), fences, or all.",
     )
+    check.add_argument("--json", action="store_true", help="JSON output")
     check.add_argument("--write-log", action="store_true", help="Write summary into wg log")
     check.add_argument("--create-followups", action="store_true", help="Create follow-up tasks for findings")
     check.set_defaults(func=cmd_check)
+
+    updates = sub.add_parser("updates", help="Check Speedrift ecosystem repos for upstream updates")
+    updates.add_argument("--json", action="store_true", help="JSON output")
+    updates.add_argument("--force", action="store_true", help="Ignore interval and check remotes now")
+    updates.set_defaults(func=cmd_updates)
+
+    queue = sub.add_parser("queue", help="Show ranked ready drift follow-ups and duplicate groups")
+    queue.add_argument("--json", action="store_true", help="JSON output")
+    queue.add_argument("--limit", type=int, default=10, help="Maximum queue items to display (default: 10)")
+    queue.set_defaults(func=cmd_queue)
+
+    doctor = sub.add_parser("doctor", help="Health audit for wrappers, contracts, drift queue pressure, and loop risk")
+    doctor.add_argument("--json", action="store_true", help="JSON output")
+    doctor.add_argument("--fix", action="store_true", help="Reinstall wrappers + run contract hygiene before reporting")
+    doctor.set_defaults(func=cmd_doctor)
+
+    run = sub.add_parser("run", help="One-shot operation: check + normalized actions + next queued drift tasks")
+    run.add_argument("--task", help="Task id to run")
+    run.add_argument(
+        "--lane-strategy",
+        choices=LANE_STRATEGIES,
+        default="auto",
+        help="Optional lane routing: auto (default), fences, or all.",
+    )
+    run.add_argument("--max-next", type=int, default=3, help="Max queued next actions to print (default: 3)")
+    run.add_argument("--json", action="store_true", help="JSON output")
+    run.set_defaults(func=cmd_run)
 
     orch = sub.add_parser("orchestrate", help="Run continuous drift monitor+redirect loops (delegates to coredrift)")
     orch.add_argument("--interval", default=30, help="Monitor poll interval seconds (default: 30)")

@@ -29,6 +29,13 @@ class DriftPolicy:
     max_auto_actions_per_hour: int
     require_new_evidence: bool
     max_auto_depth: int
+    contracts_auto_ensure: bool
+    updates_enabled: bool
+    updates_check_interval_seconds: int
+    updates_create_followup: bool
+    loop_max_redrift_depth: int
+    loop_max_ready_drift_followups: int
+    loop_block_followup_creation: bool
 
 
 def _default_policy_text() -> str:
@@ -42,6 +49,19 @@ def _default_policy_text() -> str:
         "max_auto_actions_per_hour = 2\n"
         "require_new_evidence = true\n"
         "max_auto_depth = 2\n"
+        "\n"
+        "[contracts]\n"
+        "auto_ensure = true\n"
+        "\n"
+        "[updates]\n"
+        "enabled = true\n"
+        "check_interval_seconds = 21600\n"
+        "create_followup = false\n"
+        "\n"
+        "[loop_safety]\n"
+        "max_redrift_depth = 2\n"
+        "max_ready_drift_followups = 20\n"
+        "block_followup_creation = true\n"
     )
 
 
@@ -70,6 +90,13 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             max_auto_actions_per_hour=2,
             require_new_evidence=True,
             max_auto_depth=2,
+            contracts_auto_ensure=True,
+            updates_enabled=True,
+            updates_check_interval_seconds=21600,
+            updates_create_followup=False,
+            loop_max_redrift_depth=2,
+            loop_max_ready_drift_followups=20,
+            loop_block_followup_creation=True,
         )
 
     try:
@@ -83,6 +110,13 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             max_auto_actions_per_hour=2,
             require_new_evidence=True,
             max_auto_depth=2,
+            contracts_auto_ensure=True,
+            updates_enabled=True,
+            updates_check_interval_seconds=21600,
+            updates_create_followup=False,
+            loop_max_redrift_depth=2,
+            loop_max_ready_drift_followups=20,
+            loop_block_followup_creation=True,
         )
 
     schema = int(data.get("schema", 1))
@@ -113,6 +147,25 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     if max_auto_depth < 1:
         max_auto_depth = 1
 
+    contracts = data.get("contracts") if isinstance(data.get("contracts"), dict) else {}
+    contracts_auto_ensure = bool(contracts.get("auto_ensure", True))
+
+    updates = data.get("updates") if isinstance(data.get("updates"), dict) else {}
+    updates_enabled = bool(updates.get("enabled", True))
+    updates_check_interval_seconds = int(updates.get("check_interval_seconds", 21600))
+    if updates_check_interval_seconds < 0:
+        updates_check_interval_seconds = 0
+    updates_create_followup = bool(updates.get("create_followup", False))
+
+    loop_safety = data.get("loop_safety") if isinstance(data.get("loop_safety"), dict) else {}
+    loop_max_redrift_depth = int(loop_safety.get("max_redrift_depth", 2))
+    if loop_max_redrift_depth < 0:
+        loop_max_redrift_depth = 0
+    loop_max_ready_drift_followups = int(loop_safety.get("max_ready_drift_followups", 20))
+    if loop_max_ready_drift_followups < 0:
+        loop_max_ready_drift_followups = 0
+    loop_block_followup_creation = bool(loop_safety.get("block_followup_creation", True))
+
     return DriftPolicy(
         schema=schema,
         mode=mode,
@@ -121,4 +174,11 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         max_auto_actions_per_hour=max_auto_actions_per_hour,
         require_new_evidence=require_new_evidence,
         max_auto_depth=max_auto_depth,
+        contracts_auto_ensure=contracts_auto_ensure,
+        updates_enabled=updates_enabled,
+        updates_check_interval_seconds=updates_check_interval_seconds,
+        updates_create_followup=updates_create_followup,
+        loop_max_redrift_depth=loop_max_redrift_depth,
+        loop_max_ready_drift_followups=loop_max_ready_drift_followups,
+        loop_block_followup_creation=loop_block_followup_creation,
     )
