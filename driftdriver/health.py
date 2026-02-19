@@ -199,7 +199,7 @@ def compute_scoreboard(tasks: list[dict[str, Any]]) -> dict[str, Any]:
     contract_coverage = (active_with_contract / active_total) if active_total else 1.0
 
     max_depth = 0
-    for t in drift:
+    for t in active_drift:
         max_depth = max(max_depth, redrift_depth(str(t.get("id") or "")))
 
     duplicate_groups = find_duplicate_open_drift_groups(tasks)
