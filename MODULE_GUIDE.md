@@ -19,6 +19,17 @@ cd driftdriver
 scripts/package_app.sh --app /path/to/app --seed-redrift-task
 ```
 
+Amplifier runtime wiring (optional but recommended when `amplifier` is primary CLI):
+
+```bash
+driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift --with-amplifier-executor
+```
+
+This adds:
+- `.workgraph/executors/amplifier.toml` + `.workgraph/executors/amplifier-run.sh`
+- `.amplifier/hooks/speedrift-autostart/*` autostart hook files (`UserPromptSubmit` + `SessionStart`)
+- hook behavior: bootstrap wrappers/contracts, keep `wg service` running (prefers `--executor amplifier`), and run a background `drifts orchestrate` monitor loop
+
 `driftdriver` always runs `coredrift`, then optional modules based on:
 - tool installed in `./.workgraph/<module>`
 - lane strategy (`--lane-strategy auto|fences|all`)

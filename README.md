@@ -66,6 +66,25 @@ Optional UX + therapy + YAGNI + redrift integration:
 driftdriver install --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift
 ```
 
+Optional Amplifier executor + autostart hook integration:
+
+```bash
+driftdriver install --with-amplifier-executor
+```
+
+This writes:
+- `.workgraph/executors/amplifier.toml`
+- `.workgraph/executors/amplifier-run.sh`
+- `.amplifier/hooks/speedrift-autostart/hooks.json`
+- `.amplifier/hooks/speedrift-autostart/session-start.sh`
+
+Use this when you want Workgraph to spawn Amplifier sessions and auto-bootstrap Speedrift on Amplifier session start.
+In current Amplifier runtime paths, bootstrap is triggered on first prompt submit (plus SessionStart compatibility hooks).
+The generated autostart hook now also:
+- keeps `wg service` running (prefers `--executor amplifier`)
+- starts a background Speedrift autopilot loop that runs `./.workgraph/drifts orchestrate --write-log --create-followups` every 90 seconds
+- writes monitor state under `.workgraph/service/` (`speedrift-autopilot.pid`, `speedrift-autopilot.log`)
+
 ## Package Any App (Self-Serve)
 
 If you're working from this mono-workspace and want one command to package an app with local drift tool bins:
@@ -99,6 +118,12 @@ If you want to commit `./.workgraph/drifts` (and wrappers) into the repo, use:
 driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift
 ```
 
+If Amplifier is your primary CLI runtime, add:
+
+```bash
+driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift --with-amplifier-executor
+```
+
 This writes:
 - `./.workgraph/driftdriver` (wrapper)
 - `./.workgraph/drifts` (single per-repo entrypoint used by agents)
@@ -108,6 +133,10 @@ This writes:
 - (optional) `./.workgraph/therapydrift` (wrapper)
 - (optional) `./.workgraph/yagnidrift` (wrapper)
 - (optional) `./.workgraph/redrift` (wrapper)
+- (optional) `./.workgraph/executors/amplifier.toml` (Workgraph -> Amplifier executor)
+- (optional) `./.workgraph/executors/amplifier-run.sh` (executor wrapper)
+- (optional) `.amplifier/hooks/speedrift-autostart/hooks.json` (UserPromptSubmit + SessionStart triggers)
+- (optional) `.amplifier/hooks/speedrift-autostart/session-start.sh` (auto-bootstrap + daemon/monitor startup script)
 - `./.workgraph/drift-policy.toml` (mode/order/recursion defaults)
 - executor prompt guidance under `./.workgraph/executors/*.toml`
 

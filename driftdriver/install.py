@@ -31,6 +31,10 @@ class InstallResult:
     wrote_therapydrift: bool
     wrote_yagnidrift: bool
     wrote_redrift: bool
+    wrote_amplifier_executor: bool
+    wrote_amplifier_runner: bool
+    wrote_amplifier_autostart_hook: bool
+    wrote_amplifier_autostart_hooks_json: bool
     wrote_policy: bool
     updated_gitignore: bool
     created_executor: bool
@@ -644,3 +648,221 @@ def resolve_bin(
             return out
 
     return None
+
+
+def _write_text_if_changed(path: Path, content: str) -> bool:
+    existing = path.read_text(encoding="utf-8") if path.exists() else None
+    if existing == content:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return True
+
+
+def ensure_amplifier_executor(wg_dir: Path, *, bundle_name: str = "speedrift") -> tuple[bool, bool]:
+    """
+    Ensure a workgraph executor that dispatches each task to Amplifier.
+
+    Returns:
+      (wrote_executor_toml, wrote_runner_script)
+    """
+
+    executors_dir = wg_dir / "executors"
+    executors_dir.mkdir(parents=True, exist_ok=True)
+
+    runner = executors_dir / "amplifier-run.sh"
+    runner_text = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n\n"
+        "EXTRA_ARGS=()\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  case \"$1\" in\n"
+        "    --model)\n"
+        "      EXTRA_ARGS+=(\"--model\" \"$2\")\n"
+        "      shift 2\n"
+        "      ;;\n"
+        "    --model=*)\n"
+        "      EXTRA_ARGS+=(\"--model\" \"${1#--model=}\")\n"
+        "      shift\n"
+        "      ;;\n"
+        "    --provider)\n"
+        "      EXTRA_ARGS+=(\"--provider\" \"$2\")\n"
+        "      shift 2\n"
+        "      ;;\n"
+        "    --provider=*)\n"
+        "      EXTRA_ARGS+=(\"--provider\" \"${1#--provider=}\")\n"
+        "      shift\n"
+        "      ;;\n"
+        "    --bundle)\n"
+        "      EXTRA_ARGS+=(\"--bundle\" \"$2\")\n"
+        "      shift 2\n"
+        "      ;;\n"
+        "    --bundle=*)\n"
+        "      EXTRA_ARGS+=(\"--bundle\" \"${1#--bundle=}\")\n"
+        "      shift\n"
+        "      ;;\n"
+        "    *)\n"
+        "      EXTRA_ARGS+=(\"$1\")\n"
+        "      shift\n"
+        "      ;;\n"
+        "  esac\n"
+        "done\n\n"
+        "PROMPT=$(cat)\n"
+        "if [[ -z \"$PROMPT\" ]]; then\n"
+        "  echo \"error: empty prompt passed to amplifier executor\" >&2\n"
+        "  exit 1\n"
+        "fi\n\n"
+        "BUNDLE=\"${AMPLIFIER_BUNDLE:-" + bundle_name + "}\"\n"
+        "exec amplifier run --mode single --output-format json --bundle \"$BUNDLE\" "
+        "\"${EXTRA_ARGS[@]+${EXTRA_ARGS[@]}}\" \"$PROMPT\"\n"
+    )
+    wrote_runner = _write_text_if_changed(runner, runner_text)
+    runner.chmod(runner.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    executor = executors_dir / "amplifier.toml"
+    executor_text = (
+        "[executor]\n"
+        "type = \"claude\"\n"
+        "command = \".workgraph/executors/amplifier-run.sh\"\n"
+        "args = []\n"
+        "working_dir = \"{{working_dir}}\"\n"
+        "timeout = 1200\n\n"
+        "[executor.env]\n"
+        "WG_TASK_ID = \"{{task_id}}\"\n\n"
+        "[executor.prompt_template]\n"
+        "template = \"\"\"\n"
+        "{{task_identity}}\n\n"
+        "# Task Assignment\n\n"
+        "**Task ID**: `{{task_id}}`\n"
+        "**Title**: {{task_title}}\n\n"
+        "## Description\n\n"
+        "{{task_description}}\n\n"
+        "## Context from Completed Dependencies\n\n"
+        "{{task_context}}\n\n"
+        "## Speedrift Execution Rules\n\n"
+        "1. Workgraph is source of truth.\n"
+        "2. Run drift checks at task start and before completion:\n"
+        "   ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups\n"
+        "3. Log progress with `wg log {{task_id}} \"...\"`.\n"
+        "4. Record meaningful outputs with `wg artifact {{task_id}} <path>`.\n"
+        "5. If blocked, use `wg fail {{task_id}} --reason \"...\"`.\n"
+        "6. If complete, use `wg done {{task_id}}`.\n"
+        "\"\"\"\n"
+    )
+    wrote_executor = _write_text_if_changed(executor, executor_text)
+    return (wrote_executor, wrote_runner)
+
+
+def ensure_amplifier_autostart_hook(project_dir: Path) -> tuple[bool, bool]:
+    """
+    Install prompt/session hooks that keep Workgraph + Speedrift bootstrapped.
+
+    Returns:
+      (wrote_hook_script, wrote_hooks_json)
+    """
+
+    hooks_root = project_dir / ".amplifier" / "hooks"
+    hook_dir = hooks_root / "speedrift-autostart"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+
+    hook_script = hook_dir / "session-start.sh"
+    hook_script_text = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n\n"
+        "PROJECT_DIR=\"${AMPLIFIER_PROJECT_DIR:-$(pwd)}\"\n"
+        "PROJECT_KEY=\"$(printf '%s' \"$PROJECT_DIR\" | cksum | awk '{print $1}')\"\n"
+        "SESSION_KEY=\"${AMPLIFIER_SESSION_ID:-unknown}\"\n"
+        "STAMP_DIR=\"${TMPDIR:-/tmp}/speedrift-autostart\"\n"
+        "STAMP_FILE=\"$STAMP_DIR/${PROJECT_KEY}-${SESSION_KEY}\"\n"
+        "mkdir -p \"$STAMP_DIR\" 2>/dev/null || true\n"
+        "if [[ -f \"$STAMP_FILE\" ]]; then\n"
+        "  exit 0\n"
+        "fi\n"
+        "touch \"$STAMP_FILE\" 2>/dev/null || true\n"
+        "cd \"$PROJECT_DIR\" 2>/dev/null || exit 0\n\n"
+        "if [[ ! -d \".workgraph\" ]]; then\n"
+        "  if command -v wg >/dev/null 2>&1; then\n"
+            "    wg init >/dev/null 2>&1 || true\n"
+        "  else\n"
+        "    exit 0\n"
+        "  fi\n"
+        "fi\n\n"
+        "if [[ ! -x \".workgraph/drifts\" || ! -x \".workgraph/coredrift\" || ! -x \".workgraph/executors/amplifier-run.sh\" ]]; then\n"
+        "  if command -v driftdriver >/dev/null 2>&1; then\n"
+        "    driftdriver --dir \"$PROJECT_DIR\" install --wrapper-mode portable --with-amplifier-executor --no-ensure-contracts >/dev/null 2>&1 || \\\n"
+        "      driftdriver --dir \"$PROJECT_DIR\" install --wrapper-mode portable --no-ensure-contracts >/dev/null 2>&1 || true\n"
+        "  fi\n"
+        "fi\n\n"
+        "if [[ -x \".workgraph/coredrift\" ]]; then\n"
+        "  ./.workgraph/coredrift --dir \"$PROJECT_DIR\" ensure-contracts --apply >/dev/null 2>&1 || true\n"
+        "fi\n\n"
+        "AUTOPILOT_DIR=\".workgraph/service\"\n"
+        "AUTOPILOT_PID=\"$AUTOPILOT_DIR/speedrift-autopilot.pid\"\n"
+        "AUTOPILOT_LOG=\"$AUTOPILOT_DIR/speedrift-autopilot.log\"\n"
+        "mkdir -p \"$AUTOPILOT_DIR\" >/dev/null 2>&1 || true\n\n"
+        "is_pid_running() {\n"
+        "  local pid=\"$1\"\n"
+        "  [[ -n \"$pid\" ]] && kill -0 \"$pid\" >/dev/null 2>&1\n"
+        "}\n\n"
+        "if [[ -f \"$AUTOPILOT_PID\" ]]; then\n"
+        "  EXISTING_PID=\"$(cat \"$AUTOPILOT_PID\" 2>/dev/null || true)\"\n"
+        "  if is_pid_running \"$EXISTING_PID\"; then\n"
+        "    exit 0\n"
+        "  fi\n"
+        "fi\n\n"
+        "export PROJECT_DIR\n"
+        "nohup bash -lc '\n"
+        "  set -euo pipefail\n"
+        "  cd \"$PROJECT_DIR\" >/dev/null 2>&1 || exit 0\n"
+        "  while true; do\n"
+        "    if command -v wg >/dev/null 2>&1; then\n"
+        "      if ! wg --dir \"$PROJECT_DIR/.workgraph\" service status 2>/dev/null | grep -Eq \"^Service:[[:space:]]+running\"; then\n"
+        "        wg --dir \"$PROJECT_DIR/.workgraph\" service start --executor amplifier >/dev/null 2>&1 || \\\n"
+        "          wg --dir \"$PROJECT_DIR/.workgraph\" service start >/dev/null 2>&1 || true\n"
+        "      fi\n"
+        "    fi\n"
+        "    if [[ -x \"$PROJECT_DIR/.workgraph/drifts\" ]]; then\n"
+        "      \"$PROJECT_DIR/.workgraph/drifts\" orchestrate --write-log --create-followups >/dev/null 2>&1 || true\n"
+        "    fi\n"
+        "    sleep 90\n"
+        "  done\n"
+        "' >>\"$AUTOPILOT_LOG\" 2>&1 &\n"
+        "echo \"$!\" > \"$AUTOPILOT_PID\" 2>/dev/null || true\n\n"
+        "exit 0\n"
+    )
+    wrote_script = _write_text_if_changed(hook_script, hook_script_text)
+    hook_script.chmod(hook_script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    hook_json = hook_dir / "hooks.json"
+    hook_json_text = (
+        "{\n"
+        "  \"hooks\": {\n"
+        "    \"UserPromptSubmit\": [\n"
+        "      {\n"
+        "        \"matcher\": \".*\",\n"
+        "        \"hooks\": [\n"
+        "          {\n"
+        "            \"type\": \"command\",\n"
+        "            \"command\": \"bash ${AMPLIFIER_HOOKS_DIR}/speedrift-autostart/session-start.sh\",\n"
+        "            \"timeout\": 120\n"
+        "          }\n"
+        "        ]\n"
+        "      }\n"
+        "    ],\n"
+        "    \"SessionStart\": [\n"
+        "      {\n"
+        "        \"matcher\": \".*\",\n"
+        "        \"hooks\": [\n"
+        "          {\n"
+        "            \"type\": \"command\",\n"
+        "            \"command\": \"bash ${AMPLIFIER_HOOKS_DIR}/speedrift-autostart/session-start.sh\",\n"
+        "            \"timeout\": 120\n"
+        "          }\n"
+        "        ]\n"
+        "      }\n"
+        "    ]\n"
+        "  }\n"
+        "}\n"
+    )
+    wrote_json = _write_text_if_changed(hook_json, hook_json_text)
+    return (wrote_script, wrote_json)
