@@ -27,6 +27,8 @@ from driftdriver.health import (
 )
 from driftdriver.install import (
     InstallResult,
+    ensure_amplifier_autostart_hook,
+    ensure_amplifier_executor,
     ensure_archdrift_gitignore,
     ensure_executor_guidance,
     ensure_datadrift_gitignore,
@@ -890,6 +892,7 @@ def _repair_wrappers(*, wg_dir: Path) -> int:
         yagnidrift_bin=None,
         with_redrift=include_redrift,
         redrift_bin=None,
+        with_amplifier_executor=(wg_dir / "executors" / "amplifier.toml").exists(),
         wrapper_mode="portable",
         no_ensure_contracts=False,
     )
@@ -1089,6 +1092,14 @@ def cmd_install(args: argparse.Namespace) -> int:
             wrapper_mode=wrapper_mode,
         )
 
+    wrote_amplifier_executor = False
+    wrote_amplifier_runner = False
+    wrote_amplifier_autostart_hook = False
+    wrote_amplifier_autostart_hooks_json = False
+    if bool(getattr(args, "with_amplifier_executor", False)):
+        wrote_amplifier_executor, wrote_amplifier_runner = ensure_amplifier_executor(wg_dir, bundle_name="speedrift")
+        wrote_amplifier_autostart_hook, wrote_amplifier_autostart_hooks_json = ensure_amplifier_autostart_hook(project_dir)
+
     updated_gitignore = ensure_coredrift_gitignore(wg_dir)
     if specdrift_bin is not None:
         updated_gitignore = ensure_specdrift_gitignore(wg_dir) or updated_gitignore
@@ -1135,6 +1146,10 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_therapydrift=wrote_therapydrift,
         wrote_yagnidrift=wrote_yagnidrift,
         wrote_redrift=wrote_redrift,
+        wrote_amplifier_executor=wrote_amplifier_executor,
+        wrote_amplifier_runner=wrote_amplifier_runner,
+        wrote_amplifier_autostart_hook=wrote_amplifier_autostart_hook,
+        wrote_amplifier_autostart_hooks_json=wrote_amplifier_autostart_hooks_json,
         wrote_policy=wrote_policy,
         updated_gitignore=updated_gitignore,
         created_executor=created_executor,
@@ -1156,6 +1171,8 @@ def cmd_install(args: argparse.Namespace) -> int:
             enabled.append("yagnidrift")
         if include_redrift:
             enabled.append("redrift")
+        if bool(getattr(args, "with_amplifier_executor", False)):
+            enabled.append("amplifier-executor")
         if enabled:
             msg += f" (with {', '.join(enabled)})"
         print(msg)
@@ -1679,6 +1696,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Best-effort: enable redrift integration if found",
     )
     install.add_argument("--redrift-bin", help="Path to redrift bin/redrift (enables redrift integration)")
+    install.add_argument(
+        "--with-amplifier-executor",
+        action="store_true",
+        help="Install .workgraph/executors/amplifier.toml + autostart hooks for Amplifier sessions",
+    )
     install.add_argument("--json", action="store_true", help="JSON output")
     install.add_argument(
         "--wrapper-mode",
