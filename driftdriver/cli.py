@@ -2247,8 +2247,8 @@ def _build_parser() -> argparse.ArgumentParser:
     run.set_defaults(func=cmd_run)
 
     orch = sub.add_parser("orchestrate", help="Run continuous drift monitor+redirect loops (delegates to coredrift)")
-    orch.add_argument("--interval", default=30, help="Monitor poll interval seconds (default: 30)")
-    orch.add_argument("--redirect-interval", default=5, help="Redirect poll interval seconds (default: 5)")
+    orch.add_argument("--interval", type=int, default=30, help="Monitor poll interval seconds (default: 30)")
+    orch.add_argument("--redirect-interval", type=int, default=5, help="Redirect poll interval seconds (default: 5)")
     orch.add_argument("--write-log", action="store_true", help="Write a drift summary to wg log (redirect agent)")
     orch.add_argument("--create-followups", action="store_true", help="Create follow-up tasks (redirect agent)")
     orch.set_defaults(func=cmd_orchestrate)

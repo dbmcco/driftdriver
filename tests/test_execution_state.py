@@ -4,7 +4,7 @@
 from driftdriver.execution_state import (
     ExecutionState, save_state, load_state, clear_state,
     advance_phase, record_error, should_escalate,
-    list_interrupted, format_recovery_context,
+    list_interrupted,
 )
 
 
@@ -66,15 +66,3 @@ def test_list_interrupted(tmp_path):
     interrupted = list_interrupted(wg)
     assert len(interrupted) == 1
     assert interrupted[0].task_id == "t1"
-
-
-def test_format_recovery_context():
-    state = ExecutionState(
-        task_id="t1", phase="validate", retry_count=1,
-        plan_summary="Fix the bug", completed_steps=["pending", "implement"],
-        error_log=["test failed"]
-    )
-    ctx = format_recovery_context(state)
-    assert "t1" in ctx
-    assert "validate" in ctx
-    assert "Fix the bug" in ctx

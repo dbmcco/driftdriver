@@ -79,16 +79,14 @@ def test_non_common_scripts_source_common_sh():
 
 def test_common_sh_defines_lessons_mcp():
     common = HANDLERS_DIR / "common.sh"
-    if not common.exists():
-        return
+    assert common.exists(), f"Handler file missing: {common}"
     content = common.read_text()
     assert "lessons_mcp()" in content, "common.sh missing lessons_mcp() function"
 
 
 def test_common_sh_defines_wg_log():
     common = HANDLERS_DIR / "common.sh"
-    if not common.exists():
-        return
+    assert common.exists(), f"Handler file missing: {common}"
     content = common.read_text()
     assert "wg_log()" in content, "common.sh missing wg_log() function"
 

@@ -75,7 +75,7 @@ def is_safe_bash(command: str) -> bool:
     # Reject command substitution before pattern matching
     if "$(" in cmd or "`" in cmd:
         return False
-    segments = re.split(r'\s*(?:&&|\|\||[;|])\s*', cmd)
+    segments = re.split(r'\s*(?:&&|\|\||[;|\n])\s*', cmd)
 
     for segment in segments:
         segment = segment.strip()

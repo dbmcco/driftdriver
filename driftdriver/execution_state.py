@@ -105,19 +105,3 @@ def list_interrupted(wg_dir: Path) -> list[ExecutionState]:
         if state and state.phase != "done":
             states.append(state)
     return states
-
-
-def format_recovery_context(state: ExecutionState) -> str:
-    """Format state as context for a recovering agent."""
-    lines = [
-        f"## Recovery Context for {state.task_id}",
-        f"Phase: {state.phase}",
-        f"Retry: {state.retry_count}/{state.max_retries}",
-    ]
-    if state.plan_summary:
-        lines.append(f"\n### Plan\n{state.plan_summary}")
-    if state.completed_steps:
-        lines.append(f"\n### Completed Steps\n" + "\n".join(f"- {s}" for s in state.completed_steps))
-    if state.error_log:
-        lines.append(f"\n### Errors\n" + "\n".join(f"- {e}" for e in state.error_log[-3:]))
-    return "\n".join(lines)

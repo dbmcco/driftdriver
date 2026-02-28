@@ -7,7 +7,6 @@ from driftdriver.smart_routing import EvidencePackage
 from driftdriver.routing_models import (
     RoutingDecision,
     detect_fenced_lanes,
-    format_routing_prompt,
     parse_routing_response,
 )
 
@@ -45,31 +44,6 @@ class TestRoutingDecision:
         assert decision.model_suggested == ["coredrift"]
         assert "coredrift" in decision.reasoning
         assert decision.evidence_summary == "2 python files modified"
-
-
-class TestFormatRoutingPrompt:
-    def test_format_routing_prompt_includes_evidence(self):
-        """Prompt should contain the evidence context."""
-        evidence = make_evidence()
-        prompt = format_routing_prompt(evidence)
-        # Evidence context includes task description
-        assert "Fix the auth bug" in prompt
-        # Evidence context includes changed files
-        assert "src/auth.py" in prompt
-
-    def test_format_routing_prompt_includes_installed_lanes(self):
-        """Prompt should list all available/installed lanes."""
-        evidence = make_evidence(installed_lanes=["coredrift", "specdrift", "datadrift"])
-        prompt = format_routing_prompt(evidence)
-        assert "coredrift" in prompt
-        assert "specdrift" in prompt
-        assert "datadrift" in prompt
-
-    def test_format_routing_prompt_requests_json_output(self):
-        """Prompt should ask for JSON-structured output."""
-        evidence = make_evidence()
-        prompt = format_routing_prompt(evidence)
-        assert "json" in prompt.lower() or "JSON" in prompt
 
 
 class TestDetectFencedLanes:

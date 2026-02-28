@@ -194,6 +194,10 @@ class TestCommandChainingBypassPrevented(unittest.TestCase):
     def test_chained_safe_commands_approved(self) -> None:
         self.assertTrue(is_safe_bash("ls && git status"))
 
+    def test_newline_injection_rejected(self) -> None:
+        """A newline-embedded dangerous command must be rejected."""
+        self.assertFalse(is_safe_bash("ls\nrm -rf /"))
+
 
 class TestInterpreterBypassPrevented(unittest.TestCase):
     def test_python3_c_denied(self) -> None:

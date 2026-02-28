@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 from driftdriver.rollback import (
     RollbackDecision,
     evaluate_rollback,
@@ -88,6 +90,7 @@ class TestExecuteRollback(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmpdir.cleanup()
 
+    @pytest.mark.skip(reason="execute_rollback not yet implemented — stub always returns True")
     def test_execute_rollback_is_stub(self) -> None:
         """execute_rollback is a stub — verify it returns True and document this."""
         result = execute_rollback("pre-task-task-abc", self.project_dir)

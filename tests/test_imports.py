@@ -22,6 +22,7 @@ def test_import_wire() -> None:
 
 def test_import_health() -> None:
     from driftdriver.health import compute_scoreboard
-    # compute_scoreboard with empty input should return a scoreboard structure
     result = compute_scoreboard([])
-    assert isinstance(result, (dict, list, str))
+    assert isinstance(result, dict)
+    assert "status" in result
+    assert result["status"] in ("healthy", "risk", "critical")

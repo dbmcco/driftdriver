@@ -54,63 +54,6 @@ def detect_fenced_lanes(task_description: str) -> list[str]:
     return found
 
 
-def format_routing_prompt(evidence: EvidencePackage) -> str:
-    """Format evidence into a prompt for model-mediated lane routing.
-
-    NOTE: Currently unused in production — smart strategy falls back to
-    pattern-based routing. This function will be called when model-mediated
-    routing is implemented.
-    """
-    context = evidence.to_prompt_context()
-    auto_fenced = detect_fenced_lanes(evidence.task_description)
-
-    lane_descriptions = {
-        "coredrift": "Core logic / implementation quality checks",
-        "specdrift": "Spec/contract alignment verification",
-        "datadrift": "Data model and migration checks",
-        "depsdrift": "Dependency and package version checks",
-        "uxdrift": "UI/UX component and accessibility checks",
-        "archdrift": "Architecture and design pattern checks",
-        "therapydrift": "Technical debt and code health analysis",
-        "yagnidrift": "YAGNI / over-engineering detection",
-        "fixdrift": "Bug-fix correctness verification",
-        "redrift": "Regression detection",
-    }
-
-    lanes_list = "\n".join(
-        f"- {lane}: {lane_descriptions.get(lane, 'Drift check lane')}"
-        for lane in evidence.installed_lanes
-    )
-
-    mandatory_note = ""
-    if auto_fenced:
-        mandatory_note = (
-            f"\n\nMANDATORY LANES (from task fences, always include): "
-            f"{', '.join(auto_fenced)}"
-        )
-
-    prompt = f"""You are a drift-control routing agent. Given the following evidence about a development task, select which drift-check lanes should run.
-
-{context}{mandatory_note}
-
-## Available Lanes
-{lanes_list}
-
-## Instructions
-Select which lanes to run based on the evidence. Provide your response as JSON with this structure:
-
-{{
-  "selected_lanes": ["lane1", "lane2"],
-  "reasoning": {{"lane1": "reason it was selected", "lane2": "reason selected or excluded"}},
-  "confidence": 0.0-1.0,
-  "evidence_summary": "brief one-line summary of what drove this decision"
-}}
-
-Only select lanes from the Available Lanes list above. Always include any mandatory lanes.
-"""
-    return prompt
-
-
 def parse_routing_response(
     response: str,
     evidence: EvidencePackage,

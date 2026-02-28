@@ -52,7 +52,7 @@ def redrift_depth(task_id: str) -> int:
 def blockers_done(task: dict[str, Any], tasks_by_id: dict[str, dict[str, Any]]) -> bool:
     blockers = task.get("blocked_by")
     if not isinstance(blockers, list) or not blockers:
-        return False
+        return True  # No blockers → nothing blocking it → ready
 
     for blocker_id in blockers:
         blocker = tasks_by_id.get(str(blocker_id))

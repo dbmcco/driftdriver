@@ -42,6 +42,11 @@ class HealthTests(unittest.TestCase):
         self.assertTrue(detect_cycle_from("c", tasks))
         self.assertFalse(detect_cycle_from("b", tasks))
 
+    def test_blockers_done_no_blockers(self) -> None:
+        """Task with no blocked_by should return True — nothing is blocking it."""
+        no_blocker_task: dict = {"id": "free", "status": "open"}
+        self.assertTrue(blockers_done(no_blocker_task, {}))
+
     def test_queue_ranking_and_duplicates(self) -> None:
         tasks = [
             {"id": "parent-1", "status": "done"},
