@@ -110,3 +110,64 @@ def test_scripts_are_under_80_lines():
         assert len(lines) <= 80, (
             f"{script} exceeds 80 lines: {len(lines)} lines"
         )
+
+
+# Fix 1: JSON injection via unescaped variables
+JSON_BUILDING_SCRIPTS = ["agent-error.sh", "task-claimed.sh", "task-completing.sh", "agent-stop.sh"]
+
+
+def test_handler_scripts_use_jq_for_json_construction():
+    """Handler scripts must use 'jq -n' to build JSON safely, not string interpolation."""
+    for script in JSON_BUILDING_SCRIPTS:
+        path = HANDLERS_DIR / script
+        if not path.exists():
+            continue
+        content = path.read_text()
+        assert "jq -n" in content, (
+            f"{script} must use 'jq -n' for safe JSON construction, not bare string interpolation"
+        )
+
+
+# Fix 2: lessons_mcp() must write to JSONL file, not pipe to node
+def test_lessons_mcp_writes_to_jsonl_file():
+    """lessons_mcp() must write events to .lessons-events/pending.jsonl, not pipe to node."""
+    common = HANDLERS_DIR / "common.sh"
+    if not common.exists():
+        return
+    content = common.read_text()
+    assert ".lessons-events" in content, (
+        "common.sh lessons_mcp() must write to .lessons-events/ directory"
+    )
+    assert "pending.jsonl" in content, (
+        "common.sh lessons_mcp() must append to pending.jsonl"
+    )
+    assert "lessons-mcp" not in content, (
+        "common.sh lessons_mcp() must not invoke node lessons-mcp process"
+    )
+
+
+# Fix 3: wg_log must use positional arg, not --message flag
+def test_wg_log_uses_positional_arg():
+    """wg_log() must call 'wg log' with positional message arg, not --message flag."""
+    common = HANDLERS_DIR / "common.sh"
+    if not common.exists():
+        return
+    content = common.read_text()
+    assert "--message" not in content, (
+        "common.sh wg_log() must not use --message flag; pass message as positional arg"
+    )
+
+
+# Fix 4: progress-check.sh must guard against empty TASK_ID
+def test_progress_check_guards_empty_task_id():
+    """progress-check.sh must exit 0 early when TASK_ID is empty."""
+    path = HANDLERS_DIR / "progress-check.sh"
+    if not path.exists():
+        return
+    content = path.read_text()
+    assert '[[ -z "$TASK_ID" ]]' in content, (
+        "progress-check.sh must check if TASK_ID is empty"
+    )
+    assert "exit 0" in content, (
+        "progress-check.sh must exit 0 when TASK_ID is empty"
+    )

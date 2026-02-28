@@ -11,7 +11,8 @@ TASK_ID="$(current_task_id)"
 ERROR_MSG="${WG_ERROR_MESSAGE:-unknown error}"
 
 # Record error event to Lessons MCP
-EVENT_JSON="{\"event\":\"agent_error\",\"task_id\":\"$TASK_ID\",\"error\":\"$ERROR_MSG\",\"cli\":\"$CLI_TOOL\"}"
+EVENT_JSON=$(jq -n --arg event "agent_error" --arg tid "$TASK_ID" --arg err "$ERROR_MSG" --arg cli "$CLI_TOOL" \
+  '{event: $event, task_id: $tid, error: $err, cli: $cli}')
 lessons_mcp "record_event" "$EVENT_JSON"
 
 # Check if agentjj checkpoint exists for this task

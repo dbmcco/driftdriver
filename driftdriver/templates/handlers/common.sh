@@ -17,13 +17,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Call Lessons MCP tool via the MCP server
+# Write event to local JSONL file for later batch processing
 lessons_mcp() {
   local tool_name="$1"
   shift
-  # Use node to call the MCP server directly via stdio
-  echo "{\"method\":\"tools/call\",\"params\":{\"name\":\"$tool_name\",\"arguments\":$1}}" | \
-    node "$PROJECT_DIR/node_modules/.bin/lessons-mcp" 2>/dev/null || true
+  local args="$1"
+  local events_dir="${PROJECT_DIR}/.workgraph/.lessons-events"
+  mkdir -p "$events_dir"
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  echo "{\"ts\":\"$ts\",\"tool\":\"$tool_name\",\"args\":$args}" >> "$events_dir/pending.jsonl"
 }
 
 # Log to workgraph
@@ -31,7 +34,7 @@ wg_log() {
   local task_id="${1:-}"
   local message="$2"
   if [[ -n "$task_id" ]]; then
-    wg log "$task_id" --message "$message" 2>/dev/null || true
+    wg log "$task_id" "$message" 2>/dev/null || true
   fi
 }
 

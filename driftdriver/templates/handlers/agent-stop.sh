@@ -31,7 +31,9 @@ if [[ -n "$TASK_ID" ]]; then
 fi
 
 # Log reasoning to Lessons MCP
-EVENT_JSON="{\"event\":\"agent_stop\",\"task_id\":\"$TASK_ID\",\"decision\":\"$DECISION\",\"reason\":\"$REASON\",\"cli\":\"$CLI_TOOL\"}"
+EVENT_JSON=$(jq -n --arg event "agent_stop" --arg tid "$TASK_ID" --arg decision "$DECISION" \
+  --arg reason "$REASON" --arg cli "$CLI_TOOL" \
+  '{event: $event, task_id: $tid, decision: $decision, reason: $reason, cli: $cli}')
 lessons_mcp "record_decision" "$EVENT_JSON"
 
 wg_log "$TASK_ID" "agent-stop: decision=$DECISION reason=$REASON"

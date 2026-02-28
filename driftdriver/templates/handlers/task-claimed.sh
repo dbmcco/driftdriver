@@ -19,7 +19,8 @@ fi
 
 # Query Lessons MCP for relevant knowledge about this task type
 TASK_DESC="${WG_TASK_DESCRIPTION:-}"
-QUERY_JSON="{\"query\":\"$TASK_DESC\",\"limit\":5}"
+QUERY_JSON=$(jq -n --arg query "$TASK_DESC" --argjson limit 5 \
+  '{query: $query, limit: $limit}')
 lessons_mcp "search_knowledge" "$QUERY_JSON"
 
 wg_log "$TASK_ID" "task-claimed: cli=$CLI_TOOL checkpoint=pre-task-$TASK_ID"

@@ -9,6 +9,7 @@ HANDLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 LOOP_STATE_FILE="$WG_DIR/.loop-state"
 TASK_ID="$(current_task_id)"
+if [[ -z "$TASK_ID" ]]; then exit 0; fi
 
 # Fingerprint: tool name + task ID + timestamp bucket (5-min windows)
 TOOL_NAME="${WG_TOOL_NAME:-unknown}"
