@@ -32,6 +32,7 @@ from driftdriver.install import (
     install_amplifier_adapter,
     install_claude_code_hooks,
     install_codex_adapter,
+    install_handler_scripts,
     install_lessons_mcp_config,
     install_opencode_hooks,
     install_session_driver_executor,
@@ -61,7 +62,7 @@ from driftdriver.install import (
     write_yagnidrift_wrapper,
 )
 from driftdriver.policy import ensure_drift_policy, load_drift_policy
-from driftdriver.routing_models import format_routing_prompt, parse_routing_response
+from driftdriver.routing_models import parse_routing_response
 from driftdriver.smart_routing import gather_evidence
 from driftdriver.updates import check_ecosystem_updates, summarize_updates
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
@@ -240,7 +241,8 @@ def _select_optional_plugins(
             strategy = "auto"
         else:
             evidence = gather_evidence(wg_dir)
-            _prompt = format_routing_prompt(evidence)
+            # Smart routing: use evidence-based pattern matching
+            # Model-mediated routing requires API integration (future work)
             decision = parse_routing_response("", evidence)
             selected = set(decision.selected_lanes)
             lane_plan = {
@@ -1102,6 +1104,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         if not shutil.which("coredrift"):
             print("error: --wrapper-mode portable requires coredrift on PATH", file=sys.stderr)
             return ExitCode.usage
+
+    install_handler_scripts(wg_dir)
 
     wrote_driver = write_driver_wrapper(wg_dir, driver_bin=driver_bin, wrapper_mode=wrapper_mode)
     wrote_drifts = write_drifts_wrapper(wg_dir)

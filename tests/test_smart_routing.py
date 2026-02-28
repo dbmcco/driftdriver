@@ -68,3 +68,41 @@ class TestEvidencePackage:
         suggested = pkg.suggest_lanes()
         assert "uxdrift" in suggested
         assert "depsdrift" in suggested
+
+
+class TestGatherEvidence:
+    """Tests for gather_evidence lane detection."""
+
+    def test_gather_evidence_finds_installed_lanes(self, tmp_path):
+        """Executable lane scripts in .workgraph/ root should be detected."""
+        wg_dir = tmp_path / ".workgraph"
+        wg_dir.mkdir()
+        # Executable coredrift wrapper — should be detected
+        coredrift = wg_dir / "coredrift"
+        coredrift.write_text("#!/bin/bash\necho coredrift")
+        coredrift.chmod(0o755)
+        # Non-executable specdrift — should NOT be detected
+        specdrift = wg_dir / "specdrift"
+        specdrift.write_text("#!/bin/bash\necho specdrift")
+        # specdrift left as non-executable (default mode)
+
+        evidence = gather_evidence(wg_dir)
+        assert "coredrift" in evidence.installed_lanes
+        assert "specdrift" not in evidence.installed_lanes
+
+    def test_gather_evidence_ignores_non_lane_files(self, tmp_path):
+        """Files not in KNOWN_LANES should be excluded even if executable."""
+        wg_dir = tmp_path / ".workgraph"
+        wg_dir.mkdir()
+        # Known lane — should be detected
+        coredrift = wg_dir / "coredrift"
+        coredrift.write_text("#!/bin/bash")
+        coredrift.chmod(0o755)
+        # Unknown name — should be excluded even though executable
+        unknown = wg_dir / "some_random_script"
+        unknown.write_text("#!/bin/bash")
+        unknown.chmod(0o755)
+
+        evidence = gather_evidence(wg_dir)
+        assert "coredrift" in evidence.installed_lanes
+        assert "some_random_script" not in evidence.installed_lanes

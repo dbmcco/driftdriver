@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Optional
+import os
 import subprocess
 import json
 
@@ -136,11 +137,13 @@ def gather_evidence(
         except Exception:
             pass
 
-    # Load installed lanes
-    lanes_dir = workgraph_dir / "lanes"
-    installed_lanes = []
-    if lanes_dir.exists():
-        installed_lanes = [p.stem for p in lanes_dir.iterdir() if p.is_file()]
+    # Lane wrappers are executable scripts directly in .workgraph/
+    # (e.g., .workgraph/coredrift, .workgraph/specdrift)
+    from driftdriver.routing_models import KNOWN_LANES
+    installed_lanes = [
+        p.name for p in workgraph_dir.iterdir()
+        if p.is_file() and p.name in KNOWN_LANES and os.access(p, os.X_OK)
+    ]
 
     # Load pattern hints from policy
     policy_path = workgraph_dir.parent / "drift-policy.toml"
