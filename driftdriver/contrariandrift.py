@@ -42,7 +42,7 @@ def check_dead_imports(project_dir: Path) -> list[ContrarianFinding]:
             continue
         names = [
             node.name
-            for node in ast.walk(tree)
+            for node in tree.body
             if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
         ]
         if names:

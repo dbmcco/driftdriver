@@ -158,6 +158,27 @@ class TestRunContrarianCheck(unittest.TestCase):
             self.assertLessEqual(report.drift_score, 1.0)
 
 
+class TestClassMethodsNotFlaggedAsDead(unittest.TestCase):
+    def test_class_methods_not_flagged_as_dead(self) -> None:
+        """Class methods should not be reported as dead code — only top-level functions."""
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+
+            # A class with a public method that is never imported (called as obj.bar())
+            (project_dir / "mymodule.py").write_text(
+                "class Foo:\n    def bar(self):\n        pass\n",
+                encoding="utf-8",
+            )
+
+            findings = check_dead_imports(project_dir)
+
+            fn_names = [f.description for f in findings]
+            self.assertFalse(
+                any("'bar'" in d for d in fn_names),
+                f"Class method 'bar' should not appear as dead code: {fn_names}",
+            )
+
+
 class TestFormatReport(unittest.TestCase):
     def test_format_report_groups_by_severity(self) -> None:
         """format_report includes severity headers and lists findings grouped by severity."""
