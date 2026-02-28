@@ -315,7 +315,7 @@ def test_fetch_report_rejects_file_url() -> None:
         fetch_report_content("file:///etc/passwd")
         assert False, "Expected RuntimeError for file:// URL"
     except RuntimeError as exc:
-        assert "Unsupported URL scheme" in str(exc), f"Unexpected message: {exc}"
+        assert "file" in str(exc).lower(), f"Unexpected message: {exc}"
 
 
 if __name__ == "__main__":

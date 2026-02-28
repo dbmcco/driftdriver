@@ -253,6 +253,20 @@ class TestSourcePatternRestricted(unittest.TestCase):
         self.assertEqual(decision.action, "allow")
 
 
+class TestUvRunRestricted(unittest.TestCase):
+    def test_uv_run_pytest_allowed(self) -> None:
+        """uv run pytest and uv run python -m pytest are safe."""
+        self.assertTrue(is_safe_bash("uv run pytest tests/"))
+        self.assertTrue(is_safe_bash("uv run python3 -m pytest tests/ -x -q"))
+        self.assertTrue(is_safe_bash("uv run python -m black ."))
+
+    def test_uv_run_arbitrary_denied(self) -> None:
+        """uv run with arbitrary commands must be denied."""
+        self.assertFalse(is_safe_bash('uv run python -c "import os; os.system(\'rm -rf /\')"'))
+        self.assertFalse(is_safe_bash("uv run /tmp/evil.py"))
+        self.assertFalse(is_safe_bash("uv run bash"))
+
+
 class TestOutputRedirectionRejected(unittest.TestCase):
     def test_redirect_to_file_denied(self) -> None:
         """Output redirection must be denied — safe command + > writes arbitrary file."""

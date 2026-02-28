@@ -52,7 +52,11 @@ _SAFE_BASH_PATTERNS = [
     r"^\s*npx\s+(prettier|eslint|tsc|vitest|jest)(\s|$)",
     r"^\s*cargo\s+(build|test|check|clippy|fmt)",
     r"^\s*make\s+\w+",
-    r"^\s*uv\s+run\s+",
+    r"^\s*uv\s+run\s+python3?\s+-m\s+(pytest|black|flake8|mypy|pip)",
+    r"^\s*uv\s+run\s+pytest(\s|$)",
+    r"^\s*uv\s+run\s+black(\s|$)",
+    r"^\s*uv\s+run\s+flake8(\s|$)",
+    r"^\s*uv\s+run\s+mypy(\s|$)",
 ]
 
 _DANGEROUS_BASH_PATTERNS = [

@@ -197,8 +197,8 @@ def fetch_report_content(url: str, *, timeout_seconds: int = 8) -> str:
         raise RuntimeError("empty report URL")
     from urllib.parse import urlparse
     scheme = urlparse(clean).scheme.lower()
-    if scheme not in ("https", "http"):
-        raise RuntimeError(f"Unsupported URL scheme: {clean}")
+    if scheme != "https":
+        raise RuntimeError(f"Only HTTPS URLs are accepted (got {scheme}): {clean}")
     req = Request(
         clean,
         headers={

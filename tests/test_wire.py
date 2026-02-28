@@ -28,6 +28,8 @@ def test_cmd_verify_controlled(tmp_path: Path) -> None:
     project = _init_test_repo(tmp_path)
     result = cmd_verify(project)
     assert "checks" in result
+    assert isinstance(result["checks"], dict)
+    assert len(result["checks"]) > 0
 
 
 def test_cmd_loop_check_records_and_detects():
@@ -98,6 +100,8 @@ def test_cmd_distill_processes_events():
     assert "knowledge_created" in result
     assert "entries_pruned" in result
     assert result["events_processed"] == 3
+    assert isinstance(result["knowledge_created"], int)
+    assert isinstance(result["entries_pruned"], int)
 
 
 def test_cmd_rollback_eval_returns_decision():
