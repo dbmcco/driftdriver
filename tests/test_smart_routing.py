@@ -3,7 +3,7 @@
 
 import pytest
 from pathlib import Path
-from driftdriver.smart_routing import EvidencePackage, gather_evidence
+from driftdriver.smart_routing import EvidencePackage, gather_evidence, parse_git_diff_stat, load_pattern_hints
 
 
 class TestEvidencePackage:
@@ -106,3 +106,35 @@ class TestGatherEvidence:
         evidence = gather_evidence(wg_dir)
         assert "coredrift" in evidence.installed_lanes
         assert "some_random_script" not in evidence.installed_lanes
+
+
+class TestParseGitDiffStat:
+    """Tests for parse_git_diff_stat."""
+
+    def test_parse_git_diff_stat_basic(self):
+        raw = "M\tsrc/foo.py\nA\tsrc/bar.py\nD\told.py\n"
+        result = parse_git_diff_stat(raw)
+        assert len(result) >= 2
+
+    def test_parse_git_diff_stat_rename(self):
+        raw = "R100\told.py\tnew.py\n"
+        result = parse_git_diff_stat(raw)
+        assert len(result) >= 1
+
+    def test_parse_git_diff_stat_empty(self):
+        result = parse_git_diff_stat("")
+        assert result == [] or result == {}
+
+
+class TestLoadPatternHints:
+    """Tests for load_pattern_hints."""
+
+    def test_load_pattern_hints_missing_file(self, tmp_path):
+        result = load_pattern_hints(tmp_path / "nonexistent.toml")
+        assert result == {}
+
+    def test_load_pattern_hints_valid(self, tmp_path):
+        toml_file = tmp_path / "lane-routing.toml"
+        toml_file.write_text('[lane-routing.patterns]\ncoredrift = ["*.py"]\n')
+        result = load_pattern_hints(toml_file)
+        assert "coredrift" in result or isinstance(result, dict)

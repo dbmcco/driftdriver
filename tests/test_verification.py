@@ -95,5 +95,26 @@ class VerificationTests(unittest.TestCase):
             self.assertIsInstance(result.blockers, list)
 
 
+def test_check_contract_scope_exceeds_max_files(tmp_path):
+    """Contract with max_files=1 should fail when 2+ files changed."""
+    _init_repo(tmp_path)
+    (tmp_path / "a.py").write_text("a")
+    (tmp_path / "b.py").write_text("b")
+    subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
+    contract = {"max_files": 1}
+    result = verify_task_completion(tmp_path, contract)
+    assert result.checks.get("contract_scope") is False
+
+
+def test_check_contract_scope_within_limits(tmp_path):
+    """Contract with generous limits should pass."""
+    _init_repo(tmp_path)
+    (tmp_path / "a.py").write_text("a")
+    subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
+    contract = {"max_files": 10}
+    result = verify_task_completion(tmp_path, contract)
+    assert result.checks.get("contract_scope") is True
+
+
 if __name__ == "__main__":
     unittest.main()

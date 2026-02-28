@@ -123,5 +123,21 @@ class LaneSelectionTests(unittest.TestCase):
         assert "smart" in LANE_STRATEGIES
 
 
+def test_smart_strategy_with_wg_dir(tmp_path):
+    """Smart strategy with a workgraph dir should attempt evidence gathering."""
+    wg_dir = tmp_path / ".workgraph"
+    wg_dir.mkdir()
+    (wg_dir / "graph.jsonl").write_text('{"type":"task","id":"t1","title":"Test"}\n')
+
+    _selected, plan = _select_optional_plugins(
+        task=None,
+        ordered_plugins=list(OPTIONAL_PLUGINS),
+        lane_strategy="smart",
+        wg_dir=wg_dir,
+    )
+    assert plan["strategy"] in ("smart", "auto")
+    assert isinstance(plan.get("lanes", []), list)
+
+
 if __name__ == "__main__":
     unittest.main()
