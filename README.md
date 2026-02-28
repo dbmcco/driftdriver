@@ -54,6 +54,7 @@ The daily ecosystem scanner monitors these for new repos and activity:
 - [@taylorsatula](https://github.com/taylorsatula) (MIRA)
 - [@steveyegge](https://github.com/steveyegge) (Beads)
 - [@ramparte](https://github.com/ramparte) (Amplifier bundles/extensions)
+- [@ekg](https://github.com/ekg) (Erik Garrison — Workgraph / [graphwork](https://github.com/graphwork))
 
 ## Install (CLI)
 
