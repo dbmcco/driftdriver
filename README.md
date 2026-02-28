@@ -14,6 +14,7 @@ Today it supports:
 - `depsdrift` (optional)
 - `uxdrift` (optional)
 - `therapydrift` (optional)
+- `fixdrift` (optional)
 - `yagnidrift` (optional)
 - `redrift` (optional)
 
@@ -27,7 +28,7 @@ This project is part of the Speedrift suite for Workgraph-first drift control.
 - Spine: [Workgraph](https://graphwork.github.io/)
 - Orchestrator: [driftdriver](https://github.com/dbmcco/driftdriver)
 - Baseline lane: [coredrift](https://github.com/dbmcco/coredrift)
-- Optional lanes: [specdrift](https://github.com/dbmcco/specdrift), [datadrift](https://github.com/dbmcco/datadrift), [archdrift](https://github.com/dbmcco/archdrift), [depsdrift](https://github.com/dbmcco/depsdrift), [uxdrift](https://github.com/dbmcco/uxdrift), [therapydrift](https://github.com/dbmcco/therapydrift), [yagnidrift](https://github.com/dbmcco/yagnidrift), [redrift](https://github.com/dbmcco/redrift)
+- Optional lanes: [specdrift](https://github.com/dbmcco/specdrift), [datadrift](https://github.com/dbmcco/datadrift), [archdrift](https://github.com/dbmcco/archdrift), [depsdrift](https://github.com/dbmcco/depsdrift), [uxdrift](https://github.com/dbmcco/uxdrift), [therapydrift](https://github.com/dbmcco/therapydrift), `fixdrift`, [yagnidrift](https://github.com/dbmcco/yagnidrift), [redrift](https://github.com/dbmcco/redrift)
 
 ## Install (CLI)
 
@@ -46,6 +47,8 @@ pipx install git+https://github.com/dbmcco/archdrift.git
 pipx install git+https://github.com/dbmcco/depsdrift.git
 pipx install git+https://github.com/dbmcco/uxdrift.git
 pipx install git+https://github.com/dbmcco/therapydrift.git
+# fixdrift (local checkout path while repository publishing is in progress)
+# pipx install /path/to/fixdrift
 pipx install git+https://github.com/dbmcco/yagnidrift.git
 pipx install git+https://github.com/dbmcco/redrift.git
 ```
@@ -60,10 +63,10 @@ driftdriver install
 
 Note: baseline lane was renamed from `speedrift` to `coredrift`.
 
-Optional UX + therapy + YAGNI + redrift integration:
+Optional UX + therapy + fix-quality + YAGNI + redrift integration:
 
 ```bash
-driftdriver install --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift
+driftdriver install --with-uxdrift --with-therapydrift --with-fixdrift --with-yagnidrift --with-redrift
 ```
 
 Optional Amplifier executor + autostart hook integration:
@@ -96,7 +99,7 @@ scripts/package_app.sh --app /path/to/app --seed-redrift-task
 
 What it does:
 - installs `driftdriver` wrappers into the target app's `.workgraph/`
-- wires all locally available modules (`coredrift`, `specdrift`, `datadrift`, `archdrift`, `depsdrift`, `uxdrift`, `therapydrift`, `yagnidrift`, `redrift`)
+- wires all locally available modules (`coredrift`, `specdrift`, `datadrift`, `archdrift`, `depsdrift`, `uxdrift`, `therapydrift`, `fixdrift`, `yagnidrift`, `redrift`)
 - optionally seeds a starter redrift task with a full-suite fence set
 
 Common flags:
@@ -115,13 +118,13 @@ By default `driftdriver install` chooses wrapper style automatically:
 If you want to commit `./.workgraph/drifts` (and wrappers) into the repo, use:
 
 ```bash
-driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift
+driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-fixdrift --with-yagnidrift --with-redrift
 ```
 
 If Amplifier is your primary CLI runtime, add:
 
 ```bash
-driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift --with-amplifier-executor
+driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-fixdrift --with-yagnidrift --with-redrift --with-amplifier-executor
 ```
 
 This writes:
@@ -131,6 +134,7 @@ This writes:
 - (optional) `./.workgraph/archdrift` (wrapper)
 - (optional) `./.workgraph/uxdrift` (wrapper)
 - (optional) `./.workgraph/therapydrift` (wrapper)
+- (optional) `./.workgraph/fixdrift` (wrapper)
 - (optional) `./.workgraph/yagnidrift` (wrapper)
 - (optional) `./.workgraph/redrift` (wrapper)
 - (optional) `./.workgraph/executors/amplifier.toml` (Workgraph -> Amplifier executor)
@@ -147,7 +151,7 @@ This writes:
 ```toml
 schema = 1
 mode = "redirect"
-order = ["coredrift", "specdrift", "datadrift", "archdrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift", "redrift"]
+order = ["coredrift", "specdrift", "datadrift", "archdrift", "depsdrift", "uxdrift", "therapydrift", "fixdrift", "yagnidrift", "redrift"]
 
 [recursion]
 cooldown_seconds = 1800
@@ -181,10 +185,14 @@ Notes:
 - CLI flags still force behavior per run: `--write-log` and `--create-followups`.
 - Contract hygiene: if `[contracts].auto_ensure = true`, driftdriver runs `coredrift ensure-contracts --apply` before checks.
 - Update preflight runs before `check` when `[updates].enabled = true`.
-  - If ecosystem repo heads changed, driftdriver prints a decision prompt:
+  - If ecosystem repo heads (or configured discovery sources) changed, driftdriver prints a decision prompt:
     - `Decision needed: should the model/toolchain self-update now?`
   - Update checks are cached by `check_interval_seconds` in `./.workgraph/.driftdriver/update-state.json`.
   - If `create_followup = true`, driftdriver creates a deterministic follow-up task per origin task.
+  - Optional discovery config lives at `./.workgraph/.driftdriver/ecosystem-review.json`:
+    - add `extra_repos` for borrowed repos you want monitored
+    - add `github_users` (for example `jesse`, `2389`) to scan for new/updated repos
+    - add `reports` URLs (for example your Bibez report) and `report_keywords` to surface useful lines
 - Loop safety: if `[loop_safety]` thresholds are exceeded, driftdriver downgrades the run to advisory mode (logs yes, new follow-ups no).
 - Lane routing is controlled per run with `--lane-strategy`:
   - `auto` (default): respects task fences and escalates to full-suite for complex/rebuild tasks.
@@ -197,6 +205,8 @@ Manual update check:
 driftdriver updates
 driftdriver updates --force
 driftdriver updates --json --force
+driftdriver updates --watch-user jesse --watch-user 2389 --watch-report bibez=https://example.com/report --report-keyword workgraph --force
+driftdriver updates --config ./.workgraph/.driftdriver/ecosystem-review.json --write-review ./.workgraph/.driftdriver/reviews/latest.md --force
 
 # health + queue controls
 driftdriver doctor
@@ -207,6 +217,19 @@ driftdriver compact --apply
 
 # one-shot flow: check + normalized actions + next queued drift tasks
 driftdriver run --task <id>
+```
+
+Scheduled review helper:
+
+```bash
+# writes timestamped JSON + Markdown into .workgraph/.driftdriver/reviews/
+scripts/run_ecosystem_review.sh --app .
+```
+
+Config template:
+
+```bash
+cp docs/ecosystem-review.example.json ./.workgraph/.driftdriver/ecosystem-review.json
 ```
 
 ## Use Tools Separately
@@ -221,6 +244,7 @@ archdrift --dir . wg check --task <id> --write-log --create-followups
 depsdrift --dir . wg check --task <id> --write-log --create-followups
 uxdrift wg --dir . check --task <id> --write-log --create-followups
 therapydrift --dir . wg check --task <id> --write-log --create-followups
+fixdrift --dir . wg check --task <id> --write-log --create-followups
 yagnidrift --dir . wg check --task <id> --write-log --create-followups
 redrift --dir . wg check --task <id> --write-log --create-followups
 ```

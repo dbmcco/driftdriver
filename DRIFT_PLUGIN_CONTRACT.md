@@ -22,6 +22,7 @@ Examples:
 - `archdrift` reads a ` ```archdrift` block.
 - `depsdrift` reads a ` ```depsdrift` block.
 - `therapydrift` reads a ` ```therapydrift` block.
+- `fixdrift` reads a ` ```fixdrift` block.
 - `yagnidrift` reads a ` ```yagnidrift` block.
 - `redrift` reads a ` ```redrift` block.
 

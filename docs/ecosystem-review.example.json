@@ -1,0 +1,27 @@
+{
+  "extra_repos": {
+    "workgraph": "graphwork/workgraph"
+  },
+  "github_users": [
+    "jesse",
+    "2389"
+  ],
+  "reports": [
+    {
+      "name": "bibez-report",
+      "url": "https://example.com/bibez-report",
+      "keywords": [
+        "workgraph",
+        "amplifier",
+        "speedrift"
+      ]
+    }
+  ],
+  "report_keywords": [
+    "valuable",
+    "leverage",
+    "automation",
+    "workflow"
+  ],
+  "user_repo_limit": 20
+}

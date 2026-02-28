@@ -22,7 +22,7 @@ scripts/package_app.sh --app /path/to/app --seed-redrift-task
 Amplifier runtime wiring (optional but recommended when `amplifier` is primary CLI):
 
 ```bash
-driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift --with-amplifier-executor
+driftdriver install --wrapper-mode portable --with-uxdrift --with-therapydrift --with-fixdrift --with-yagnidrift --with-redrift --with-amplifier-executor
 ```
 
 This adds:
@@ -63,6 +63,7 @@ archdrift --dir . wg check --task <id> --write-log --create-followups
 depsdrift --dir . wg check --task <id> --write-log --create-followups
 uxdrift wg --dir . check --task <id> --write-log --create-followups
 therapydrift --dir . wg check --task <id> --write-log --create-followups
+fixdrift --dir . wg check --task <id> --write-log --create-followups
 yagnidrift --dir . wg check --task <id> --write-log --create-followups
 redrift --dir . wg check --task <id> --write-log --create-followups
 ```
@@ -106,6 +107,11 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 - Standalone: recurring drift recovery and loop safety.
 - Together: combine across long-running multi-agent projects.
 
+### fixdrift
+
+- Standalone: root-cause bug-fix quality checks (repro/RCA/regression evidence).
+- Together: combine with `therapydrift` to break patch-on-patch loops.
+
 ### yagnidrift
 
 - Standalone: speculative abstraction and overbuild checks.
@@ -120,5 +126,5 @@ redrift --dir . wg check --task <id> --write-log --create-followups
 
 - Product feature stack: `coredrift + specdrift + uxdrift`
 - Backend migration stack: `coredrift + datadrift + archdrift + depsdrift + redrift`
-- Stabilization stack: `coredrift + therapydrift + yagnidrift`
+- Stabilization stack: `coredrift + therapydrift + fixdrift + yagnidrift`
 - Brownfield v2 stack: `coredrift + redrift + specdrift + datadrift + archdrift + therapydrift`

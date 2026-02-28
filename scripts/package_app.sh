@@ -13,6 +13,7 @@ Options:
   --wrapper-mode <mode>      auto|pinned|portable (default: auto)
   --skip-contracts           Do not run ensure-contracts during install
   --seed-redrift-task        Create a starter redrift task in workgraph
+  --with-amplifier-executor  Also install Amplifier executor + autostart hooks (UserPromptSubmit + SessionStart)
   --task-id <id>             Task id for seeded redrift task
   --task-title <title>       Task title for seeded redrift task
   --help                     Show this help
@@ -20,6 +21,7 @@ Options:
 Examples:
   scripts/package_app.sh --app ~/code/my-app
   scripts/package_app.sh --app ~/code/my-app --seed-redrift-task
+  scripts/package_app.sh --app ~/code/my-app --seed-redrift-task --with-amplifier-executor
   scripts/package_app.sh --app ~/code/my-app --wrapper-mode auto --skip-contracts
 EOF
 }
@@ -32,6 +34,7 @@ APP_DIR=""
 WRAPPER_MODE="auto"
 SKIP_CONTRACTS=0
 SEED_REDRIFT_TASK=0
+WITH_AMPLIFIER_EXECUTOR=0
 TASK_ID=""
 TASK_TITLE=""
 
@@ -51,6 +54,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --seed-redrift-task)
       SEED_REDRIFT_TASK=1
+      shift
+      ;;
+    --with-amplifier-executor)
+      WITH_AMPLIFIER_EXECUTOR=1
       shift
       ;;
     --task-id)
@@ -116,6 +123,7 @@ ARCHDRIFT_BIN="$(resolve_local_bin archdrift archdrift || true)"
 DEPSDRIFT_BIN="$(resolve_local_bin depsdrift depsdrift || true)"
 UXDRIFT_BIN="$(resolve_local_bin uxdrift uxdrift || true)"
 THERAPYDRIFT_BIN="$(resolve_local_bin therapydrift therapydrift || true)"
+FIXDRIFT_BIN="$(resolve_local_bin fixdrift fixdrift || true)"
 YAGNIDRIFT_BIN="$(resolve_local_bin yagnidrift yagnidrift || true)"
 REDRIFT_BIN="$(resolve_local_bin redrift redrift || true)"
 
@@ -138,8 +146,10 @@ cmd=(
 [[ -n "$DEPSDRIFT_BIN" ]] && cmd+=(--depsdrift-bin "$DEPSDRIFT_BIN")
 [[ -n "$UXDRIFT_BIN" ]] && cmd+=(--uxdrift-bin "$UXDRIFT_BIN")
 [[ -n "$THERAPYDRIFT_BIN" ]] && cmd+=(--therapydrift-bin "$THERAPYDRIFT_BIN")
+[[ -n "$FIXDRIFT_BIN" ]] && cmd+=(--fixdrift-bin "$FIXDRIFT_BIN")
 [[ -n "$YAGNIDRIFT_BIN" ]] && cmd+=(--yagnidrift-bin "$YAGNIDRIFT_BIN")
 [[ -n "$REDRIFT_BIN" ]] && cmd+=(--redrift-bin "$REDRIFT_BIN")
+[[ "$WITH_AMPLIFIER_EXECUTOR" -eq 1 ]] && cmd+=(--with-amplifier-executor)
 [[ "$SKIP_CONTRACTS" -eq 1 ]] && cmd+=(--no-ensure-contracts)
 
 echo "==> Packaging app: $APP_DIR"
