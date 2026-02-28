@@ -41,6 +41,8 @@ from driftdriver.install import (
     ensure_datadrift_gitignore,
     ensure_depsdrift_gitignore,
     ensure_fixdrift_gitignore,
+    ensure_contrariandrift_gitignore,
+    ensure_qadrift_gitignore,
     ensure_redrift_gitignore,
     ensure_specdrift_gitignore,
     ensure_coredrift_gitignore,
@@ -49,6 +51,8 @@ from driftdriver.install import (
     ensure_yagnidrift_gitignore,
     resolve_bin,
     write_archdrift_wrapper,
+    write_contrariandrift_wrapper,
+    write_qadrift_wrapper,
     write_datadrift_wrapper,
     write_depsdrift_wrapper,
     write_drifts_wrapper,
@@ -1066,6 +1070,15 @@ def cmd_install(args: argparse.Namespace) -> int:
         # Best-effort: don't fail install.
         include_redrift = False
 
+    contrariandrift_bin = resolve_bin(
+        explicit=None,
+        env_var="CONTRARIANDRIFT_BIN",
+        which_name="contrariandrift",
+        candidates=[
+            repo_root.parent / "contrariandrift" / "bin" / "contrariandrift",
+        ],
+    )
+
     datadrift_bin = resolve_bin(
         explicit=Path(args.datadrift_bin) if args.datadrift_bin else None,
         env_var="DATADRIFT_BIN",
@@ -1153,6 +1166,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             redrift_bin=redrift_bin,
             wrapper_mode=wrapper_mode,
         )
+    write_qadrift_wrapper(wg_dir)
 
     wrote_amplifier_executor = False
     wrote_amplifier_runner = False
@@ -1197,6 +1211,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         updated_gitignore = ensure_yagnidrift_gitignore(wg_dir) or updated_gitignore
     if include_redrift:
         updated_gitignore = ensure_redrift_gitignore(wg_dir) or updated_gitignore
+    updated_gitignore = ensure_qadrift_gitignore(wg_dir) or updated_gitignore
 
     created_executor, patched_executors = ensure_executor_guidance(
         wg_dir,

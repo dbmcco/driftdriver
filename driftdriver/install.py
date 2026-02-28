@@ -17,6 +17,7 @@ FIXDRIFT_MARKER = "## fixdrift Protocol"
 YAGNIDRIFT_MARKER = "## yagnidrift Protocol"
 REDRIFT_MARKER = "## redrift Protocol"
 SPECDRIFT_MARKER = "## specdrift Protocol"
+CONTRARIANDRIFT_MARKER = "## contrariandrift Protocol"
 SUPERPOWERS_MARKER = "## Superpowers Protocol"
 MODEL_MEDIATED_MARKER = "## Model-Mediated Protocol"
 
@@ -35,6 +36,7 @@ class InstallResult:
     wrote_fixdrift: bool
     wrote_yagnidrift: bool
     wrote_redrift: bool
+    wrote_contrariandrift: bool
     wrote_amplifier_executor: bool
     wrote_amplifier_runner: bool
     wrote_amplifier_autostart_hook: bool
@@ -96,6 +98,12 @@ def ensure_yagnidrift_gitignore(wg_dir: Path) -> bool:
 
 def ensure_redrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".redrift/")
+
+def ensure_contrariandrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".contrariandrift/")
+
+def ensure_qadrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".qadrift/")
 
 
 def _portable_wrapper_content(tool_name: str) -> str:
@@ -198,6 +206,22 @@ def write_yagnidrift_wrapper(wg_dir: Path, *, yagnidrift_bin: Path, wrapper_mode
 
 def write_redrift_wrapper(wg_dir: Path, *, redrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="redrift", tool_bin=redrift_bin, wrapper_mode=wrapper_mode)
+
+def write_contrariandrift_wrapper(wg_dir: Path, *, contrariandrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="contrariandrift", tool_bin=contrariandrift_bin, wrapper_mode=wrapper_mode)
+
+def write_qadrift_wrapper(wg_dir: Path) -> bool:
+    """Writes .workgraph/qadrift wrapper that invokes qadrift via python3 -m driftdriver.qadrift."""
+    template = Path(__file__).parent / "templates" / "qadrift_wrapper.sh"
+    content = template.read_text(encoding="utf-8")
+    wrapper = wg_dir / "qadrift"
+    existing = wrapper.read_text(encoding="utf-8") if wrapper.exists() else None
+    changed = existing != content
+    if changed:
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_text(content, encoding="utf-8")
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return changed
 
 
 def write_drifts_wrapper(wg_dir: Path) -> bool:
