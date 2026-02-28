@@ -90,6 +90,14 @@ class ThrottleTests(unittest.TestCase):
             throttled = check_throttle(state_dir, window_seconds=300, max_continuations=3)
         self.assertTrue(throttled)
 
+    def test_check_throttle_non_numeric_lines(self) -> None:
+        with TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            state_file = state_dir / ".continuation-state"
+            state_file.write_text(f"corrupted\n{time.time()}\nnot-a-number\n")
+            result = check_throttle(state_dir)
+        self.assertIsInstance(result, bool)
+
 
 if __name__ == "__main__":
     unittest.main()

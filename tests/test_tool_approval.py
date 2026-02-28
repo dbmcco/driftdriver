@@ -96,11 +96,6 @@ class TestWriteInsideScopeApproved(unittest.TestCase):
         self.assertEqual(decision.action, "allow")
         self.assertFalse(decision.requires_review)
 
-    def test_write_no_contract_allowed(self) -> None:
-        # No contract means no path restriction
-        decision = evaluate_tool_call("Write", {"file_path": "/anywhere/file.py"})
-        self.assertEqual(decision.action, "allow")
-
     def test_nested_path_inside_scope(self) -> None:
         contract = {"allowed_paths": ["/project/src"]}
         decision = evaluate_tool_call(
@@ -165,7 +160,6 @@ class TestDevCommandsApproved(unittest.TestCase):
     def test_dev_commands_approved(self) -> None:
         dev_commands = [
             "python -m pytest",
-            "python3 script.py",
             "wg status",
             "cargo build",
             "npm install",
@@ -199,6 +193,48 @@ class TestCommandChainingBypassPrevented(unittest.TestCase):
 
     def test_chained_safe_commands_approved(self) -> None:
         self.assertTrue(is_safe_bash("ls && git status"))
+
+
+class TestInterpreterBypassPrevented(unittest.TestCase):
+    def test_python3_c_denied(self) -> None:
+        self.assertFalse(is_safe_bash('python3 -c "import os; os.system(\'rm -rf /\')"'))
+
+    def test_python3_m_pytest_allowed(self) -> None:
+        self.assertTrue(is_safe_bash("python3 -m pytest tests/"))
+
+    def test_node_e_denied(self) -> None:
+        self.assertFalse(is_safe_bash('node -e "process.exit(1)"'))
+
+    def test_npm_install_allowed(self) -> None:
+        self.assertTrue(is_safe_bash("npm install"))
+
+    def test_cargo_build_allowed(self) -> None:
+        self.assertTrue(is_safe_bash("cargo build"))
+
+    def test_make_no_target_denied(self) -> None:
+        self.assertFalse(is_safe_bash("make"))
+
+
+class TestWriteFailSecure(unittest.TestCase):
+    def test_write_denied_without_contract(self) -> None:
+        decision = evaluate_tool_call("Write", {"file_path": "/anywhere/file.py"})
+        self.assertEqual(decision.action, "deny")
+
+    def test_write_denied_without_allowed_paths(self) -> None:
+        contract: dict = {}
+        decision = evaluate_tool_call(
+            "Write", {"file_path": "/anywhere/file.py"}, task_contract=contract
+        )
+        self.assertEqual(decision.action, "deny")
+
+    def test_write_allowed_with_matching_path(self) -> None:
+        contract = {"allowed_paths": ["/project/src"]}
+        decision = evaluate_tool_call(
+            "Write",
+            {"file_path": "/project/src/main.py"},
+            task_contract=contract,
+        )
+        self.assertEqual(decision.action, "allow")
 
 
 if __name__ == "__main__":

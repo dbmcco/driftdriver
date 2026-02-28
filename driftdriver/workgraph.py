@@ -45,9 +45,12 @@ def load_workgraph(wg_dir: Path) -> Workgraph:
         if not line:
             continue
         obj = json.loads(line)
-        if obj.get("kind") != "task":
+        if obj.get("type") != "task":
             continue
-        tid = str(obj.get("id"))
+        tid = obj.get("id")
+        if tid is None:
+            continue
+        tid = str(tid)
         tasks[tid] = obj
 
     return Workgraph(wg_dir=wg_dir, project_dir=wg_dir.parent, tasks=tasks)

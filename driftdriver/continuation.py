@@ -25,8 +25,18 @@ def check_throttle(state_dir: Path, window_seconds: int = 300, max_continuations
         return False
     now = time.time()
     cutoff = now - window_seconds
+    def _safe_float(s: str) -> float | None:
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
     lines = state_file.read_text(encoding="utf-8").splitlines()
-    recent = [float(ts) for ts in lines if ts.strip() and float(ts) >= cutoff]
+    recent = []
+    for ts in lines:
+        val = _safe_float(ts.strip())
+        if val is not None and val >= cutoff:
+            recent.append(val)
     return len(recent) >= max_continuations
 
 

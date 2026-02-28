@@ -26,17 +26,8 @@ _SAFE_BASH_PATTERNS = [
     r"^\s*git\s+log(\s|$)",
     r"^\s*git\s+diff(\s|$)",
     r"^\s*pytest(\s|$)",
-    r"^\s*cargo\s+test(\s|$)",
-    r"^\s*npm\s+test(\s|$)",
-    r"^\s*python(\s|$)",
-    r"^\s*python3(\s|$)",
     r"^\s*pip(\s|$)",
     r"^\s*pip3(\s|$)",
-    r"^\s*cargo(\s|$)",
-    r"^\s*npm(\s|$)",
-    r"^\s*node(\s|$)",
-    r"^\s*npx(\s|$)",
-    r"^\s*make(\s|$)",
     r"^\s*wg(\s|$)",
     r"^\s*coredrift(\s|$)",
     r"^\s*specdrift(\s|$)",
@@ -50,6 +41,18 @@ _SAFE_BASH_PATTERNS = [
     r"^\s*type(\s|$)",
     r"^\s*cd(\s|$)",
     r"^\s*pwd(\s|$)",
+    # Specific safe interpreter invocations (bare interpreters removed to prevent -c/-e bypass)
+    r"^\s*python3?\s+-m\s+pytest",
+    r"^\s*python3?\s+-m\s+black",
+    r"^\s*python3?\s+-m\s+flake8",
+    r"^\s*python3?\s+-m\s+mypy",
+    r"^\s*python3?\s+-m\s+pip\s+install",
+    r"^\s*node\s+--version",
+    r"^\s*npm\s+(test|run|install|ci)",
+    r"^\s*npx\s+",
+    r"^\s*cargo\s+(build|test|check|clippy|fmt)",
+    r"^\s*make\s+\w+",
+    r"^\s*uv\s+run\s+",
 ]
 
 _DANGEROUS_BASH_PATTERNS = [
@@ -63,7 +66,7 @@ _DANGEROUS_BASH_PATTERNS = [
     r"^\s*chown(\s|$)",
 ]
 
-_WRITE_TOOLS = {"Write", "Edit"}
+_WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
 
 
 def is_safe_bash(command: str) -> bool:
@@ -144,17 +147,26 @@ def evaluate_tool_call(
             requires_review=True,
         )
 
-    # Handle Write/Edit tools
+    # Handle Write/Edit/MultiEdit tools — fail-secure when no contract or allowed_paths
     if tool_name in _WRITE_TOOLS:
-        allowed_paths = contract.get("allowed_paths")
-        if allowed_paths:
-            file_path = tool_input.get("file_path", "")
-            if not is_in_scope(file_path, allowed_paths):
-                return ApprovalDecision(
-                    action="deny",
-                    reason=f"write to {file_path!r} is outside allowed paths",
-                    requires_review=True,
-                )
+        if task_contract is None:
+            return ApprovalDecision(
+                action="deny",
+                reason="no task contract — write requires explicit scope",
+            )
+        allowed_paths = task_contract.get("allowed_paths")
+        if not allowed_paths:
+            return ApprovalDecision(
+                action="deny",
+                reason="no allowed_paths in contract — write requires explicit scope",
+            )
+        file_path = tool_input.get("file_path", "")
+        if not is_in_scope(file_path, allowed_paths):
+            return ApprovalDecision(
+                action="deny",
+                reason=f"write to {file_path!r} is outside allowed paths",
+                requires_review=True,
+            )
         return ApprovalDecision(action="allow", reason="write within allowed scope")
 
     # Default: deny unknown tools, require review
