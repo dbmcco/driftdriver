@@ -158,6 +158,29 @@ def test_wg_log_uses_positional_arg():
     )
 
 
+# Fix 5: session-start.sh and pre-compact.sh must use jq for JSON construction
+def test_session_start_uses_jq():
+    """session-start.sh must use 'jq -n' to build JSON, not string interpolation."""
+    path = HANDLERS_DIR / "session-start.sh"
+    if not path.exists():
+        return
+    content = path.read_text()
+    assert "jq -n" in content, (
+        "session-start.sh must use 'jq -n' for safe JSON construction, not bare string interpolation"
+    )
+
+
+def test_pre_compact_uses_jq():
+    """pre-compact.sh must use 'jq -n' to build JSON, not string interpolation."""
+    path = HANDLERS_DIR / "pre-compact.sh"
+    if not path.exists():
+        return
+    content = path.read_text()
+    assert "jq -n" in content, (
+        "pre-compact.sh must use 'jq -n' for safe JSON construction, not bare string interpolation"
+    )
+
+
 # Fix 4: progress-check.sh must guard against empty TASK_ID
 def test_progress_check_guards_empty_task_id():
     """progress-check.sh must exit 0 early when TASK_ID is empty."""

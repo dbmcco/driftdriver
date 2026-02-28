@@ -14,7 +14,7 @@ driftdriver install 2>/dev/null || true
 wg service start 2>/dev/null || true
 
 # Query Lessons MCP for project context and print to stdout
-CONTEXT_JSON="{\"project_path\":\"$PROJECT_DIR\"}"
+CONTEXT_JSON=$(jq -n --arg path "$PROJECT_DIR" '{project_path: $path}')
 CONTEXT=$(lessons_mcp "get_project_context" "$CONTEXT_JSON")
 
 if [[ -n "$CONTEXT" ]]; then

@@ -10,7 +10,7 @@ HANDLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_ID="${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-unknown}}"
 
 # Flush learnings before context compaction
-FLUSH_JSON="{\"session_id\":\"$SESSION_ID\"}"
+FLUSH_JSON=$(jq -n --arg sid "$SESSION_ID" '{session_id: $sid}')
 lessons_mcp "flush_learnings" "$FLUSH_JSON"
 
 TASK_ID="$(current_task_id)"
