@@ -28,6 +28,28 @@ _SAFE_BASH_PATTERNS = [
     r"^\s*pytest(\s|$)",
     r"^\s*cargo\s+test(\s|$)",
     r"^\s*npm\s+test(\s|$)",
+    r"^\s*python(\s|$)",
+    r"^\s*python3(\s|$)",
+    r"^\s*pip(\s|$)",
+    r"^\s*pip3(\s|$)",
+    r"^\s*cargo(\s|$)",
+    r"^\s*npm(\s|$)",
+    r"^\s*node(\s|$)",
+    r"^\s*npx(\s|$)",
+    r"^\s*make(\s|$)",
+    r"^\s*wg(\s|$)",
+    r"^\s*coredrift(\s|$)",
+    r"^\s*specdrift(\s|$)",
+    r"^\s*driftdriver(\s|$)",
+    r"^\s*vitest(\s|$)",
+    r"^\s*jest(\s|$)",
+    r"^\s*echo(\s|$)",
+    r"^\s*source(\s|$)",
+    r"^\s*\.(\s|$)",
+    r"^\s*which(\s|$)",
+    r"^\s*type(\s|$)",
+    r"^\s*cd(\s|$)",
+    r"^\s*pwd(\s|$)",
 ]
 
 _DANGEROUS_BASH_PATTERNS = [
@@ -124,5 +146,5 @@ def evaluate_tool_call(
                 )
         return ApprovalDecision(action="allow", reason="write within allowed scope")
 
-    # Default: allow unknown tools (conservative for forward-compatibility)
-    return ApprovalDecision(action="allow", reason="unrecognized tool, defaulting to allow")
+    # Default: deny unknown tools, require review
+    return ApprovalDecision(action="deny", reason="unrecognized tool, requires review", requires_review=True)

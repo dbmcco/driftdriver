@@ -161,5 +161,31 @@ class TestFormatReviewRequest(unittest.TestCase):
         self.assertIn("write outside allowed paths", result["reason"])
 
 
+class TestDevCommandsApproved(unittest.TestCase):
+    def test_dev_commands_approved(self) -> None:
+        dev_commands = [
+            "python -m pytest",
+            "python3 script.py",
+            "wg status",
+            "cargo build",
+            "npm install",
+            "make build",
+            "driftdriver install",
+        ]
+        for cmd in dev_commands:
+            decision = evaluate_tool_call("Bash", {"command": cmd})
+            self.assertEqual(
+                decision.action, "allow", f"Expected dev command to be approved: {cmd!r}"
+            )
+            self.assertFalse(decision.requires_review)
+
+
+class TestUnknownToolDeniedByDefault(unittest.TestCase):
+    def test_unknown_tool_denied_by_default(self) -> None:
+        decision = evaluate_tool_call("SomeNewUnknownTool", {"arg": "value"})
+        self.assertEqual(decision.action, "deny")
+        self.assertTrue(decision.requires_review)
+
+
 if __name__ == "__main__":
     unittest.main()
