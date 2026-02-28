@@ -1134,7 +1134,10 @@ def install_lessons_mcp_config(wg_dir: Path) -> bool:
     """
     mcp_json = wg_dir.parent / ".mcp.json"
     if mcp_json.exists():
-        data = json.loads(mcp_json.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(mcp_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            data = {"mcpServers": {}}
     else:
         data = {"mcpServers": {}}
 

@@ -146,7 +146,7 @@ def gather_evidence(
     ]
 
     # Load pattern hints from policy
-    policy_path = workgraph_dir.parent / "drift-policy.toml"
+    policy_path = workgraph_dir / "drift-policy.toml"
     pattern_hints = load_pattern_hints(policy_path)
 
     return EvidencePackage(
