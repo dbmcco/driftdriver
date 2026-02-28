@@ -24,11 +24,27 @@ Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
 
 This project is part of the Speedrift suite for Workgraph-first drift control.
 
+### Core Suite
+
 - Suite home: [speedrift-ecosystem](https://github.com/dbmcco/speedrift-ecosystem)
-- Spine: [Workgraph](https://graphwork.github.io/)
+- Spine: [Workgraph](https://github.com/graphwork/workgraph) ([docs](https://graphwork.github.io/))
 - Orchestrator: [driftdriver](https://github.com/dbmcco/driftdriver)
 - Baseline lane: [coredrift](https://github.com/dbmcco/coredrift)
 - Optional lanes: [specdrift](https://github.com/dbmcco/specdrift), [datadrift](https://github.com/dbmcco/datadrift), [archdrift](https://github.com/dbmcco/archdrift), [depsdrift](https://github.com/dbmcco/depsdrift), [uxdrift](https://github.com/dbmcco/uxdrift), [therapydrift](https://github.com/dbmcco/therapydrift), `fixdrift`, [yagnidrift](https://github.com/dbmcco/yagnidrift), [redrift](https://github.com/dbmcco/redrift)
+- Amplifier integration: [amplifier-bundle-speedrift](https://github.com/dbmcco/amplifier-bundle-speedrift)
+
+### External Dependencies
+
+- [freshell](https://github.com/danshapiro/freshell) — Shell framework (Dan Shapiro)
+- [DraftForge-v2](https://github.com/LightForge-Works/DraftForge-v2) — Document generation
+
+### Watched GitHub Users
+
+The daily ecosystem scanner monitors these users for new repos and activity:
+
+- [@jesse](https://github.com/jesse) (Workgraph / graphwork)
+- [@2389](https://github.com/2389) (2389-research)
+- [@danshapiro](https://github.com/danshapiro) (Freshell)
 
 ## Install (CLI)
 
