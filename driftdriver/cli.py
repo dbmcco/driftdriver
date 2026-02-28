@@ -1173,6 +1173,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             contrariandrift_bin=contrariandrift_bin,
             wrapper_mode=wrapper_mode,
         )
+    wrote_qadrift = write_qadrift_wrapper(wg_dir)
 
     wrote_amplifier_executor = False
     wrote_amplifier_runner = False
@@ -1218,6 +1219,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     if include_redrift:
         updated_gitignore = ensure_redrift_gitignore(wg_dir) or updated_gitignore
     updated_gitignore = ensure_contrariandrift_gitignore(wg_dir) or updated_gitignore
+    updated_gitignore = ensure_qadrift_gitignore(wg_dir) or updated_gitignore
 
     created_executor, patched_executors = ensure_executor_guidance(
         wg_dir,
@@ -1250,6 +1252,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_yagnidrift=wrote_yagnidrift,
         wrote_redrift=wrote_redrift,
         wrote_contrariandrift=wrote_contrariandrift,
+        wrote_qadrift=wrote_qadrift,
         wrote_handlers=handler_written,
         wrote_amplifier_executor=wrote_amplifier_executor,
         wrote_amplifier_runner=wrote_amplifier_runner,

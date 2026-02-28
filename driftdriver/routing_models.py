@@ -21,6 +21,8 @@ KNOWN_LANES = {
     "yagnidrift",
     "fixdrift",
     "redrift",
+    "contrariandrift",
+    "qadrift",
 }
 
 

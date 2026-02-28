@@ -193,3 +193,12 @@ verify: spec is current
         assert "fakelane" not in decision.selected_lanes
         assert "notreal" not in decision.selected_lanes
         assert "coredrift" in decision.selected_lanes
+
+
+class TestKnownLanes:
+    def test_known_lanes_includes_new_lanes(self):
+        """KNOWN_LANES must include contrariandrift and qadrift."""
+        from driftdriver.routing_models import KNOWN_LANES
+
+        assert "contrariandrift" in KNOWN_LANES
+        assert "qadrift" in KNOWN_LANES
