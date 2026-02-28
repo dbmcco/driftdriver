@@ -38,6 +38,7 @@ class InstallResult:
     wrote_amplifier_runner: bool
     wrote_amplifier_autostart_hook: bool
     wrote_amplifier_autostart_hooks_json: bool
+    wrote_claude_code_hooks: bool
     wrote_policy: bool
     updated_gitignore: bool
     created_executor: bool
@@ -960,3 +961,23 @@ def install_codex_adapter(project_dir: Path) -> CodexAdapterResult:
 
     agents_md.write_text(new_content, encoding="utf-8")
     return CodexAdapterResult(wrote_agents_md=True)
+
+
+def install_claude_code_hooks(project_dir: Path) -> bool:
+    """
+    Write the Claude Code hooks.json adapter into project_dir/.claude/hooks.json.
+
+    Reads the bundled hooks.json template and writes it to .claude/hooks.json,
+    creating .claude/ if needed.  Returns True if the file was written, False if
+    the existing content already matches (idempotent).
+    """
+    template_path = (
+        Path(__file__).parent
+        / "templates"
+        / "adapters"
+        / "claude-code"
+        / "hooks.json"
+    )
+    content = template_path.read_text(encoding="utf-8")
+    dest = project_dir / ".claude" / "hooks.json"
+    return _write_text_if_changed(dest, content)
