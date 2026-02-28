@@ -929,6 +929,33 @@ def ensure_amplifier_autostart_hook(project_dir: Path) -> tuple[bool, bool]:
     return (wrote_script, wrote_json)
 
 
+def install_handler_scripts(wg_dir: Path) -> tuple[bool, int]:
+    """
+    Copy all .sh files from templates/handlers/ into wg_dir/handlers/.
+
+    Creates the destination directory if needed, makes each script executable,
+    and overwrites existing files (templates are the source of truth).
+
+    Returns (any_written: bool, count: int) where count is the number of files
+    written.  Returns (False, 0) when all files already match (idempotent).
+    """
+    src_dir = Path(__file__).parent / "templates" / "handlers"
+    dst_dir = wg_dir / "handlers"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    for src in sorted(src_dir.glob("*.sh")):
+        dst = dst_dir / src.name
+        content = src.read_bytes()
+        existing = dst.read_bytes() if dst.exists() else None
+        if existing != content:
+            dst.write_bytes(content)
+            written += 1
+        dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    return (written > 0, written)
+
+
 def install_session_driver_executor(wg_dir: Path) -> tuple[bool, bool]:
     """
     Install the claude-session-driver executor into .workgraph/executors/.
