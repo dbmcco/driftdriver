@@ -1,0 +1,22 @@
+[executor]
+type = "claude"
+command = ".workgraph/executors/session-driver-run.sh"
+args = []
+timeout = 1800
+
+[executor.env]
+WG_TASK_ID = "{{task_id}}"
+
+[executor.prompt_template]
+template = """
+# Task Assignment
+**Task ID**: `{{task_id}}`
+**Title**: {{task_title}}
+**Description**: {{task_description}}
+
+## Required Protocol
+1. Run pre-check: ./.workgraph/drifts check --task {{task_id}} --write-log
+2. Implement the task following TDD (RED->GREEN->REFACTOR)
+3. Run post-check: ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups
+4. Mark complete: wg done {{task_id}}
+"""

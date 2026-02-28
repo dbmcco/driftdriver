@@ -38,6 +38,8 @@ class InstallResult:
     wrote_amplifier_runner: bool
     wrote_amplifier_autostart_hook: bool
     wrote_amplifier_autostart_hooks_json: bool
+    wrote_session_driver_executor: bool
+    wrote_session_driver_runner: bool
     wrote_claude_code_hooks: bool
     wrote_policy: bool
     updated_gitignore: bool
@@ -926,6 +928,32 @@ def ensure_amplifier_autostart_hook(project_dir: Path) -> tuple[bool, bool]:
     return (wrote_script, wrote_json)
 
 
+def install_session_driver_executor(wg_dir: Path) -> tuple[bool, bool]:
+    """
+    Install the claude-session-driver executor into .workgraph/executors/.
+
+    Copies the bundled session-driver.toml and session-driver-run.sh templates,
+    makes the shell script executable, and returns (wrote_toml, wrote_script).
+    Both return values are False when the existing content already matches
+    (idempotent).
+    """
+    templates = Path(__file__).parent / "templates" / "executors"
+
+    executors_dir = wg_dir / "executors"
+    executors_dir.mkdir(parents=True, exist_ok=True)
+
+    toml_src = templates / "session-driver.toml"
+    toml_dst = executors_dir / "session-driver.toml"
+    wrote_toml = _write_text_if_changed(toml_dst, toml_src.read_text(encoding="utf-8"))
+
+    sh_src = templates / "session-driver-run.sh"
+    sh_dst = executors_dir / "session-driver-run.sh"
+    wrote_script = _write_text_if_changed(sh_dst, sh_src.read_text(encoding="utf-8"))
+    sh_dst.chmod(sh_dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    return (wrote_toml, wrote_script)
+
+
 @dataclass(frozen=True)
 class CodexAdapterResult:
     wrote_agents_md: bool
@@ -961,6 +989,47 @@ def install_codex_adapter(project_dir: Path) -> CodexAdapterResult:
 
     agents_md.write_text(new_content, encoding="utf-8")
     return CodexAdapterResult(wrote_agents_md=True)
+
+
+def install_opencode_hooks(project_dir: Path) -> bool:
+    """
+    Write the OpenCode hooks.json adapter into project_dir/.opencode/hooks.json.
+
+    Reads the bundled hooks.json template and writes it to .opencode/hooks.json,
+    creating .opencode/ if needed.  Returns True if the file was written, False if
+    the existing content already matches (idempotent).
+    """
+    template_path = (
+        Path(__file__).parent
+        / "templates"
+        / "adapters"
+        / "opencode"
+        / "hooks.json"
+    )
+    content = template_path.read_text(encoding="utf-8")
+    dest = project_dir / ".opencode" / "hooks.json"
+    return _write_text_if_changed(dest, content)
+
+
+def install_amplifier_adapter(project_dir: Path) -> bool:
+    """
+    Write the Amplifier session-hooks.sh adapter into
+    project_dir/.amplifier/hooks/driftdriver/session-hooks.sh.
+
+    Reads the bundled session-hooks.sh template and writes it to the destination,
+    creating parent directories if needed.  Returns True if the file was written,
+    False if the existing content already matches (idempotent).
+    """
+    template_path = (
+        Path(__file__).parent
+        / "templates"
+        / "adapters"
+        / "amplifier"
+        / "session-hooks.sh"
+    )
+    content = template_path.read_text(encoding="utf-8")
+    dest = project_dir / ".amplifier" / "hooks" / "driftdriver" / "session-hooks.sh"
+    return _write_text_if_changed(dest, content)
 
 
 def install_claude_code_hooks(project_dir: Path) -> bool:
