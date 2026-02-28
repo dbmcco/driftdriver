@@ -252,6 +252,11 @@ class TestSourcePatternRestricted(unittest.TestCase):
         decision = evaluate_tool_call("Bash", {"command": "source ./setup.sh"})
         self.assertEqual(decision.action, "allow")
 
+    def test_source_traversal_denied(self) -> None:
+        """source ./../../etc/profile must be denied — path traversal."""
+        decision = evaluate_tool_call("Bash", {"command": "source ./../../../etc/profile"})
+        self.assertEqual(decision.action, "deny")
+
 
 class TestUvRunRestricted(unittest.TestCase):
     def test_uv_run_pytest_allowed(self) -> None:
@@ -266,6 +271,10 @@ class TestUvRunRestricted(unittest.TestCase):
         self.assertFalse(is_safe_bash("uv run /tmp/evil.py"))
         self.assertFalse(is_safe_bash("uv run bash"))
 
+    def test_uv_run_pip_install_denied(self) -> None:
+        """uv run python -m pip install (arbitrary) must be denied."""
+        self.assertFalse(is_safe_bash("uv run python3 -m pip install evil-package"))
+
 
 class TestOutputRedirectionRejected(unittest.TestCase):
     def test_redirect_to_file_denied(self) -> None:
@@ -273,6 +282,11 @@ class TestOutputRedirectionRejected(unittest.TestCase):
         self.assertFalse(is_safe_bash("cat /etc/shadow > /tmp/leak"))
         self.assertFalse(is_safe_bash("echo crontab >> ~/.bash_profile"))
         self.assertFalse(is_safe_bash("grep -r '' / > /tmp/dump"))
+
+    def test_numbered_fd_redirect_denied(self) -> None:
+        """1> and 2> redirects must also be denied."""
+        self.assertFalse(is_safe_bash("echo payload 1>/path/to/file"))
+        self.assertFalse(is_safe_bash("cat /etc/passwd 2>/tmp/stolen"))
 
     def test_process_substitution_denied(self) -> None:
         """Process substitution <(...) must be denied — executes arbitrary commands."""

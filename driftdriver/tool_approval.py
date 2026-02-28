@@ -35,8 +35,8 @@ _SAFE_BASH_PATTERNS = [
     r"^\s*vitest(\s|$)",
     r"^\s*jest(\s|$)",
     r"^\s*echo(\s|$)",
-    r"^\s*source\s+\./",          # source local files only
-    r"^\s*\.\s+\./",              # dot-source local files only
+    r"^\s*source\s+\./(?!\.\.)",   # source local files only (no ./../ traversal)
+    r"^\s*\.\s+\./(?!\.\.)",      # dot-source local files only (no ./../ traversal)
     r"^\s*which(\s|$)",
     r"^\s*type(\s|$)",
     r"^\s*cd(\s|$)",
@@ -51,8 +51,9 @@ _SAFE_BASH_PATTERNS = [
     r"^\s*npm\s+(test|run|install|ci)",
     r"^\s*npx\s+(prettier|eslint|tsc|vitest|jest)(\s|$)",
     r"^\s*cargo\s+(build|test|check|clippy|fmt)",
-    r"^\s*make\s+\w+",
-    r"^\s*uv\s+run\s+python3?\s+-m\s+(pytest|black|flake8|mypy|pip)",
+    r"^\s*make\s+(build|test|check|lint|fmt|format|dev)(\s|$)",
+    r"^\s*uv\s+run\s+python3?\s+-m\s+(pytest|black|flake8|mypy)(\s|$)",
+    r"^\s*uv\s+run\s+python3?\s+-m\s+pip\s+(list|show|freeze|check|install\s+-r\s+)(\s|$)",
     r"^\s*uv\s+run\s+pytest(\s|$)",
     r"^\s*uv\s+run\s+black(\s|$)",
     r"^\s*uv\s+run\s+flake8(\s|$)",
@@ -79,7 +80,7 @@ def is_safe_bash(command: str) -> bool:
     # Reject command/process substitution and output redirection before pattern matching
     if "$(" in cmd or "`" in cmd or "<(" in cmd:
         return False
-    if re.search(r'(?<![<>12])[>]', cmd):
+    if re.search(r'[12]?\s*>{1,2}', cmd):
         return False
     segments = re.split(r'\s*(?:&&|\|\||[;|\n])\s*', cmd)
 
