@@ -35,15 +35,16 @@ This project is part of the Speedrift suite for Workgraph-first drift control.
 
 ### External Dependencies
 
+- [workgraph](https://github.com/graphwork/workgraph) — Task graph spine (`wg` CLI)
 - [freshell](https://github.com/danshapiro/freshell) — Shell framework (Dan Shapiro)
-- [DraftForge-v2](https://github.com/LightForge-Works/DraftForge-v2) — Document generation
+- [claude-session-driver](https://github.com/obra/claude-session-driver) — Worker session orchestration (Jesse Vincent)
 
 ### Watched GitHub Users
 
 The daily ecosystem scanner monitors these users for new repos and activity:
 
-- [@jesse](https://github.com/jesse) (Workgraph / graphwork)
-- [@2389](https://github.com/2389) (2389-research)
+- [@jesse](https://github.com/jesse) / [@obra](https://github.com/obra) (Workgraph, claude-session-driver)
+- [@2389](https://github.com/2389) (2389-research / superpowers)
 - [@danshapiro](https://github.com/danshapiro) (Freshell)
 
 ## Install (CLI)
