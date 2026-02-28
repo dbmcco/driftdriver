@@ -70,3 +70,9 @@ def test_format_scope_report_fail():
     report = format_scope_report(result)
     assert "FAILED" in report
     assert "bad.py" in report
+
+
+def test_scope_double_star_glob():
+    """src/**/*.py should match deeply nested paths like src/foo/bar.py."""
+    assert _matches_any_pattern("src/foo/bar.py", ["src/**/*.py"]) is True
+    assert _matches_any_pattern("src/a/b/c.py", ["src/**/*.py"]) is True

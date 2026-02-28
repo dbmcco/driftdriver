@@ -22,6 +22,7 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.mode, "redirect")
             self.assertIn("coredrift", p.order)
             self.assertIn("specdrift", p.order)
+            self.assertIn("fixdrift", p.order)
             self.assertGreaterEqual(p.max_auto_depth, 1)
             self.assertTrue(p.contracts_auto_ensure)
             self.assertTrue(p.updates_enabled)
@@ -68,6 +69,7 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.mode, "redirect")
             self.assertEqual(p.order[0], "coredrift")
             self.assertIn("yagnidrift", p.order)
+            self.assertIn("fixdrift", p.order)
             self.assertEqual(p.cooldown_seconds, 0)
             self.assertEqual(p.max_auto_actions_per_hour, 0)
             self.assertEqual(p.max_auto_depth, 1)
@@ -83,9 +85,10 @@ class PolicyTests(unittest.TestCase):
         ordered = _ordered_optional_plugins(["yagnidrift", "specdrift", "unknown", "specdrift", "redrift"])
         self.assertEqual(ordered[0], "yagnidrift")
         self.assertEqual(ordered[1], "specdrift")
-        self.assertEqual(len(ordered), 8)
+        self.assertEqual(len(ordered), 9)
         self.assertIn("archdrift", ordered)
         self.assertIn("uxdrift", ordered)
+        self.assertIn("fixdrift", ordered)
         self.assertIn("redrift", ordered)
 
 

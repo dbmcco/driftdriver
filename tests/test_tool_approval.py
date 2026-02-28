@@ -249,5 +249,18 @@ class TestSourcePatternRestricted(unittest.TestCase):
         self.assertEqual(decision.action, "allow")
 
 
+class TestCommandSubstitutionRejected(unittest.TestCase):
+    def test_command_substitution_rejected(self) -> None:
+        """$( ) substitution must be denied regardless of safe prefix."""
+        self.assertFalse(is_safe_bash("echo $(rm -rf /)"))
+        self.assertFalse(is_safe_bash("ls $(cat /etc/passwd)"))
+        self.assertFalse(is_safe_bash("cat $(whoami)"))
+
+    def test_backtick_substitution_rejected(self) -> None:
+        """Backtick command substitution must be denied."""
+        self.assertFalse(is_safe_bash("echo `rm -rf /`"))
+        self.assertFalse(is_safe_bash("cat `whoami`"))
+
+
 if __name__ == "__main__":
     unittest.main()

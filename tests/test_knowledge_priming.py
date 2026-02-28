@@ -92,3 +92,11 @@ def test_save_fact_appends(tmp_path):
     assert kb.exists()
     facts = load_knowledge_base(kb)
     assert len(facts) == 1
+
+
+def test_glob_match_multi_wildcard():
+    """Patterns with 2+ wildcards must match correctly (not silently fail)."""
+    from driftdriver.knowledge_priming import _glob_match
+    assert _glob_match("*.test.*", "foo.test.ts") is True
+    assert _glob_match("src/*/mod*.py", "src/auth/module.py") is True
+    assert _glob_match("*.test.*", "foo.spec.ts") is False

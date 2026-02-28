@@ -7,10 +7,10 @@ from typing import Any
 
 
 _DRIFT_ID_RE = re.compile(
-    r"^(drift-|coredrift-|specdrift-|datadrift-|archdrift-|depsdrift-|uxdrift-|therapydrift-|yagnidrift-|redrift-|speedrift-)"
+    r"^(drift-|coredrift-|specdrift-|datadrift-|archdrift-|depsdrift-|uxdrift-|therapydrift-|fixdrift-|yagnidrift-|redrift-|speedrift-)"
 )
 _DRIFT_WORD_RE = re.compile(r"\bdrift\b", re.IGNORECASE)
-_DRIFT_TAG_RE = re.compile(r"drift|therapy|yagni|redrift")
+_DRIFT_TAG_RE = re.compile(r"drift|therapy|fix|yagni|redrift")
 _REDRIFT_PREFIX_RE = re.compile(r"^(redrift (analyze|respec|design|build|execute|exec):\s*)+", re.IGNORECASE)
 
 
@@ -168,6 +168,8 @@ def _queue_priority(task: dict[str, Any]) -> int:
         return 85
     if task_id.startswith("drift-harden-"):
         return 80
+    if task_id.startswith("drift-fix-"):
+        return 75
     if task_id.startswith("drift-scope-"):
         return 70
     if task_id.startswith("redrift-"):

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -18,9 +19,8 @@ def test_repair_wrappers_no_name_error(tmp_path):
         _repair_wrappers(wg_dir=wg_dir)
     except NameError as e:
         raise AssertionError(f"NameError raised: {e}") from e
-    except Exception:
-        # Other errors (missing binaries, etc.) are acceptable
-        pass
+    except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+        pass  # Expected: missing binaries, etc.
 
 
 def test_wire_subcommands_exist():

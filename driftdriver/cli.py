@@ -68,7 +68,13 @@ from driftdriver.install import (
 from driftdriver.policy import ensure_drift_policy, load_drift_policy
 from driftdriver.routing_models import parse_routing_response
 from driftdriver.smart_routing import gather_evidence
-from driftdriver.updates import check_ecosystem_updates, summarize_updates
+from driftdriver.updates import (
+    ECOSYSTEM_REPOS,
+    check_ecosystem_updates,
+    load_review_config,
+    render_review_markdown,
+    summarize_updates,
+)
 from driftdriver import wire
 from driftdriver.project_profiles import build_profile, format_profile_report
 from driftdriver.pm_coordination import get_ready_tasks
@@ -481,18 +487,155 @@ def _ensure_breaker_task(*, wg_dir: Path, task_id: str) -> str:
 
 def _update_errors(result: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    repos = result.get("repos")
-    if not isinstance(repos, list):
-        return errors
-    for entry in repos:
-        if not isinstance(entry, dict):
+    sections = (
+        ("repos", "tool"),
+        ("user_checks", "user"),
+        ("report_checks", "name"),
+    )
+    for section, label_key in sections:
+        rows = result.get(section)
+        if not isinstance(rows, list):
             continue
-        error = str(entry.get("error") or "").strip()
-        if not error:
-            continue
-        tool = str(entry.get("tool") or "unknown")
-        errors.append(f"{tool}: {error}")
+        for entry in rows:
+            if not isinstance(entry, dict):
+                continue
+            error = str(entry.get("error") or "").strip()
+            if not error:
+                continue
+            label = str(entry.get(label_key) or "unknown")
+            errors.append(f"{label}: {error}")
     return errors
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    out: list[str] = []
+    for raw in items:
+        value = str(raw).strip()
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _parse_watch_repo(spec: str) -> tuple[str, str]:
+    raw = str(spec).strip()
+    if not raw:
+        raise ValueError("empty --watch-repo spec")
+    if "=" in raw:
+        key, repo = raw.split("=", 1)
+        tool = key.strip()
+        remote = repo.strip()
+    else:
+        remote = raw
+        tool = remote.split("/")[-1].strip()
+    if not tool or not remote or "/" not in remote:
+        raise ValueError(f"invalid --watch-repo spec: {spec!r} (expected tool=owner/repo)")
+    return (tool, remote)
+
+
+def _parse_watch_report(spec: str) -> dict[str, Any]:
+    raw = str(spec).strip()
+    if not raw:
+        raise ValueError("empty --watch-report spec")
+    if "=" in raw:
+        name, url = raw.split("=", 1)
+        report_name = name.strip() or url.strip()
+        report_url = url.strip()
+    else:
+        report_name = raw
+        report_url = raw
+    if not report_url:
+        raise ValueError(f"invalid --watch-report spec: {spec!r}")
+    return {"name": report_name, "url": report_url, "keywords": []}
+
+
+def _resolve_update_sources(
+    *,
+    wg_dir: Path,
+    config_path: str | None,
+    watch_repo_specs: list[str],
+    watch_user_specs: list[str],
+    watch_report_specs: list[str],
+    report_keyword_specs: list[str],
+    user_repo_limit: int | None,
+) -> dict[str, Any]:
+    cfg = load_review_config(wg_dir, config_path)
+
+    cfg_repos = cfg.get("repos") if isinstance(cfg.get("repos"), dict) else None
+    if cfg_repos is not None:
+        repos: dict[str, str] = dict(cfg_repos)
+    else:
+        repos = dict(ECOSYSTEM_REPOS)
+        extra = cfg.get("extra_repos")
+        if isinstance(extra, dict):
+            for k, v in extra.items():
+                key = str(k).strip()
+                val = str(v).strip()
+                if key and val:
+                    repos[key] = val
+
+    for spec in watch_repo_specs:
+        tool, remote = _parse_watch_repo(spec)
+        repos[tool] = remote
+
+    users: list[str] = []
+    cfg_users = cfg.get("github_users")
+    if isinstance(cfg_users, list):
+        users.extend(str(x).strip().lstrip("@") for x in cfg_users)
+    users.extend(str(x).strip().lstrip("@") for x in watch_user_specs)
+    users = _dedupe_strings(users)
+
+    reports: list[dict[str, Any]] = []
+    cfg_reports = cfg.get("reports")
+    if isinstance(cfg_reports, list):
+        for row in cfg_reports:
+            if isinstance(row, dict):
+                reports.append(
+                    {
+                        "name": str(row.get("name") or row.get("url") or "").strip(),
+                        "url": str(row.get("url") or "").strip(),
+                        "keywords": row.get("keywords") if isinstance(row.get("keywords"), list) else [],
+                    }
+                )
+    for spec in watch_report_specs:
+        reports.append(_parse_watch_report(spec))
+    dedup_reports: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for row in reports:
+        url = str(row.get("url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        name = str(row.get("name") or url).strip() or url
+        kws_raw = row.get("keywords")
+        kws: list[str] = []
+        if isinstance(kws_raw, list):
+            kws = _dedupe_strings([str(x).strip() for x in kws_raw])
+        dedup_reports.append({"name": name, "url": url, "keywords": kws})
+
+    keywords: list[str] = []
+    cfg_keywords = cfg.get("report_keywords")
+    if isinstance(cfg_keywords, list):
+        keywords.extend(str(x).strip() for x in cfg_keywords)
+    keywords.extend(str(x).strip() for x in report_keyword_specs)
+    keywords = _dedupe_strings(keywords)
+
+    cfg_limit = cfg.get("user_repo_limit")
+    try:
+        configured_limit = int(cfg_limit) if cfg_limit is not None else 10
+    except Exception:
+        configured_limit = 10
+    limit = int(user_repo_limit) if user_repo_limit is not None else configured_limit
+    limit = max(1, min(limit, 100))
+
+    return {
+        "repos": repos,
+        "users": users,
+        "reports": dedup_reports,
+        "report_keywords": keywords,
+        "user_repo_limit": limit,
+        "config_exists": bool(cfg.get("exists")),
+        "config_path": str(cfg.get("source_path") or ""),
+    }
 
 
 def _wg_log_message(*, wg_dir: Path, task_id: str, message: str) -> None:
@@ -567,7 +710,10 @@ def _run_update_preflight(
         "checked": False,
         "skipped": False,
         "has_updates": False,
+        "has_discoveries": False,
         "updates": [],
+        "user_findings": [],
+        "report_findings": [],
         "errors": [],
         "summary": None,
         "followup_task_id": None,
@@ -578,11 +724,32 @@ def _run_update_preflight(
     interval = int(getattr(policy, "updates_check_interval_seconds", 21600))
     if interval < 0:
         interval = 0
+
+    try:
+        sources = _resolve_update_sources(
+            wg_dir=wg_dir,
+            config_path=None,
+            watch_repo_specs=[],
+            watch_user_specs=[],
+            watch_report_specs=[],
+            report_keyword_specs=[],
+            user_repo_limit=None,
+        )
+    except Exception as e:
+        out["errors"] = [str(e)]
+        print(f"note: ecosystem update preflight config error: {e}", file=sys.stderr)
+        return out
+
     try:
         result = check_ecosystem_updates(
             wg_dir=wg_dir,
             interval_seconds=interval,
             force=False,
+            repos=sources["repos"],
+            users=sources["users"],
+            reports=sources["reports"],
+            report_keywords=sources["report_keywords"],
+            user_repo_limit=int(sources["user_repo_limit"]),
         )
     except Exception as e:
         out["errors"] = [str(e)]
@@ -593,8 +760,11 @@ def _run_update_preflight(
     out["checked_at"] = result.get("checked_at")
     out["interval_seconds"] = int(result.get("interval_seconds", interval))
     out["elapsed_seconds"] = int(result.get("elapsed_seconds", 0))
-    out["has_updates"] = bool(result.get("has_updates"))
+    out["has_discoveries"] = bool(result.get("has_discoveries"))
+    out["has_updates"] = bool(result.get("has_updates")) or out["has_discoveries"]
     out["updates"] = result.get("updates") or []
+    out["user_findings"] = result.get("user_findings") or []
+    out["report_findings"] = result.get("report_findings") or []
     out["errors"] = _update_errors(result)
 
     if out["errors"]:
@@ -1489,6 +1659,20 @@ def cmd_updates(args: argparse.Namespace) -> int:
             print(message)
         return ExitCode.ok
 
+    try:
+        sources = _resolve_update_sources(
+            wg_dir=wg_dir,
+            config_path=getattr(args, "config", None),
+            watch_repo_specs=list(getattr(args, "watch_repo", []) or []),
+            watch_user_specs=list(getattr(args, "watch_user", []) or []),
+            watch_report_specs=list(getattr(args, "watch_report", []) or []),
+            report_keyword_specs=list(getattr(args, "report_keyword", []) or []),
+            user_repo_limit=getattr(args, "user_repo_limit", None),
+        )
+    except Exception as e:
+        print(f"update source configuration error: {e}", file=sys.stderr)
+        return ExitCode.usage
+
     interval = int(policy.updates_check_interval_seconds)
     if interval < 0:
         interval = 0
@@ -1496,9 +1680,25 @@ def cmd_updates(args: argparse.Namespace) -> int:
         wg_dir=wg_dir,
         interval_seconds=interval,
         force=force,
+        repos=sources["repos"],
+        users=sources["users"],
+        reports=sources["reports"],
+        report_keywords=sources["report_keywords"],
+        user_repo_limit=int(sources["user_repo_limit"]),
     )
     errors = _update_errors(result)
     has_updates = bool(result.get("has_updates"))
+    has_discoveries = bool(result.get("has_discoveries"))
+    has_findings = has_updates or has_discoveries
+
+    review_path = getattr(args, "write_review", "")
+    if review_path:
+        try:
+            review_out = Path(str(review_path))
+            review_out.parent.mkdir(parents=True, exist_ok=True)
+            review_out.write_text(render_review_markdown(result), encoding="utf-8")
+        except Exception as e:
+            print(f"note: could not write review markdown ({review_path}): {e}", file=sys.stderr)
 
     if args.json:
         output: dict[str, Any] = {
@@ -1510,19 +1710,30 @@ def cmd_updates(args: argparse.Namespace) -> int:
             "interval_seconds": int(result.get("interval_seconds", interval)),
             "elapsed_seconds": int(result.get("elapsed_seconds", 0)),
             "has_updates": has_updates,
+            "has_discoveries": has_discoveries,
+            "has_findings": has_findings,
             "updates": result.get("updates") or [],
+            "user_findings": result.get("user_findings") or [],
+            "report_findings": result.get("report_findings") or [],
             "errors": errors,
+            "sources": {
+                "config_exists": bool(sources.get("config_exists")),
+                "config_path": str(sources.get("config_path") or ""),
+                "repos": len(sources.get("repos") or {}),
+                "users": len(sources.get("users") or []),
+                "reports": len(sources.get("reports") or []),
+            },
         }
-        if has_updates:
+        if has_findings:
             output["summary"] = summarize_updates(result)
         print(json.dumps(output, indent=2, sort_keys=False))
-        return ExitCode.findings if has_updates else ExitCode.ok
+        return ExitCode.findings if has_findings else ExitCode.ok
 
     if bool(result.get("skipped")):
         elapsed = int(result.get("elapsed_seconds", 0))
         interval_seconds = int(result.get("interval_seconds", interval))
         print(f"Update check skipped: interval not elapsed ({elapsed}s < {interval_seconds}s).")
-    elif has_updates:
+    elif has_findings:
         print(summarize_updates(result))
     else:
         print("No ecosystem updates detected.")
@@ -1532,7 +1743,7 @@ def cmd_updates(args: argparse.Namespace) -> int:
         for error in errors[:6]:
             print(f"- {error}", file=sys.stderr)
 
-    return ExitCode.findings if has_updates else ExitCode.ok
+    return ExitCode.findings if has_findings else ExitCode.ok
 
 
 def cmd_queue(args: argparse.Namespace) -> int:
@@ -1960,6 +2171,43 @@ def _build_parser() -> argparse.ArgumentParser:
     updates = sub.add_parser("updates", help="Check Speedrift ecosystem repos for upstream updates")
     updates.add_argument("--json", action="store_true", help="JSON output")
     updates.add_argument("--force", action="store_true", help="Ignore interval and check remotes now")
+    updates.add_argument(
+        "--config",
+        help="Path to ecosystem review JSON config (default: .workgraph/.driftdriver/ecosystem-review.json)",
+    )
+    updates.add_argument(
+        "--watch-repo",
+        action="append",
+        default=[],
+        help="Extra repo watch target in the form tool=owner/repo (repeatable)",
+    )
+    updates.add_argument(
+        "--watch-user",
+        action="append",
+        default=[],
+        help="GitHub user to scan for new/updated repos (repeatable)",
+    )
+    updates.add_argument(
+        "--watch-report",
+        action="append",
+        default=[],
+        help="Report URL to watch, optionally named as name=url (repeatable)",
+    )
+    updates.add_argument(
+        "--report-keyword",
+        action="append",
+        default=[],
+        help="Keyword to surface from watched report content (repeatable)",
+    )
+    updates.add_argument(
+        "--user-repo-limit",
+        type=int,
+        help="Max repos per watched GitHub user to inspect (default: config value or 10)",
+    )
+    updates.add_argument(
+        "--write-review",
+        help="Write a markdown review report to this path",
+    )
     updates.set_defaults(func=cmd_updates)
 
     queue = sub.add_parser("queue", help="Show ranked ready drift follow-ups and duplicate groups")

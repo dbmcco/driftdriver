@@ -3,6 +3,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import fnmatch
 import json
 
 
@@ -69,13 +70,8 @@ def _path_prefix_match(pattern: str, path: str) -> bool:
 
 
 def _glob_match(pattern: str, path: str) -> bool:
-    """Simple glob matching — pattern with * matches."""
-    if "*" not in pattern:
-        return pattern == path
-    parts = pattern.split("*")
-    if len(parts) == 2:
-        return path.startswith(parts[0]) and path.endswith(parts[1])
-    return False
+    """Glob matching using fnmatch for proper wildcard support."""
+    return fnmatch.fnmatch(path, pattern)
 
 
 def filter_by_type(facts: list[KnowledgeFact], fact_types: list[str]) -> list[KnowledgeFact]:

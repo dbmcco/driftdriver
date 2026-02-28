@@ -19,10 +19,12 @@ from driftdriver.health import (
 class HealthTests(unittest.TestCase):
     def test_detects_drift_tasks_and_contracts(self) -> None:
         drift_task = {"id": "drift-harden-abc", "title": "harden: abc", "status": "open"}
+        fix_drift_task = {"id": "drift-fix-abc", "title": "fix-quality: abc", "status": "open"}
         plain_task = {"id": "abc", "title": "Feature work", "status": "open", "description": ""}
         contract_task = {"id": "x", "description": "```wg-contract\nschema=1\n```"}
 
         self.assertTrue(is_drift_task(drift_task))
+        self.assertTrue(is_drift_task(fix_drift_task))
         self.assertFalse(is_drift_task(plain_task))
         self.assertTrue(has_contract(contract_task))
         self.assertTrue(is_active(drift_task))

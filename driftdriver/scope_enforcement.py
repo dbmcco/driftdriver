@@ -2,7 +2,7 @@
 # ABOUTME: Compares git diff against task contract's allowed files/paths
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import fnmatch
 
@@ -66,6 +66,9 @@ def check_file_scope(
 def _matches_any_pattern(file_path: str, patterns: list[str]) -> bool:
     """Check if a file path matches any of the allowed patterns."""
     for pattern in patterns:
+        # PurePosixPath.match supports ** for recursive matching
+        if PurePosixPath(file_path).match(pattern):
+            return True
         if fnmatch.fnmatch(file_path, pattern):
             return True
         # Also check if the pattern is a prefix (directory scope)
