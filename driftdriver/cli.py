@@ -29,7 +29,12 @@ from driftdriver.install import (
     InstallResult,
     ensure_amplifier_autostart_hook,
     ensure_amplifier_executor,
+    install_amplifier_adapter,
     install_claude_code_hooks,
+    install_codex_adapter,
+    install_lessons_mcp_config,
+    install_opencode_hooks,
+    install_session_driver_executor,
     ensure_archdrift_gitignore,
     ensure_executor_guidance,
     ensure_datadrift_gitignore,
@@ -1157,6 +1162,18 @@ def cmd_install(args: argparse.Namespace) -> int:
     if bool(getattr(args, "with_claude_code_hooks", False)):
         wrote_claude_code_hooks = install_claude_code_hooks(project_dir)
 
+    wrote_session_driver_executor = False
+    wrote_session_driver_runner = False
+    if bool(getattr(args, "all_clis", False)):
+        wrote_claude_code_hooks = install_claude_code_hooks(project_dir) or wrote_claude_code_hooks
+        install_codex_adapter(project_dir)
+        install_opencode_hooks(project_dir)
+        install_amplifier_adapter(project_dir)
+        wrote_session_driver_executor, wrote_session_driver_runner = install_session_driver_executor(wg_dir)
+
+    if bool(getattr(args, "with_lessons_mcp", False)):
+        install_lessons_mcp_config(wg_dir)
+
     updated_gitignore = ensure_coredrift_gitignore(wg_dir)
     if specdrift_bin is not None:
         updated_gitignore = ensure_specdrift_gitignore(wg_dir) or updated_gitignore
@@ -1211,6 +1228,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_amplifier_runner=wrote_amplifier_runner,
         wrote_amplifier_autostart_hook=wrote_amplifier_autostart_hook,
         wrote_amplifier_autostart_hooks_json=wrote_amplifier_autostart_hooks_json,
+        wrote_session_driver_executor=wrote_session_driver_executor,
+        wrote_session_driver_runner=wrote_session_driver_runner,
         wrote_claude_code_hooks=wrote_claude_code_hooks,
         wrote_policy=wrote_policy,
         updated_gitignore=updated_gitignore,
@@ -1239,6 +1258,10 @@ def cmd_install(args: argparse.Namespace) -> int:
             enabled.append("amplifier-executor")
         if bool(getattr(args, "with_claude_code_hooks", False)):
             enabled.append("claude-code-hooks")
+        if bool(getattr(args, "all_clis", False)):
+            enabled.append("all-clis")
+        if bool(getattr(args, "with_lessons_mcp", False)):
+            enabled.append("lessons-mcp")
         if enabled:
             msg += f" (with {', '.join(enabled)})"
         print(msg)
@@ -1730,7 +1753,7 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
     return int(_run(cmd))
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="driftdriver")
     p.add_argument("--dir", help="Project directory (or .workgraph dir). Defaults to cwd search.")
     p.add_argument("--json", action="store_true", help="JSON output (where supported)")
@@ -1778,6 +1801,16 @@ def main(argv: list[str] | None = None) -> int:
         "--with-claude-code-hooks",
         action="store_true",
         help="Install .claude/hooks.json adapter for Claude Code lifecycle events",
+    )
+    install.add_argument(
+        "--all-clis",
+        action="store_true",
+        help="Install all CLI adapter hooks at once (claude-code, codex, opencode, amplifier, session-driver)",
+    )
+    install.add_argument(
+        "--with-lessons-mcp",
+        action="store_true",
+        help="Configure lessons-mcp in .mcp.json in the project root",
     )
     install.add_argument("--json", action="store_true", help="JSON output")
     install.add_argument(
@@ -1853,6 +1886,11 @@ def main(argv: list[str] | None = None) -> int:
     orch.add_argument("--create-followups", action="store_true", help="Create follow-up tasks (redirect agent)")
     orch.set_defaults(func=cmd_orchestrate)
 
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = _build_parser()
     args = p.parse_args(argv)
     return int(args.func(args))
 

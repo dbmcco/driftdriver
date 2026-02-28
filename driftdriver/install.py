@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import os
 import shutil
@@ -1050,3 +1051,32 @@ def install_claude_code_hooks(project_dir: Path) -> bool:
     content = template_path.read_text(encoding="utf-8")
     dest = project_dir / ".claude" / "hooks.json"
     return _write_text_if_changed(dest, content)
+
+
+def install_lessons_mcp_config(wg_dir: Path) -> bool:
+    """
+    Add a minimal lessons-mcp entry to .mcp.json in the project root.
+
+    Reads or creates .mcp.json (sibling of .workgraph/) and adds the
+    lessons-mcp server config if not already present.  Returns True if
+    the file was written, False if the entry already exists (idempotent).
+    """
+    mcp_json = wg_dir.parent / ".mcp.json"
+    if mcp_json.exists():
+        data = json.loads(mcp_json.read_text(encoding="utf-8"))
+    else:
+        data = {"mcpServers": {}}
+
+    if "lessons-mcp" in data.get("mcpServers", {}):
+        return False
+
+    if "mcpServers" not in data:
+        data["mcpServers"] = {}
+
+    data["mcpServers"]["lessons-mcp"] = {
+        "command": "lessons-mcp",
+        "args": [],
+    }
+
+    mcp_json.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return True
