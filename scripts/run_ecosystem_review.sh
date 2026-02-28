@@ -105,6 +105,18 @@ set -e
 echo "Review JSON: $JSON_OUT"
 echo "Review Markdown: $MD_OUT"
 
+# Retention: keep last 30 review pairs, prune older ones.
+KEEP=30
+COUNT=$(find "$OUTPUT_DIR" -name 'review-*.json' -type f 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$COUNT" -gt "$KEEP" ]]; then
+  PRUNE=$((COUNT - KEEP))
+  find "$OUTPUT_DIR" -name 'review-*.json' -type f | sort | head -n "$PRUNE" | while read -r f; do
+    md="${f%.json}.md"
+    rm -f "$f" "$md"
+  done
+  echo "Pruned $PRUNE old review(s), keeping $KEEP"
+fi
+
 if [[ "$rc" -eq 3 && "$STRICT_EXIT" -eq 0 ]]; then
   exit 0
 fi
