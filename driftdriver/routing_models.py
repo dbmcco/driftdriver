@@ -23,6 +23,7 @@ KNOWN_LANES = {
     "redrift",
     "contrariandrift",
     "qadrift",
+    "reviewdrift",
 }
 
 

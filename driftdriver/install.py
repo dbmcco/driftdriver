@@ -212,6 +212,20 @@ def write_redrift_wrapper(wg_dir: Path, *, redrift_bin: Path, wrapper_mode: str 
 def write_contrariandrift_wrapper(wg_dir: Path, *, contrariandrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="contrariandrift", tool_bin=contrariandrift_bin, wrapper_mode=wrapper_mode)
 
+def write_reviewdrift_wrapper(wg_dir: Path) -> bool:
+    """Writes .workgraph/reviewdrift wrapper that invokes adversarial_review via python3 -m driftdriver.adversarial_review."""
+    template = Path(__file__).parent / "templates" / "reviewdrift_wrapper.sh"
+    content = template.read_text(encoding="utf-8")
+    wrapper = wg_dir / "reviewdrift"
+    existing = wrapper.read_text(encoding="utf-8") if wrapper.exists() else None
+    changed = existing != content
+    if changed:
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_text(content, encoding="utf-8")
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return changed
+
+
 def write_qadrift_wrapper(wg_dir: Path) -> bool:
     """Writes .workgraph/qadrift wrapper that invokes qadrift via python3 -m driftdriver.qadrift."""
     template = Path(__file__).parent / "templates" / "qadrift_wrapper.sh"
