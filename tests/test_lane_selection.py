@@ -101,5 +101,27 @@ class LaneSelectionTests(unittest.TestCase):
         self.assertEqual(plan["reasons"], ["lane strategy forced all optional plugins"])
 
 
+    def test_smart_strategy_falls_back_without_wg_dir(self) -> None:
+        """Smart strategy without wg_dir should fall back to auto behavior."""
+        task = {
+            "title": "Simple fix",
+            "description": "```specdrift\nschema = 1\n```\n",
+        }
+        selected, plan = _select_optional_plugins(
+            task=task,
+            ordered_plugins=list(OPTIONAL_PLUGINS),
+            lane_strategy="smart",
+            # No wg_dir — should fall back to auto
+        )
+        # Falls back to auto which should at least find fenced plugins
+        assert "specdrift" in selected
+        assert plan["strategy"] in ("smart", "auto")
+
+    def test_smart_strategy_accepted_as_valid(self) -> None:
+        """'smart' should be a valid lane_strategy value."""
+        from driftdriver.cli import LANE_STRATEGIES
+        assert "smart" in LANE_STRATEGIES
+
+
 if __name__ == "__main__":
     unittest.main()

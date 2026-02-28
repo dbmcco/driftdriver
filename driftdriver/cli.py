@@ -33,6 +33,7 @@ from driftdriver.install import (
     ensure_executor_guidance,
     ensure_datadrift_gitignore,
     ensure_depsdrift_gitignore,
+    ensure_fixdrift_gitignore,
     ensure_redrift_gitignore,
     ensure_specdrift_gitignore,
     ensure_coredrift_gitignore,
@@ -45,6 +46,7 @@ from driftdriver.install import (
     write_depsdrift_wrapper,
     write_drifts_wrapper,
     write_driver_wrapper,
+    write_fixdrift_wrapper,
     write_redrift_wrapper,
     write_specdrift_wrapper,
     write_coredrift_wrapper,
@@ -53,6 +55,8 @@ from driftdriver.install import (
     write_yagnidrift_wrapper,
 )
 from driftdriver.policy import ensure_drift_policy, load_drift_policy
+from driftdriver.routing_models import format_routing_prompt, parse_routing_response
+from driftdriver.smart_routing import gather_evidence
 from driftdriver.updates import check_ecosystem_updates, summarize_updates
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
 
@@ -70,11 +74,12 @@ OPTIONAL_PLUGINS = [
     "depsdrift",
     "uxdrift",
     "therapydrift",
+    "fixdrift",
     "yagnidrift",
     "redrift",
 ]
 
-LANE_STRATEGIES = ("auto", "fences", "all")
+LANE_STRATEGIES = ("auto", "fences", "all", "smart")
 FULL_SUITE_TRIGGER_FENCES = {"redrift"}
 FULL_SUITE_TRIGGER_PHRASES = (
     "full suite",
@@ -218,10 +223,28 @@ def _select_optional_plugins(
     task: dict[str, Any] | None,
     ordered_plugins: list[str],
     lane_strategy: str,
+    wg_dir: Path | None = None,
 ) -> tuple[set[str], dict[str, Any]]:
     strategy = str(lane_strategy or "auto").strip().lower()
     if strategy not in LANE_STRATEGIES:
         strategy = "auto"
+
+    if strategy == "smart":
+        if wg_dir is None:
+            strategy = "auto"
+        else:
+            evidence = gather_evidence(wg_dir)
+            _prompt = format_routing_prompt(evidence)
+            decision = parse_routing_response("", evidence)
+            selected = set(decision.selected_lanes)
+            lane_plan = {
+                "strategy": "smart",
+                "full_suite": False,
+                "reasons": ["smart routing via evidence package"],
+                "selected_plugins": [p for p in ordered_plugins if p in selected],
+                "plugin_reasons": decision.reasoning,
+            }
+            return (selected, lane_plan)
 
     selected: set[str] = set()
     plugin_reasons: dict[str, str] = {}
@@ -685,6 +708,11 @@ def _normalize_actions(plugins: dict[str, Any]) -> list[dict[str, str]]:
         "scope_drift": "scope",
         "hardening_in_core": "harden",
         "dependency_drift": "respec",
+        "repeated_fix_attempts": "fix",
+        "unresolved_fix_followups": "fix",
+        "missing_repro_evidence": "fix",
+        "missing_root_cause_evidence": "fix",
+        "missing_regression_evidence": "fix",
         "missing_redrift_artifacts": "respec",
         "phase_incomplete_analyze": "respec",
         "phase_incomplete_respec": "respec",
@@ -874,6 +902,7 @@ def _compact_plan(*, tasks: list[dict[str, Any]], max_ready: int, max_redrift_de
 def _repair_wrappers(*, wg_dir: Path) -> int:
     include_ux = (wg_dir / "uxdrift").exists()
     include_therapy = (wg_dir / "therapydrift").exists()
+    include_fix = (wg_dir / "fixdrift").exists()
     include_yagni = (wg_dir / "yagnidrift").exists()
     include_redrift = (wg_dir / "redrift").exists()
     args = argparse.Namespace(
@@ -888,6 +917,8 @@ def _repair_wrappers(*, wg_dir: Path) -> int:
         uxdrift_bin=None,
         with_therapydrift=include_therapy,
         therapydrift_bin=None,
+        with_fixdrift=include_fix,
+        fixdrift_bin=None,
         with_yagnidrift=include_yagni,
         yagnidrift_bin=None,
         with_redrift=include_redrift,
@@ -987,6 +1018,19 @@ def cmd_install(args: argparse.Namespace) -> int:
         # Best-effort: don't fail install.
         include_therapydrift = False
 
+    include_fixdrift = bool(args.with_fixdrift or args.fixdrift_bin)
+    fixdrift_bin = resolve_bin(
+        explicit=Path(args.fixdrift_bin) if args.fixdrift_bin else None,
+        env_var="FIXDRIFT_BIN",
+        which_name="fixdrift",
+        candidates=[
+            repo_root.parent / "fixdrift" / "bin" / "fixdrift",
+        ],
+    )
+    if include_fixdrift and fixdrift_bin is None:
+        # Best-effort: don't fail install.
+        include_fixdrift = False
+
     include_yagnidrift = bool(args.with_yagnidrift or args.yagnidrift_bin)
     yagnidrift_bin = resolve_bin(
         explicit=Path(args.yagnidrift_bin) if args.yagnidrift_bin else None,
@@ -1077,6 +1121,13 @@ def cmd_install(args: argparse.Namespace) -> int:
             therapydrift_bin=therapydrift_bin,
             wrapper_mode=wrapper_mode,
         )
+    wrote_fixdrift = False
+    if include_fixdrift and fixdrift_bin is not None:
+        wrote_fixdrift = write_fixdrift_wrapper(
+            wg_dir,
+            fixdrift_bin=fixdrift_bin,
+            wrapper_mode=wrapper_mode,
+        )
     wrote_yagnidrift = False
     if include_yagnidrift and yagnidrift_bin is not None:
         wrote_yagnidrift = write_yagnidrift_wrapper(
@@ -1113,6 +1164,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         updated_gitignore = ensure_uxdrift_gitignore(wg_dir) or updated_gitignore
     if include_therapydrift:
         updated_gitignore = ensure_therapydrift_gitignore(wg_dir) or updated_gitignore
+    if include_fixdrift:
+        updated_gitignore = ensure_fixdrift_gitignore(wg_dir) or updated_gitignore
     if include_yagnidrift:
         updated_gitignore = ensure_yagnidrift_gitignore(wg_dir) or updated_gitignore
     if include_redrift:
@@ -1123,6 +1176,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         include_archdrift=bool(archdrift_bin),
         include_uxdrift=include_uxdrift,
         include_therapydrift=include_therapydrift,
+        include_fixdrift=include_fixdrift,
         include_yagnidrift=include_yagnidrift,
         include_redrift=include_redrift,
     )
@@ -1144,6 +1198,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_depsdrift=wrote_depsdrift,
         wrote_uxdrift=wrote_uxdrift,
         wrote_therapydrift=wrote_therapydrift,
+        wrote_fixdrift=wrote_fixdrift,
         wrote_yagnidrift=wrote_yagnidrift,
         wrote_redrift=wrote_redrift,
         wrote_amplifier_executor=wrote_amplifier_executor,
@@ -1167,6 +1222,8 @@ def cmd_install(args: argparse.Namespace) -> int:
             enabled.append("uxdrift")
         if include_therapydrift:
             enabled.append("therapydrift")
+        if include_fixdrift:
+            enabled.append("fixdrift")
         if include_yagnidrift:
             enabled.append("yagnidrift")
         if include_redrift:
@@ -1203,6 +1260,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         task=task,
         ordered_plugins=ordered_plugins,
         lane_strategy=getattr(args, "lane_strategy", "auto"),
+        wg_dir=wg_dir,
     )
 
     force_write_log = bool(args.write_log)
@@ -1684,6 +1742,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Best-effort: enable therapydrift integration if found",
     )
     install.add_argument("--therapydrift-bin", help="Path to therapydrift bin/therapydrift (enables therapydrift integration)")
+    install.add_argument(
+        "--with-fixdrift",
+        action="store_true",
+        help="Best-effort: enable fixdrift integration if found",
+    )
+    install.add_argument("--fixdrift-bin", help="Path to fixdrift bin/fixdrift (enables fixdrift integration)")
     install.add_argument(
         "--with-yagnidrift",
         action="store_true",
