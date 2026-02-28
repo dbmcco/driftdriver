@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/session-start.sh --cli opencode"
+      }
+    ],
+    "PreCompact": [
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/pre-compact.sh --cli opencode"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/progress-check.sh --cli opencode",
+        "matcher": "Bash"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/agent-stop.sh --cli opencode"
+      }
+    ]
+  }
+}
