@@ -24,27 +24,33 @@ class CoordinationPlan:
     max_parallel: int = 4
 
 
+def parse_ready_output(stdout: str) -> list[dict]:
+    """Parse the text output of 'wg ready' into task dicts."""
+    tasks = []
+    for line in stdout.strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("Ready tasks:"):
+            continue
+        # Parse "  task-id - task title" format
+        parts = line.split(" - ", 1)
+        if len(parts) == 2:
+            task_id = parts[0].strip()
+            title = parts[1].strip()
+            tasks.append({"id": task_id, "title": title, "description": ""})
+    return tasks
+
+
 def get_ready_tasks(project_dir: Path) -> list[dict]:
     """Run `wg ready` and return list of task dicts with id, title, description."""
     result = subprocess.run(
         ["wg", "ready"],
         capture_output=True,
         text=True,
-        cwd=project_dir,
+        cwd=str(project_dir),
     )
-    tasks: list[dict] = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        task: dict = {}
-        for part in line.split("\t"):
-            if ": " in part:
-                key, _, value = part.partition(": ")
-                task[key.strip()] = value.strip()
-        if "id" in task:
-            tasks.append(task)
-    return tasks
+    if result.returncode != 0:
+        return []
+    return parse_ready_output(result.stdout)
 
 
 def plan_dispatch(ready_tasks: list[dict], max_parallel: int = 4) -> CoordinationPlan:
@@ -84,4 +90,4 @@ def format_task_prompt(task: dict) -> str:
 def check_newly_ready(project_dir: Path, previously_known: set[str]) -> list[dict]:
     """Return tasks from `wg ready` that are NOT in previously_known."""
     all_ready = get_ready_tasks(project_dir)
-    return [t for t in all_ready if t.get("id") not in previously_known]
+    return [t for t in all_ready if t["id"] not in previously_known]

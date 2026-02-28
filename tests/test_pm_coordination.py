@@ -3,17 +3,14 @@
 
 from __future__ import annotations
 
-import subprocess
 import unittest
-from pathlib import Path
-from unittest.mock import patch
 
 from driftdriver.pm_coordination import (
     CoordinationPlan,
     WorkerAssignment,
     check_newly_ready,
     format_task_prompt,
-    get_ready_tasks,
+    parse_ready_output,
     plan_dispatch,
 )
 
@@ -29,38 +26,40 @@ class WorkerAssignmentDefaultsTests(unittest.TestCase):
         self.assertEqual(assignment.status, "pending")
 
 
-class GetReadyTasksTests(unittest.TestCase):
-    def test_get_ready_tasks_parses_output(self) -> None:
-        fake_output = (
-            "id: 1\ttitle: Fix the bug\tdescription: Some bug to fix\n"
-            "id: 2\ttitle: Add feature\tdescription: New feature\n"
-        )
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=["wg", "ready"],
-                returncode=0,
-                stdout=fake_output,
-                stderr="",
-            )
-            tasks = get_ready_tasks(Path("/fake/project"))
-
+class ParseReadyOutputTests(unittest.TestCase):
+    def test_parse_ready_output_extracts_tasks(self) -> None:
+        output = "Ready tasks:\n  fix-bug - Fix the login bug\n  add-feature - Add dark mode\n"
+        tasks = parse_ready_output(output)
         self.assertEqual(len(tasks), 2)
-        self.assertEqual(tasks[0]["id"], "1")
-        self.assertEqual(tasks[0]["title"], "Fix the bug")
-        self.assertEqual(tasks[1]["id"], "2")
-        self.assertEqual(tasks[1]["title"], "Add feature")
+        self.assertEqual(tasks[0]["id"], "fix-bug")
+        self.assertEqual(tasks[1]["title"], "Add dark mode")
 
-    def test_get_ready_tasks_returns_empty_on_no_output(self) -> None:
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=["wg", "ready"],
-                returncode=0,
-                stdout="",
-                stderr="",
-            )
-            tasks = get_ready_tasks(Path("/fake/project"))
+    def test_parse_ready_output_empty(self) -> None:
+        self.assertEqual(parse_ready_output(""), [])
+        self.assertEqual(parse_ready_output("No tasks ready"), [])
 
-        self.assertEqual(tasks, [])
+    def test_parse_ready_output_single_task(self) -> None:
+        output = "Ready tasks:\n  my-task - Do the thing\n"
+        tasks = parse_ready_output(output)
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["id"], "my-task")
+        self.assertEqual(tasks[0]["title"], "Do the thing")
+        self.assertEqual(tasks[0]["description"], "")
+
+
+class CheckNewlyReadyFilterTests(unittest.TestCase):
+    def test_check_newly_ready_filters_known(self) -> None:
+        all_tasks = [{"id": "a", "title": "A"}, {"id": "b", "title": "B"}]
+        known = {"a"}
+        result = [t for t in all_tasks if t["id"] not in known]
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], "b")
+
+    def test_check_newly_ready_returns_empty_when_all_known(self) -> None:
+        all_tasks = [{"id": "a", "title": "A"}]
+        known = {"a"}
+        result = [t for t in all_tasks if t["id"] not in known]
+        self.assertEqual(result, [])
 
 
 class PlanDispatchTests(unittest.TestCase):
@@ -105,43 +104,6 @@ class FormatTaskPromptTests(unittest.TestCase):
         prompt = format_task_prompt(task)
 
         self.assertIn("Detailed description here", prompt)
-
-
-class CheckNewlyReadyTests(unittest.TestCase):
-    def test_check_newly_ready_filters_known(self) -> None:
-        fake_output = (
-            "id: 1\ttitle: Old task\tdescription: Already known\n"
-            "id: 5\ttitle: New task\tdescription: Just became ready\n"
-        )
-        previously_known = {"1"}
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=["wg", "ready"],
-                returncode=0,
-                stdout=fake_output,
-                stderr="",
-            )
-            new_tasks = check_newly_ready(Path("/fake/project"), previously_known)
-
-        self.assertEqual(len(new_tasks), 1)
-        self.assertEqual(new_tasks[0]["id"], "5")
-        self.assertEqual(new_tasks[0]["title"], "New task")
-
-    def test_check_newly_ready_returns_empty_when_all_known(self) -> None:
-        fake_output = "id: 1\ttitle: Old task\tdescription: Already known\n"
-        previously_known = {"1"}
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=["wg", "ready"],
-                returncode=0,
-                stdout=fake_output,
-                stderr="",
-            )
-            new_tasks = check_newly_ready(Path("/fake/project"), previously_known)
-
-        self.assertEqual(new_tasks, [])
 
 
 if __name__ == "__main__":
