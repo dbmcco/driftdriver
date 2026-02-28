@@ -273,6 +273,9 @@ def test_parse_iso_empty_string():
 def test_parse_iso_z_suffix():
     result = _parse_iso("2024-01-15T10:30:00Z")
     assert result is not None
+    assert result.year == 2024
+    assert result.month == 1
+    assert result.day == 15
 
 
 def test_parse_iso_invalid():
@@ -282,6 +285,8 @@ def test_parse_iso_invalid():
 def test_parse_iso_valid_iso():
     result = _parse_iso("2024-01-15T10:30:00+00:00")
     assert result is not None
+    assert result.year == 2024
+    assert result.month == 1
 
 
 def test_fetch_github_head_404_no_token() -> None:

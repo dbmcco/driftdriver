@@ -25,4 +25,4 @@ def test_import_health() -> None:
     result = compute_scoreboard([])
     assert isinstance(result, dict)
     assert "status" in result
-    assert result["status"] in ("healthy", "risk", "critical")
+    assert result["status"] == "healthy"  # empty task list must be healthy

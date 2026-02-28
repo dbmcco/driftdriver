@@ -46,6 +46,7 @@ class QADriftTests(unittest.TestCase):
 
             self.assertTrue(len(findings) > 0)
             self.assertTrue(any(f.category == "mock-violation" for f in findings))
+            self.assertTrue(any("test_something" in f.file for f in findings))
 
     def test_check_false_confidence_detects_import_only(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -60,6 +61,7 @@ class QADriftTests(unittest.TestCase):
 
             self.assertTrue(len(findings) > 0)
             self.assertTrue(any(f.category == "false-confidence" for f in findings))
+            self.assertTrue(any("test_imports" in f.file for f in findings))
 
     def test_check_integration_coverage_flags_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -75,6 +77,7 @@ class QADriftTests(unittest.TestCase):
 
             self.assertTrue(len(findings) > 0)
             self.assertTrue(any(f.category == "missing-integration" for f in findings))
+            self.assertTrue(any("runner" in f.file for f in findings))
 
     def test_run_qa_check_calculates_score(self) -> None:
         with tempfile.TemporaryDirectory() as td:

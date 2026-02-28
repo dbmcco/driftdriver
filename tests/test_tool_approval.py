@@ -253,6 +253,19 @@ class TestSourcePatternRestricted(unittest.TestCase):
         self.assertEqual(decision.action, "allow")
 
 
+class TestOutputRedirectionRejected(unittest.TestCase):
+    def test_redirect_to_file_denied(self) -> None:
+        """Output redirection must be denied — safe command + > writes arbitrary file."""
+        self.assertFalse(is_safe_bash("cat /etc/shadow > /tmp/leak"))
+        self.assertFalse(is_safe_bash("echo crontab >> ~/.bash_profile"))
+        self.assertFalse(is_safe_bash("grep -r '' / > /tmp/dump"))
+
+    def test_process_substitution_denied(self) -> None:
+        """Process substitution <(...) must be denied — executes arbitrary commands."""
+        self.assertFalse(is_safe_bash("cat <(id)"))
+        self.assertFalse(is_safe_bash("diff <(ls /) <(ls /root)"))
+
+
 class TestPipNpxRestricted(unittest.TestCase):
     def test_pip_install_denied(self) -> None:
         """pip install is destructive — must be denied."""

@@ -110,8 +110,9 @@ def test_cmd_rollback_eval_returns_decision():
     assert "action" in result
     assert "reason" in result
     assert "confidence" in result
-    assert result["action"] in ("RECOVER", "ESCALATE", "PARTIAL", "NONE")
+    assert result["action"] == "ESCALATE"  # high drift + no checkpoint → ESCALATE
     assert isinstance(result["confidence"], float)
+    assert result["confidence"] > 0.0
 
 
 def test_wire_new_subcommands_exist():

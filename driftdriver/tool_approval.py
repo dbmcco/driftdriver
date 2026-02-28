@@ -72,8 +72,10 @@ _WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
 def is_safe_bash(command: str) -> bool:
     """Check if a bash command is safe by evaluating each segment independently."""
     cmd = command.strip()
-    # Reject command substitution before pattern matching
-    if "$(" in cmd or "`" in cmd:
+    # Reject command/process substitution and output redirection before pattern matching
+    if "$(" in cmd or "`" in cmd or "<(" in cmd:
+        return False
+    if re.search(r'(?<![<>12])[>]', cmd):
         return False
     segments = re.split(r'\s*(?:&&|\|\||[;|\n])\s*', cmd)
 

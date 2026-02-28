@@ -114,14 +114,10 @@ class TestParseGitDiffStat:
     def test_parse_git_diff_stat_basic(self):
         raw = "M\tsrc/foo.py\nA\tsrc/bar.py\nD\told.py\n"
         result = parse_git_diff_stat(raw)
+        assert isinstance(result, dict)
         assert len(result) >= 3
-        # Check actual paths are in result
-        if isinstance(result, list):
-            paths = [r.get("path", r) if isinstance(r, dict) else str(r) for r in result]
-        else:
-            paths = list(result.keys())
-        assert "src/foo.py" in paths
-        assert "src/bar.py" in paths
+        assert "src/foo.py" in result
+        assert "src/bar.py" in result
 
     def test_parse_git_diff_stat_rename(self):
         raw = "R100\told.py\tnew.py\n"

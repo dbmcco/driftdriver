@@ -136,8 +136,7 @@ def test_smart_strategy_with_wg_dir(tmp_path):
         wg_dir=wg_dir,
     )
     assert plan["strategy"] == "smart"
-    assert isinstance(plan.get("lanes", []), list)
-    assert len(plan.get("lanes", [])) >= 0  # smart routing ran, lanes is populated list
+    assert isinstance(plan.get("selected_plugins"), list)
 
 
 if __name__ == "__main__":
