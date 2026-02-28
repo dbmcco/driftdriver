@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from driftdriver.updates import check_ecosystem_updates, load_update_state, summarize_updates
+from driftdriver.updates import _parse_iso, check_ecosystem_updates, load_update_state, summarize_updates
 
 
 class UpdateChecksTests(unittest.TestCase):
@@ -119,6 +119,28 @@ class UpdateChecksTests(unittest.TestCase):
         )
         self.assertIn("Speedrift ecosystem updates detected", summary)
         self.assertIn("Decision needed: should the model/toolchain self-update now?", summary)
+
+
+def test_parse_iso_none():
+    assert _parse_iso(None) is None
+
+
+def test_parse_iso_empty_string():
+    assert _parse_iso("") is None
+
+
+def test_parse_iso_z_suffix():
+    result = _parse_iso("2024-01-15T10:30:00Z")
+    assert result is not None
+
+
+def test_parse_iso_invalid():
+    assert _parse_iso("not-a-date") is None
+
+
+def test_parse_iso_valid_iso():
+    result = _parse_iso("2024-01-15T10:30:00+00:00")
+    assert result is not None
 
 
 if __name__ == "__main__":

@@ -55,13 +55,11 @@ def detect_fenced_lanes(task_description: str) -> list[str]:
 
 
 def format_routing_prompt(evidence: EvidencePackage) -> str:
-    """Format an EvidencePackage as a structured prompt for model-based lane selection.
+    """Format evidence into a prompt for model-mediated lane routing.
 
-    Returns a prompt string that:
-    - Embeds the evidence context
-    - Lists installed lanes and their purposes
-    - Identifies auto-fenced (mandatory) lanes
-    - Requests JSON-structured output
+    NOTE: Currently unused in production — smart strategy falls back to
+    pattern-based routing. This function will be called when model-mediated
+    routing is implemented.
     """
     context = evidence.to_prompt_context()
     auto_fenced = detect_fenced_lanes(evidence.task_description)

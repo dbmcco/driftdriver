@@ -9,6 +9,7 @@ from driftdriver.pm_coordination import (
     CoordinationPlan,
     WorkerAssignment,
     check_newly_ready,
+    filter_newly_ready,
     format_task_prompt,
     parse_ready_output,
     plan_dispatch,
@@ -47,19 +48,22 @@ class ParseReadyOutputTests(unittest.TestCase):
         self.assertEqual(tasks[0]["description"], "")
 
 
-class CheckNewlyReadyFilterTests(unittest.TestCase):
-    def test_check_newly_ready_filters_known(self) -> None:
+class FilterNewlyReadyTests(unittest.TestCase):
+    def test_filter_newly_ready_removes_known(self) -> None:
         all_tasks = [{"id": "a", "title": "A"}, {"id": "b", "title": "B"}]
-        known = {"a"}
-        result = [t for t in all_tasks if t["id"] not in known]
+        result = filter_newly_ready(all_tasks, {"a"})
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["id"], "b")
 
-    def test_check_newly_ready_returns_empty_when_all_known(self) -> None:
+    def test_filter_newly_ready_empty_known(self) -> None:
         all_tasks = [{"id": "a", "title": "A"}]
-        known = {"a"}
-        result = [t for t in all_tasks if t["id"] not in known]
-        self.assertEqual(result, [])
+        result = filter_newly_ready(all_tasks, set())
+        self.assertEqual(len(result), 1)
+
+    def test_filter_newly_ready_all_known(self) -> None:
+        all_tasks = [{"id": "a", "title": "A"}]
+        result = filter_newly_ready(all_tasks, {"a"})
+        self.assertEqual(len(result), 0)
 
 
 class PlanDispatchTests(unittest.TestCase):

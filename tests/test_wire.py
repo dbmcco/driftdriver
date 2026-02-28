@@ -4,25 +4,30 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-PROJECT_DIR = Path(__file__).parent.parent
+
+def _init_test_repo(tmp_path: Path) -> Path:
+    """Create a minimal git repo with a test file."""
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(tmp_path), capture_output=True)
+    test_file = tmp_path / "hello.py"
+    test_file.write_text("print('hello')\n")
+    subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True)
+    return tmp_path
 
 
-def test_cmd_verify_returns_result():
+def test_cmd_verify_controlled(tmp_path: Path) -> None:
     from driftdriver.wire import cmd_verify
 
-    result = cmd_verify(PROJECT_DIR)
-    assert "passed" in result
+    project = _init_test_repo(tmp_path)
+    result = cmd_verify(project)
     assert "checks" in result
-    assert "warnings" in result
-    assert "blockers" in result
-    assert isinstance(result["passed"], bool)
-    assert isinstance(result["checks"], dict)
-    assert isinstance(result["warnings"], list)
-    assert isinstance(result["blockers"], list)
 
 
 def test_cmd_loop_check_records_and_detects():

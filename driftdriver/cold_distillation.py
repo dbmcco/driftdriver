@@ -18,7 +18,7 @@ def cluster_events(events: list[dict]) -> dict[str, list[dict]]:
     """Group events by their event_type field."""
     clusters: dict[str, list[dict]] = defaultdict(list)
     for event in events:
-        clusters[event["event_type"]].append(event)
+        clusters[event.get("event_type", "unknown")].append(event)
     return dict(clusters)
 
 

@@ -88,9 +88,10 @@ class TestExecuteRollback(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmpdir.cleanup()
 
-    def test_execute_rollback_returns_true(self) -> None:
+    def test_execute_rollback_is_stub(self) -> None:
+        """execute_rollback is a stub — verify it returns True and document this."""
         result = execute_rollback("pre-task-task-abc", self.project_dir)
-        self.assertTrue(result)
+        self.assertIs(result, True, "Stub should return True; update test when implemented")
 
 
 if __name__ == "__main__":

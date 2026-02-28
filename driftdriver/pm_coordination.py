@@ -87,7 +87,12 @@ def format_task_prompt(task: dict) -> str:
     )
 
 
+def filter_newly_ready(all_ready: list[dict], previously_known: set[str]) -> list[dict]:
+    """Filter tasks to only those not in previously_known set."""
+    return [t for t in all_ready if t["id"] not in previously_known]
+
+
 def check_newly_ready(project_dir: Path, previously_known: set[str]) -> list[dict]:
     """Return tasks from `wg ready` that are NOT in previously_known."""
     all_ready = get_ready_tasks(project_dir)
-    return [t for t in all_ready if t["id"] not in previously_known]
+    return filter_newly_ready(all_ready, previously_known)

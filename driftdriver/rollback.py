@@ -36,6 +36,8 @@ def execute_rollback(checkpoint_id: str, project_dir: Path) -> bool:
         agentjj undo --to <checkpoint_id>
 
     Returns True to indicate the command is ready to execute.
+
+    TODO: implement actual agentjj invocation when agentjj is available.
     """
     # Command the handler should run:
     # f"agentjj undo --to {checkpoint_id}"

@@ -50,6 +50,14 @@ def test_cluster_events_empty():
     assert clusters == {}
 
 
+def test_cluster_events_missing_event_type():
+    events = [{"data": "something"}]  # no event_type key
+    result = cluster_events(events)
+    # Should not raise KeyError
+    assert isinstance(result, dict)
+    assert "unknown" in result
+
+
 # ---------------------------------------------------------------------------
 # test_summarize_cluster_requires_minimum
 # ---------------------------------------------------------------------------
