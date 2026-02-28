@@ -237,5 +237,17 @@ class TestWriteFailSecure(unittest.TestCase):
         self.assertEqual(decision.action, "allow")
 
 
+class TestSourcePatternRestricted(unittest.TestCase):
+    def test_source_restricted(self) -> None:
+        """source /etc/evil.sh must be denied — bare source is too broad."""
+        decision = evaluate_tool_call("Bash", {"command": "source /etc/evil.sh"})
+        self.assertEqual(decision.action, "deny")
+
+    def test_source_local_allowed(self) -> None:
+        """source ./setup.sh must be allowed — local-file source is safe."""
+        decision = evaluate_tool_call("Bash", {"command": "source ./setup.sh"})
+        self.assertEqual(decision.action, "allow")
+
+
 if __name__ == "__main__":
     unittest.main()

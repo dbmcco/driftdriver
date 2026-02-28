@@ -181,6 +181,18 @@ def test_pre_compact_uses_jq():
     )
 
 
+# Fix: agent-error.sh grep must use -F for fixed-string match
+def test_agent_error_uses_fixed_grep():
+    """agent-error.sh must use grep -cF to prevent regex injection via checkpoint names."""
+    path = HANDLERS_DIR / "agent-error.sh"
+    if not path.exists():
+        return
+    content = path.read_text()
+    assert "grep -cF" in content, (
+        "agent-error.sh must use 'grep -cF' (fixed-string) not bare 'grep -c'"
+    )
+
+
 # Fix 4: progress-check.sh must guard against empty TASK_ID
 def test_progress_check_guards_empty_task_id():
     """progress-check.sh must exit 0 early when TASK_ID is empty."""

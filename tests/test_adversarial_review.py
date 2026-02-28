@@ -22,6 +22,7 @@ class TestParseReviewFindings(unittest.TestCase):
         assert findings[0].severity == "BLOCKING"
         assert findings[0].file_path == "src/foo.py"
         assert findings[0].line == 42
+        assert findings[0].evidence == "no try/except"
 
     def test_parse_review_findings_mixed(self) -> None:
         text = "BLOCKING: Missing test\nFile: tests/test.py\nWARNING: Could use better name\nFile: src/foo.py:10"

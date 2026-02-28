@@ -24,9 +24,14 @@ def find_workgraph_dir(explicit: Path | None) -> Path:
         p = explicit
         if p.name != ".workgraph":
             p = p / ".workgraph"
-        if not (p / "graph.jsonl").exists():
-            raise FileNotFoundError(f"Workgraph not found at: {p}")
-        return p
+        if (p / "graph.jsonl").exists():
+            return p
+        # Walk up from explicit path
+        for parent in explicit.parents:
+            candidate = parent / ".workgraph"
+            if (candidate / "graph.jsonl").exists():
+                return candidate
+        raise FileNotFoundError(f"Workgraph not found from: {explicit}")
 
     cur = Path.cwd()
     for p in [cur, *cur.parents]:
@@ -44,7 +49,10 @@ def load_workgraph(wg_dir: Path) -> Workgraph:
         line = line.strip()
         if not line:
             continue
-        obj = json.loads(line)
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
         if obj.get("type") != "task":
             continue
         tid = obj.get("id")

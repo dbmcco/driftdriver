@@ -76,6 +76,15 @@ def test_prime_context_returns_string(tmp_path):
     assert "Watch out" in result
 
 
+def test_filter_by_file_scope_no_substring_match():
+    """'test' must not match 'tests/test_auth.py' via substring."""
+    facts = [
+        KnowledgeFact(fact_id="1", fact_type="gotcha", content="x", affected_files=["test"]),
+    ]
+    result = filter_by_file_scope(facts, ["tests/test_auth.py"])
+    assert len(result) == 0
+
+
 def test_save_fact_appends(tmp_path):
     kb = tmp_path / "kb.jsonl"
     fact = KnowledgeFact(fact_id="f1", fact_type="pattern", content="Use dataclasses")

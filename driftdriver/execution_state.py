@@ -28,7 +28,8 @@ def recovery_dir(wg_dir: Path) -> Path:
 
 def state_file(wg_dir: Path, task_id: str) -> Path:
     """Get the state file path for a task."""
-    return recovery_dir(wg_dir) / f"{task_id}.json"
+    safe_id = task_id.replace("/", "_").replace("..", "_").replace("\\", "_")
+    return recovery_dir(wg_dir) / f"{safe_id}.json"
 
 
 def save_state(wg_dir: Path, state: ExecutionState) -> None:

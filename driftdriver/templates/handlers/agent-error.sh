@@ -17,7 +17,7 @@ lessons_mcp "record_event" "$EVENT_JSON"
 
 # Check if agentjj checkpoint exists for this task
 CHECKPOINT="pre-task-$TASK_ID"
-HAS_CHECKPOINT=$(agentjj list-checkpoints 2>/dev/null | grep -c "$CHECKPOINT" || echo "0")
+HAS_CHECKPOINT=$(agentjj list-checkpoints 2>/dev/null | grep -cF "$CHECKPOINT" || echo "0")
 
 if [[ "$HAS_CHECKPOINT" -gt 0 ]]; then
   echo "RECOVERY: agentjj rollback to checkpoint '$CHECKPOINT' available"

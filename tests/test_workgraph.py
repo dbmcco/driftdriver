@@ -43,3 +43,28 @@ def test_find_workgraph_dir_explicit(tmp_path):
 def test_find_workgraph_dir_not_found(tmp_path):
     with pytest.raises(FileNotFoundError):
         find_workgraph_dir(tmp_path)
+
+
+def test_find_workgraph_dir_walk_up(tmp_path):
+    """Test that find_workgraph_dir walks up from a subdirectory."""
+    wg = tmp_path / ".workgraph"
+    wg.mkdir()
+    (wg / "graph.jsonl").touch()
+    subdir = tmp_path / "src" / "deep"
+    subdir.mkdir(parents=True)
+    # find_workgraph_dir should find .workgraph by walking up
+    found = find_workgraph_dir(subdir)
+    assert found == wg
+
+
+def test_load_workgraph_malformed_json(tmp_path):
+    graph = tmp_path / ".workgraph" / "graph.jsonl"
+    graph.parent.mkdir(parents=True)
+    graph.write_text(
+        "not json at all\n"
+        '{"type":"task","id":"t1","title":"Valid task","status":"open"}\n'
+        "{broken json\n"
+    )
+    result = load_workgraph(tmp_path / ".workgraph")
+    assert "t1" in result.tasks
+    assert len(result.tasks) == 1

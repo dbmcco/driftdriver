@@ -1843,6 +1843,35 @@ def cmd_ready(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_wire_prime(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_prime(project_dir)
+    print(result)
+    return 0
+
+
+def cmd_wire_recover(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_recover(project_dir)
+    print(json.dumps([r.__dict__ if hasattr(r, "__dict__") else r for r in result]))
+    return 0
+
+
+def cmd_wire_scope_check(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    patterns = args.allowed_patterns.split(",") if args.allowed_patterns else []
+    result = wire.cmd_scope_check(project_dir, patterns)
+    print(result)
+    return 0
+
+
+def cmd_wire_reflect(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_reflect(project_dir)
+    print(result)
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="driftdriver")
     p.add_argument("--dir", help="Project directory (or .workgraph dir). Defaults to cwd search.")
@@ -2009,6 +2038,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ready_p = sub.add_parser("ready", help="List ready tasks from the workgraph")
     ready_p.set_defaults(func=cmd_ready)
+
+    prime_p = sub.add_parser("prime", help="Prime knowledge context for current task scope")
+    prime_p.set_defaults(func=cmd_wire_prime)
+
+    recover_p = sub.add_parser("recover", help="List interrupted tasks that can be recovered")
+    recover_p.set_defaults(func=cmd_wire_recover)
+
+    scope_check_p = sub.add_parser("scope-check", help="Check if current changes are within declared scope")
+    scope_check_p.add_argument("--allowed-patterns", default="", help="Comma-separated allowed file patterns")
+    scope_check_p.set_defaults(func=cmd_wire_scope_check)
+
+    reflect_p = sub.add_parser("reflect", help="Run self-reflect on recent task")
+    reflect_p.set_defaults(func=cmd_wire_reflect)
 
     return p
 

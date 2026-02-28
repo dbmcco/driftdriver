@@ -27,7 +27,7 @@ def extract_from_events(events: list[dict]) -> list[Learning]:
     for event in events:
         if event.get("event") == "pre_tool_use":
             tool = event.get("tool", "")
-            tool_failures.setdefault(tool, {"attempts": 0, "errors": 0})
+            tool_failures.setdefault(tool, {"attempts": 0})
             tool_failures[tool]["attempts"] += 1
 
     for tool, counts in tool_failures.items():
@@ -118,11 +118,6 @@ def detect_repeated_patterns(events: list[dict]) -> list[Learning]:
             ))
 
     return learnings
-
-
-def classify_learning(learning: Learning) -> str:
-    """Return the classification string for a learning."""
-    return learning.learning_type
 
 
 def format_learnings_for_review(learnings: list[Learning]) -> str:

@@ -6,6 +6,42 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from driftdriver.knowledge_priming import prime_context
+from driftdriver.execution_state import list_interrupted
+from driftdriver.scope_enforcement import get_changed_files, check_file_scope, format_scope_report
+from driftdriver.self_reflect import self_reflect, format_learnings_for_review
+
+
+def cmd_prime(project_dir: Path, changed_files: list[str] | None = None) -> str:
+    """Prime knowledge context for current task scope."""
+    kb_path = project_dir / ".workgraph" / "knowledge.jsonl"
+    return prime_context(kb_path, changed_files=changed_files)
+
+
+def cmd_recover(project_dir: Path) -> list:
+    """List interrupted tasks that can be recovered."""
+    wg_dir = project_dir / ".workgraph"
+    return list_interrupted(wg_dir)
+
+
+def cmd_scope_check(project_dir: Path, allowed_patterns: list[str]) -> str:
+    """Check if current changes are within declared scope."""
+    changes = get_changed_files(project_dir)
+    result = check_file_scope(changes, allowed_patterns)
+    return format_scope_report(result)
+
+
+def cmd_reflect(project_dir: Path, events: list[dict] | None = None) -> str:
+    """Run self-reflect on recent task."""
+    import subprocess
+    diff_result = subprocess.run(
+        ["git", "diff", "HEAD~1", "HEAD"],
+        capture_output=True, text=True, cwd=str(project_dir)
+    )
+    diff_text = diff_result.stdout if diff_result.returncode == 0 else ""
+    learnings = self_reflect(events=events, diff_text=diff_text)
+    return format_learnings_for_review(learnings)
+
 
 def cmd_verify(project_dir: Path, task_contract: dict | None = None) -> dict:
     """Run verification checks and return a result dict."""

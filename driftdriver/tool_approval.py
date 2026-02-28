@@ -35,8 +35,8 @@ _SAFE_BASH_PATTERNS = [
     r"^\s*vitest(\s|$)",
     r"^\s*jest(\s|$)",
     r"^\s*echo(\s|$)",
-    r"^\s*source(\s|$)",
-    r"^\s*\.(\s|$)",
+    r"^\s*source\s+\./",          # source local files only
+    r"^\s*\.\s+\./",              # dot-source local files only
     r"^\s*which(\s|$)",
     r"^\s*type(\s|$)",
     r"^\s*cd(\s|$)",

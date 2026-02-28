@@ -4,7 +4,7 @@
 from driftdriver.self_reflect import (
     Learning, extract_from_events, extract_from_diff,
     extract_from_test_results, detect_repeated_patterns,
-    classify_learning, format_learnings_for_review, self_reflect,
+    format_learnings_for_review, self_reflect,
 )
 
 
@@ -32,6 +32,12 @@ def test_extract_from_diff_clean():
     assert len(learnings) == 0
 
 
+def test_extract_from_test_results_flaky():
+    output = "test_a PASSED\ntest_b FAILED\ntest_c PASSED\n"
+    learnings = extract_from_test_results(output)
+    assert any("flaky" in l.content.lower() or "mixed" in l.content.lower() for l in learnings)
+
+
 def test_extract_from_test_results_slow():
     output = "5 passed in 12.5s"
     learnings = extract_from_test_results(output)
@@ -44,11 +50,6 @@ def test_detect_repeated_patterns():
     ]
     learnings = detect_repeated_patterns(events)
     assert any("foo.py" in l.content for l in learnings)
-
-
-def test_classify_learning():
-    l = Learning(learning_type="gotcha", content="test")
-    assert classify_learning(l) == "gotcha"
 
 
 def test_format_learnings_for_review():

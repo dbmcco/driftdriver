@@ -26,7 +26,7 @@ lessons_mcp() {
   mkdir -p "$events_dir"
   local ts
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  echo "{\"ts\":\"$ts\",\"tool\":\"$tool_name\",\"args\":$args}" >> "$events_dir/pending.jsonl"
+  echo "$(jq -n --arg ts "$ts" --arg tool "$tool_name" --argjson args "$args" '{ts: $ts, tool: $tool, args: $args}')" >> "$events_dir/pending.jsonl"
 }
 
 # Log to workgraph

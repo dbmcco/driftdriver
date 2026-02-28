@@ -112,3 +112,50 @@ def test_cmd_rollback_eval_returns_decision():
     assert "confidence" in result
     assert result["action"] in ("RECOVER", "ESCALATE", "PARTIAL", "NONE")
     assert isinstance(result["confidence"], float)
+
+
+def test_wire_new_subcommands_exist():
+    from driftdriver.cli import _build_parser
+
+    p = _build_parser()
+    # Extract subcommand names from the parser
+    subparsers_action = next(
+        a for a in p._actions if hasattr(a, "_name_parser_map")
+    )
+    cmds = set(subparsers_action._name_parser_map.keys())
+    assert "prime" in cmds
+    assert "recover" in cmds
+    assert "scope-check" in cmds
+    assert "reflect" in cmds
+
+
+def test_cmd_prime_returns_string():
+    from driftdriver.wire import cmd_prime
+
+    with TemporaryDirectory() as tmp:
+        project_dir = Path(tmp)
+        # Empty knowledge base → returns empty string
+        result = cmd_prime(project_dir)
+    assert isinstance(result, str)
+
+
+def test_cmd_recover_empty():
+    from driftdriver.wire import cmd_recover
+
+    with TemporaryDirectory() as tmp:
+        wg_dir = Path(tmp) / ".workgraph"
+        wg_dir.mkdir()
+        result = cmd_recover(Path(tmp))
+    assert result == []
+
+
+def test_state_file_sanitizes_path_traversal():
+    from driftdriver.execution_state import state_file
+
+    with TemporaryDirectory() as tmp:
+        wg_dir = Path(tmp) / ".workgraph"
+        wg_dir.mkdir()
+        path = state_file(wg_dir, "../../etc/passwd")
+    # Must not escape the recovery directory
+    assert ".." not in str(path.name)
+    assert path.parent == wg_dir / "recovery"

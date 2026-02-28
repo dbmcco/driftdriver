@@ -53,13 +53,19 @@ def filter_by_file_scope(facts: list[KnowledgeFact], changed_files: list[str]) -
             continue
         for af in fact.affected_files:
             for cf in changed_files:
-                if af in cf or cf in af or _glob_match(af, cf):
+                if _glob_match(af, cf) or _path_prefix_match(af, cf):
                     relevant.append(fact)
                     break
             else:
                 continue
             break
     return relevant
+
+
+def _path_prefix_match(pattern: str, path: str) -> bool:
+    """Check if path starts with pattern as a directory prefix."""
+    clean = pattern.rstrip("/*")
+    return path == clean or path.startswith(clean + "/")
 
 
 def _glob_match(pattern: str, path: str) -> bool:

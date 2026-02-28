@@ -115,6 +115,9 @@ class TestParseGitDiffStat:
         raw = "M\tsrc/foo.py\nA\tsrc/bar.py\nD\told.py\n"
         result = parse_git_diff_stat(raw)
         assert len(result) >= 2
+        # Verify actual structure, not just length
+        paths = [r.get("path", r) if isinstance(r, dict) else r for r in result] if isinstance(result, list) else list(result.keys())
+        assert "src/foo.py" in paths or any("foo" in str(p) for p in paths)
 
     def test_parse_git_diff_stat_rename(self):
         raw = "R100\told.py\tnew.py\n"
@@ -137,4 +140,5 @@ class TestLoadPatternHints:
         toml_file = tmp_path / "lane-routing.toml"
         toml_file.write_text('[lane-routing.patterns]\ncoredrift = ["*.py"]\n')
         result = load_pattern_hints(toml_file)
-        assert "coredrift" in result or isinstance(result, dict)
+        assert isinstance(result, dict)
+        assert "coredrift" in result
