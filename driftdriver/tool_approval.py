@@ -67,14 +67,25 @@ _WRITE_TOOLS = {"Write", "Edit"}
 
 
 def is_safe_bash(command: str) -> bool:
-    """Return True for read-only commands; False for destructive ones."""
-    for pattern in _DANGEROUS_BASH_PATTERNS:
-        if re.search(pattern, command, re.IGNORECASE):
+    """Check if a bash command is safe by evaluating each segment independently."""
+    segments = re.split(r'\s*(?:&&|\|\||[;|])\s*', command.strip())
+
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+        for pattern in _DANGEROUS_BASH_PATTERNS:
+            if re.search(pattern, segment, re.IGNORECASE):
+                return False
+        is_segment_safe = False
+        for pattern in _SAFE_BASH_PATTERNS:
+            if re.search(pattern, segment):
+                is_segment_safe = True
+                break
+        if not is_segment_safe:
             return False
-    for pattern in _SAFE_BASH_PATTERNS:
-        if re.search(pattern, command):
-            return True
-    return False
+
+    return True
 
 
 def is_in_scope(file_path: str, allowed_paths: list[str]) -> bool:
