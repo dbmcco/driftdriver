@@ -36,16 +36,22 @@ This project is part of the Speedrift suite for Workgraph-first drift control.
 ### External Dependencies
 
 - [workgraph](https://github.com/graphwork/workgraph) — Task graph spine (`wg` CLI)
-- [freshell](https://github.com/danshapiro/freshell) — Shell framework (Dan Shapiro)
+- [superpowers](https://github.com/obra/superpowers) — Core skills/workflow plugin (Jesse Vincent)
+- [superpowers-chrome](https://github.com/obra/superpowers-chrome) — Chrome DevTools browser control (Jesse Vincent)
 - [claude-session-driver](https://github.com/obra/claude-session-driver) — Worker session orchestration (Jesse Vincent)
+- [freshell](https://github.com/danshapiro/freshell) — Shell framework (Dan Shapiro)
+- [mira-OSS](https://github.com/taylorsatula/mira-OSS) — Discrete memory decay + modular system prompt (Taylor Satula)
+- [beads](https://github.com/steveyegge/beads) — Git-backed task tracking (`bd` CLI) (Steve Yegge)
 
 ### Watched GitHub Users
 
 The daily ecosystem scanner monitors these users for new repos and activity:
 
-- [@jesse](https://github.com/jesse) / [@obra](https://github.com/obra) (Workgraph, claude-session-driver)
-- [@2389](https://github.com/2389) (2389-research / superpowers)
+- [@jesse](https://github.com/jesse) / [@obra](https://github.com/obra) (Workgraph, superpowers, claude-session-driver)
+- [@2389](https://github.com/2389) (2389-research)
 - [@danshapiro](https://github.com/danshapiro) (Freshell)
+- [@taylorsatula](https://github.com/taylorsatula) (MIRA)
+- [@steveyegge](https://github.com/steveyegge) (Beads)
 
 ## Install (CLI)
 
