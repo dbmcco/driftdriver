@@ -64,5 +64,18 @@ class InstallHandlerScriptsTests(unittest.TestCase):
             self.assertTrue((wg_dir / "handlers").is_dir())
 
 
+class InstallResultHandlerFieldTests(unittest.TestCase):
+    def test_install_result_tracks_handlers(self) -> None:
+        from driftdriver.install import InstallResult
+        import dataclasses
+
+        fields = {f.name for f in dataclasses.fields(InstallResult)}
+        self.assertIn(
+            "wrote_handlers",
+            fields,
+            "InstallResult must have a 'wrote_handlers' field",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,8 @@ class InstallResult:
     wrote_yagnidrift: bool
     wrote_redrift: bool
     wrote_contrariandrift: bool
+    wrote_qadrift: bool
+    wrote_handlers: bool
     wrote_amplifier_executor: bool
     wrote_amplifier_runner: bool
     wrote_amplifier_autostart_hook: bool

@@ -39,7 +39,7 @@ _TEMPDIR_PATTERN = re.compile(r"tempfile|tmp_path|TemporaryDirectory")
 def _collect_test_files(project_dir: Path) -> list[Path]:
     """Find all test_*.py files under tests/ and src/."""
     test_files: list[Path] = []
-    for glob in ("tests/test_*.py", "test_*.py", "src/**/test_*.py"):
+    for glob in ("tests/**/test_*.py", "test_*.py", "src/**/test_*.py"):
         test_files.extend(project_dir.glob(glob))
     return test_files
 

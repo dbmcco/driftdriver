@@ -1118,7 +1118,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             print("error: --wrapper-mode portable requires coredrift on PATH", file=sys.stderr)
             return ExitCode.usage
 
-    install_handler_scripts(wg_dir)
+    handler_written, handler_count = install_handler_scripts(wg_dir)
 
     wrote_driver = write_driver_wrapper(wg_dir, driver_bin=driver_bin, wrapper_mode=wrapper_mode)
     wrote_drifts = write_drifts_wrapper(wg_dir)
@@ -1250,6 +1250,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_yagnidrift=wrote_yagnidrift,
         wrote_redrift=wrote_redrift,
         wrote_contrariandrift=wrote_contrariandrift,
+        wrote_handlers=handler_written,
         wrote_amplifier_executor=wrote_amplifier_executor,
         wrote_amplifier_runner=wrote_amplifier_runner,
         wrote_amplifier_autostart_hook=wrote_amplifier_autostart_hook,
