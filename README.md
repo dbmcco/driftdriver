@@ -35,23 +35,25 @@ This project is part of the Speedrift suite for Workgraph-first drift control.
 
 ### External Dependencies
 
-- [workgraph](https://github.com/graphwork/workgraph) — Task graph spine (`wg` CLI)
-- [superpowers](https://github.com/obra/superpowers) — Core skills/workflow plugin (Jesse Vincent)
-- [superpowers-chrome](https://github.com/obra/superpowers-chrome) — Chrome DevTools browser control (Jesse Vincent)
-- [claude-session-driver](https://github.com/obra/claude-session-driver) — Worker session orchestration (Jesse Vincent)
+- [Amplifier](https://github.com/microsoft/amplifier) — Agent runtime (Microsoft): [core](https://github.com/microsoft/amplifier-core), [app-cli](https://github.com/microsoft/amplifier-app-cli), [foundation](https://github.com/microsoft/amplifier-foundation) — [guide](https://ramparte.github.io/amplifier-stories/)
+- [Workgraph](https://github.com/graphwork/workgraph) — Task graph spine, `wg` CLI (Erik Garrison / [graphwork](https://graphwork.github.io))
+- [superpowers](https://github.com/obra/superpowers) — Core skills/workflow plugin (Jesse Vincent / obra)
+- [superpowers-chrome](https://github.com/obra/superpowers-chrome) — Chrome DevTools browser control (Jesse Vincent / obra)
+- [claude-session-driver](https://github.com/obra/claude-session-driver) — Worker session orchestration (Jesse Vincent / obra)
 - [freshell](https://github.com/danshapiro/freshell) — Shell framework (Dan Shapiro)
 - [mira-OSS](https://github.com/taylorsatula/mira-OSS) — Discrete memory decay + modular system prompt (Taylor Satula)
-- [beads](https://github.com/steveyegge/beads) — Git-backed task tracking (`bd` CLI) (Steve Yegge)
+- [beads](https://github.com/steveyegge/beads) — Git-backed task tracking, `bd` CLI (Steve Yegge)
 
-### Watched GitHub Users
+### Watched GitHub Users / Orgs
 
-The daily ecosystem scanner monitors these users for new repos and activity:
+The daily ecosystem scanner monitors these for new repos and activity:
 
-- [@jesse](https://github.com/jesse) / [@obra](https://github.com/obra) (Workgraph, superpowers, claude-session-driver)
+- [@obra](https://github.com/obra) (superpowers, claude-session-driver, superpowers-chrome)
 - [@2389](https://github.com/2389) (2389-research)
 - [@danshapiro](https://github.com/danshapiro) (Freshell)
 - [@taylorsatula](https://github.com/taylorsatula) (MIRA)
 - [@steveyegge](https://github.com/steveyegge) (Beads)
+- [@ramparte](https://github.com/ramparte) (Amplifier bundles/extensions)
 
 ## Install (CLI)
 
