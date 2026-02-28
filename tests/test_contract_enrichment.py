@@ -50,7 +50,7 @@ def test_find_relevant_learnings_returns_top_matches():
     assert len(results) >= 1
     # The database/integration testing entry should rank highly
     contents = [r["content"] for r in results]
-    assert any("test" in c.lower() or "database" in c.lower() for c in contents)
+    assert "database" in contents[0].lower() or "integration test" in contents[0].lower()
 
 
 def test_find_relevant_learnings_returns_no_more_than_max_entries():

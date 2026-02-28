@@ -110,7 +110,7 @@ class SuggestAlternativeTests(unittest.TestCase):
         pattern = fingerprint_action("Read", "somefile")
         suggestion = suggest_alternative(pattern, recent_actions=[])
         self.assertIsInstance(suggestion, str)
-        self.assertTrue(len(suggestion) > 0)
+        self.assertTrue(len(suggestion.split()) > 3)  # real message, not empty/trivial
 
 
 class ClearStateTests(unittest.TestCase):

@@ -35,7 +35,7 @@ def test_extract_from_diff_clean():
 def test_extract_from_test_results_flaky():
     output = "test_a PASSED\ntest_b FAILED\ntest_c PASSED\n"
     learnings = extract_from_test_results(output)
-    assert any("flaky" in l.content.lower() or "mixed" in l.content.lower() for l in learnings)
+    assert any("mixed" in l.content.lower() for l in learnings)
 
 
 def test_extract_from_test_results_slow():
@@ -67,4 +67,7 @@ def test_self_reflect_combines_all():
     events = [{"event": "pre_tool_use", "tool": "Read"} for _ in range(5)]
     diff = "+# TODO: fix\n"
     result = self_reflect(events=events, diff_text=diff)
-    assert len(result) >= 1
+    assert len(result) >= 2  # should get learnings from BOTH events and diff
+    contents = " ".join(l.content for l in result)
+    assert "Read" in contents  # from repeated tool events
+    assert "TODO" in contents  # from diff analysis

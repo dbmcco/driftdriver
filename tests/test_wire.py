@@ -134,9 +134,13 @@ def test_cmd_prime_returns_string():
 
     with TemporaryDirectory() as tmp:
         project_dir = Path(tmp)
-        # Empty knowledge base → returns empty string
+        kb_dir = project_dir / ".workgraph"
+        kb_dir.mkdir(parents=True)
+        kb_file = kb_dir / "knowledge.jsonl"
+        kb_file.write_text('{"fact_id":"f1","fact_type":"gotcha","content":"Watch state carefully","confidence":"high"}\n')
         result = cmd_prime(project_dir)
     assert isinstance(result, str)
+    assert "Watch state carefully" in result
 
 
 def test_cmd_recover_empty():

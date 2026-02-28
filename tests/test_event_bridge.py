@@ -32,7 +32,7 @@ def test_map_session_start_to_observation():
     assert result.event_type == "observation"
     assert result.session_id == "sess-2"
     assert result.project == "myproject"
-    assert "session_start" in str(result.payload).lower() or result.payload.get("event") == "session_start"
+    assert result.payload["event"] == "session_start"
 
 
 def test_map_unknown_event_returns_none():

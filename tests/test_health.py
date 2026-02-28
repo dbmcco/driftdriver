@@ -47,6 +47,11 @@ class HealthTests(unittest.TestCase):
         no_blocker_task: dict = {"id": "free", "status": "open"}
         self.assertTrue(blockers_done(no_blocker_task, {}))
 
+    def test_blockers_done_missing_blocker_treated_as_resolved(self) -> None:
+        """If a blocker ID is not in the graph (deleted), treat it as resolved."""
+        task = {"id": "orphan", "status": "open", "blocked_by": ["deleted-task"]}
+        self.assertTrue(blockers_done(task, {}))
+
     def test_queue_ranking_and_duplicates(self) -> None:
         tasks = [
             {"id": "parent-1", "status": "done"},

@@ -57,7 +57,7 @@ def blockers_done(task: dict[str, Any], tasks_by_id: dict[str, dict[str, Any]]) 
     for blocker_id in blockers:
         blocker = tasks_by_id.get(str(blocker_id))
         if not blocker:
-            return False
+            continue  # treat deleted/missing blocker as resolved
         if task_status(blocker) != "done":
             return False
     return True

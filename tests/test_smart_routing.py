@@ -130,7 +130,7 @@ class TestParseGitDiffStat:
 
     def test_parse_git_diff_stat_empty(self):
         result = parse_git_diff_stat("")
-        assert result == [] or result == {} or len(result) == 0
+        assert result == {}
 
 
 class TestLoadPatternHints:

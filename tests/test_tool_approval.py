@@ -253,6 +253,31 @@ class TestSourcePatternRestricted(unittest.TestCase):
         self.assertEqual(decision.action, "allow")
 
 
+class TestPipNpxRestricted(unittest.TestCase):
+    def test_pip_install_denied(self) -> None:
+        """pip install is destructive — must be denied."""
+        self.assertFalse(is_safe_bash("pip install malicious-package"))
+        self.assertFalse(is_safe_bash("pip3 install attacker-wheel"))
+
+    def test_pip_read_only_allowed(self) -> None:
+        """pip list/show/freeze are read-only — allowed."""
+        self.assertTrue(is_safe_bash("pip list"))
+        self.assertTrue(is_safe_bash("pip3 show requests"))
+        self.assertTrue(is_safe_bash("pip freeze"))
+        self.assertTrue(is_safe_bash("pip check"))
+
+    def test_npx_known_tools_allowed(self) -> None:
+        """Only explicitly allowlisted npx tools should pass."""
+        self.assertTrue(is_safe_bash("npx prettier --check ."))
+        self.assertTrue(is_safe_bash("npx eslint src/"))
+        self.assertTrue(is_safe_bash("npx vitest run"))
+
+    def test_npx_arbitrary_denied(self) -> None:
+        """Arbitrary npx packages must be denied."""
+        self.assertFalse(is_safe_bash("npx attacker-package"))
+        self.assertFalse(is_safe_bash("npx random-thing"))
+
+
 class TestCommandSubstitutionRejected(unittest.TestCase):
     def test_command_substitution_rejected(self) -> None:
         """$( ) substitution must be denied regardless of safe prefix."""
