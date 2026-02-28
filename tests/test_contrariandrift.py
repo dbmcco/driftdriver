@@ -179,6 +179,75 @@ class TestClassMethodsNotFlaggedAsDead(unittest.TestCase):
             )
 
 
+class TestCollectImportsMultiline(unittest.TestCase):
+    def test_collect_imports_multiline(self) -> None:
+        """_collect_imports handles parenthesized multi-line import blocks."""
+        from driftdriver.contrariandrift import _collect_imports
+
+        text = (
+            "from driftdriver.health import (\n"
+            "    blockers_done,\n"
+            "    compute_scoreboard,\n"
+            ")\n"
+        )
+        result = _collect_imports(text)
+        self.assertIn("blockers_done", result)
+        self.assertIn("compute_scoreboard", result)
+
+    def test_check_dead_imports_multiline_not_flagged(self) -> None:
+        """check_dead_imports does not flag functions imported via parenthesized multi-line import."""
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            pkg = project_dir / "mypkg"
+            pkg.mkdir()
+
+            (pkg / "health.py").write_text(
+                "def blockers_done():\n    pass\n\ndef compute_scoreboard():\n    pass\n",
+                encoding="utf-8",
+            )
+            (pkg / "main.py").write_text(
+                "from mypkg.health import (\n"
+                "    blockers_done,\n"
+                "    compute_scoreboard,\n"
+                ")\n",
+                encoding="utf-8",
+            )
+
+            findings = check_dead_imports(project_dir)
+            fn_names = [f.description for f in findings]
+            self.assertFalse(
+                any("'blockers_done'" in d for d in fn_names),
+                f"blockers_done should not appear as dead (multi-line import): {fn_names}",
+            )
+            self.assertFalse(
+                any("'compute_scoreboard'" in d for d in fn_names),
+                f"compute_scoreboard should not appear as dead (multi-line import): {fn_names}",
+            )
+
+
+class TestProgressCheckFixedGrep(unittest.TestCase):
+    def test_progress_check_uses_fixed_grep(self) -> None:
+        """progress-check.sh uses grep -cF (fixed-string) not regex grep."""
+        script_path = (
+            Path(__file__).parent.parent
+            / "driftdriver"
+            / "templates"
+            / "handlers"
+            / "progress-check.sh"
+        )
+        content = script_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "grep -cF",
+            content,
+            "progress-check.sh should use 'grep -cF' for fixed-string matching",
+        )
+        self.assertNotIn(
+            'grep -c "^${FINGERPRINT}$"',
+            content,
+            "progress-check.sh should not use regex anchored grep",
+        )
+
+
 class TestFormatReport(unittest.TestCase):
     def test_format_report_groups_by_severity(self) -> None:
         """format_report includes severity headers and lists findings grouped by severity."""

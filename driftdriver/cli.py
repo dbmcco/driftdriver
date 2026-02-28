@@ -69,6 +69,9 @@ from driftdriver.policy import ensure_drift_policy, load_drift_policy
 from driftdriver.routing_models import parse_routing_response
 from driftdriver.smart_routing import gather_evidence
 from driftdriver.updates import check_ecosystem_updates, summarize_updates
+from driftdriver import wire
+from driftdriver.project_profiles import build_profile, format_profile_report
+from driftdriver.pm_coordination import get_ready_tasks
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
 
 
@@ -936,7 +939,7 @@ def _repair_wrappers(*, wg_dir: Path) -> int:
         with_redrift=include_redrift,
         redrift_bin=None,
         with_amplifier_executor=(wg_dir / "executors" / "amplifier.toml").exists(),
-        with_claude_code_hooks=(project_dir / ".claude" / "hooks.json").exists(),
+        with_claude_code_hooks=(wg_dir.parent / ".claude" / "hooks.json").exists(),
         wrapper_mode="portable",
         no_ensure_contracts=False,
     )
@@ -1783,6 +1786,63 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
     return int(_run(cmd))
 
 
+def cmd_wire_verify(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_verify(project_dir)
+    print(json.dumps(result))
+    return 0 if result.get("passed") else 1
+
+
+def cmd_wire_loop_check(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_loop_check(project_dir, args.tool_name, args.tool_input)
+    print(json.dumps(result))
+    return 1 if result.get("detected") else 0
+
+
+def cmd_wire_enrich(args: argparse.Namespace) -> int:
+    result = wire.cmd_enrich(args.task_id, args.task_description, args.project, [])
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_wire_bridge(args: argparse.Namespace) -> int:
+    result = wire.cmd_bridge(Path(args.events_file), args.session_id, args.project)
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_wire_distill(args: argparse.Namespace) -> int:
+    result = wire.cmd_distill([], [])
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_wire_rollback_eval(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_rollback_eval(args.drift_score, args.task_id, project_dir)
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    profile = build_profile(project_dir.name, [])
+    print(format_profile_report(profile))
+    return 0
+
+
+def cmd_ready(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    tasks = get_ready_tasks(project_dir)
+    if args.json:
+        print(json.dumps(tasks))
+    else:
+        for t in tasks:
+            print(f"  {t.get('id', '?')}  {t.get('title', '')}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="driftdriver")
     p.add_argument("--dir", help="Project directory (or .workgraph dir). Defaults to cwd search.")
@@ -1915,6 +1975,40 @@ def _build_parser() -> argparse.ArgumentParser:
     orch.add_argument("--write-log", action="store_true", help="Write a drift summary to wg log (redirect agent)")
     orch.add_argument("--create-followups", action="store_true", help="Create follow-up tasks (redirect agent)")
     orch.set_defaults(func=cmd_orchestrate)
+
+    verify_p = sub.add_parser("verify", help="Run verification checks on the project")
+    verify_p.set_defaults(func=cmd_wire_verify)
+
+    loop_check_p = sub.add_parser("loop-check", help="Record a tool action and detect loops")
+    loop_check_p.add_argument("--tool-name", default="unknown", help="Tool name")
+    loop_check_p.add_argument("--tool-input", default="", help="Tool input string")
+    loop_check_p.set_defaults(func=cmd_wire_loop_check)
+
+    enrich_p = sub.add_parser("enrich", help="Enrich a task contract with prior learnings")
+    enrich_p.add_argument("--task-id", default="", help="Task ID")
+    enrich_p.add_argument("--task-description", default="", help="Task description")
+    enrich_p.add_argument("--project", default="", help="Project name")
+    enrich_p.set_defaults(func=cmd_wire_enrich)
+
+    bridge_p = sub.add_parser("bridge", help="Parse events file and emit Lessons MCP calls")
+    bridge_p.add_argument("--events-file", default="events.jsonl", help="Path to JSONL events file")
+    bridge_p.add_argument("--session-id", default="", help="Session ID")
+    bridge_p.add_argument("--project", default="", help="Project name")
+    bridge_p.set_defaults(func=cmd_wire_bridge)
+
+    distill_p = sub.add_parser("distill", help="Distill events into knowledge entries")
+    distill_p.set_defaults(func=cmd_wire_distill)
+
+    rollback_p = sub.add_parser("rollback-eval", help="Evaluate drift score and return rollback decision")
+    rollback_p.add_argument("--drift-score", type=float, default=0.0, help="Drift score (0.0-1.0)")
+    rollback_p.add_argument("--task-id", default="", help="Task ID")
+    rollback_p.set_defaults(func=cmd_wire_rollback_eval)
+
+    profile_p = sub.add_parser("profile", help="Build and display a project profile report")
+    profile_p.set_defaults(func=cmd_profile)
+
+    ready_p = sub.add_parser("ready", help="List ready tasks from the workgraph")
+    ready_p.set_defaults(func=cmd_ready)
 
     return p
 

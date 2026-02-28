@@ -20,7 +20,7 @@ FINGERPRINT="$TASK_ID:$TOOL_NAME:$TIME_BUCKET"
 echo "$FINGERPRINT" >> "$LOOP_STATE_FILE" 2>/dev/null || true
 
 # Count occurrences of this exact fingerprint
-OCCURRENCES=$(grep -c "^${FINGERPRINT}$" "$LOOP_STATE_FILE" 2>/dev/null || echo "0")
+OCCURRENCES=$(grep -cF "${FINGERPRINT}" "$LOOP_STATE_FILE" 2>/dev/null || echo "0")
 
 if [[ "$OCCURRENCES" -ge 3 ]]; then
   echo "WARNING: Possible loop detected — '$TOOL_NAME' repeated $OCCURRENCES times in task $TASK_ID"

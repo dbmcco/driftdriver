@@ -29,6 +29,23 @@ class ContrarianReport:
     summary: str = ""
 
 
+def _collect_imports(text: str) -> set[str]:
+    """Collect all imported names using AST (handles multi-line imports)."""
+    imported: set[str] = set()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return imported
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                imported.add(alias.asname if alias.asname else alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.add(alias.asname if alias.asname else alias.name)
+    return imported
+
+
 def check_dead_imports(project_dir: Path) -> list[ContrarianFinding]:
     """Scan Python files for functions defined but never imported by other modules."""
     py_files = list(project_dir.rglob("*.py"))
@@ -55,15 +72,7 @@ def check_dead_imports(project_dir: Path) -> list[ContrarianFinding]:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        # Match: from X import name1, name2
-        for m in re.finditer(r"from\s+\S+\s+import\s+(.+)", text):
-            for name in re.split(r"[,\s]+", m.group(1)):
-                name = name.strip("() \n")
-                if name:
-                    imported.add(name)
-        # Match: import X (simple import of a name)
-        for m in re.finditer(r"^\s*import\s+(\w+)", text, re.MULTILINE):
-            imported.add(m.group(1))
+        imported.update(_collect_imports(text))
 
     findings: list[ContrarianFinding] = []
     for filepath, names in defined.items():
