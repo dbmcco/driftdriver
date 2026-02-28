@@ -53,7 +53,8 @@ def load_workgraph(wg_dir: Path) -> Workgraph:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if obj.get("type") != "task":
+        entry_type = obj.get("kind") or obj.get("type")
+        if entry_type != "task":
             continue
         tid = obj.get("id")
         if tid is None:

@@ -57,6 +57,22 @@ def test_find_workgraph_dir_walk_up(tmp_path):
     assert found == wg
 
 
+def test_load_workgraph_kind_field(tmp_path):
+    """Test that 'kind' field works as alternative to 'type' (wg CLI uses 'kind')."""
+    graph = tmp_path / ".workgraph" / "graph.jsonl"
+    graph.parent.mkdir(parents=True)
+    graph.write_text(
+        '{"kind":"task","id":"k1","title":"Kind task","status":"open"}\n'
+        '{"type":"task","id":"t1","title":"Type task","status":"open"}\n'
+        '{"kind":"log","id":"l1","title":"Not a task"}\n'
+    )
+    result = load_workgraph(tmp_path / ".workgraph")
+    assert "k1" in result.tasks
+    assert "t1" in result.tasks
+    assert "l1" not in result.tasks
+    assert result.tasks["k1"]["title"] == "Kind task"
+
+
 def test_load_workgraph_malformed_json(tmp_path):
     graph = tmp_path / ".workgraph" / "graph.jsonl"
     graph.parent.mkdir(parents=True)
