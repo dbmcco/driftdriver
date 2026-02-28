@@ -7,10 +7,12 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+CODEX_ADAPTER_MARKER = "## Driftdriver Integration Protocol"
 COREDRIFT_MARKER = "## Coredrift Protocol"
 ARCHDRIFT_MARKER = "## archdrift Protocol"
 UXDRIFT_MARKER = "## uxdrift Protocol"
 THERAPYDRIFT_MARKER = "## therapydrift Protocol"
+FIXDRIFT_MARKER = "## fixdrift Protocol"
 YAGNIDRIFT_MARKER = "## yagnidrift Protocol"
 REDRIFT_MARKER = "## redrift Protocol"
 SPECDRIFT_MARKER = "## specdrift Protocol"
@@ -29,6 +31,7 @@ class InstallResult:
     wrote_depsdrift: bool
     wrote_uxdrift: bool
     wrote_therapydrift: bool
+    wrote_fixdrift: bool
     wrote_yagnidrift: bool
     wrote_redrift: bool
     wrote_amplifier_executor: bool
@@ -80,6 +83,9 @@ def ensure_uxdrift_gitignore(wg_dir: Path) -> bool:
 
 def ensure_therapydrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".therapydrift/")
+
+def ensure_fixdrift_gitignore(wg_dir: Path) -> bool:
+    return _ensure_line_in_file(wg_dir / ".gitignore", ".fixdrift/")
 
 def ensure_yagnidrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".yagnidrift/")
@@ -180,6 +186,9 @@ def write_uxdrift_wrapper(wg_dir: Path, *, uxdrift_bin: Path, wrapper_mode: str 
 def write_therapydrift_wrapper(wg_dir: Path, *, therapydrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="therapydrift", tool_bin=therapydrift_bin, wrapper_mode=wrapper_mode)
 
+def write_fixdrift_wrapper(wg_dir: Path, *, fixdrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
+    return write_tool_wrapper(wg_dir, tool_name="fixdrift", tool_bin=fixdrift_bin, wrapper_mode=wrapper_mode)
+
 def write_yagnidrift_wrapper(wg_dir: Path, *, yagnidrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="yagnidrift", tool_bin=yagnidrift_bin, wrapper_mode=wrapper_mode)
 
@@ -214,6 +223,7 @@ def _default_claude_executor_text(
     include_archdrift: bool,
     include_uxdrift: bool,
     include_therapydrift: bool,
+    include_fixdrift: bool,
     include_yagnidrift: bool,
     include_redrift: bool,
 ) -> str:
@@ -251,6 +261,18 @@ def _default_claude_executor_text(
             "- Or run the unified check (runs therapydrift when a spec is present):\n"
             f"  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups\n"
             "- Artifacts live under `.workgraph/.therapydrift/`.\n"
+        )
+
+    fixdrift = ""
+    if include_fixdrift:
+        fixdrift = (
+            "\n"
+            f"{FIXDRIFT_MARKER}\n"
+            "- If this task includes a `fixdrift` block (in the description), run:\n"
+            "  ./.workgraph/fixdrift wg check --task {{task_id}} --write-log --create-followups\n"
+            "- Or run the unified check (runs fixdrift when a spec is present):\n"
+            f"  ./.workgraph/drifts check --task {{{{task_id}}}} --write-log --create-followups\n"
+            "- Artifacts live under `.workgraph/.fixdrift/`.\n"
         )
 
     yagnidrift = ""
@@ -316,6 +338,7 @@ Context from dependencies:
 {archdrift}
 {uxdrift}
 {therapydrift}
+{fixdrift}
 {yagnidrift}
 {redrift}
 
@@ -482,6 +505,32 @@ def _inject_therapydrift_into_template(body: str) -> str | None:
     return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
 
 
+def _inject_fixdrift_into_template(body: str) -> str | None:
+    if FIXDRIFT_MARKER in body:
+        return None
+
+    m = _TEMPLATE_START_RE.search(body)
+    if not m:
+        return None
+
+    start = m.end("prefix")
+    end = body.find('\"\"\"', start)
+    if end == -1:
+        return None
+
+    insert = (
+        "\n"
+        f"{FIXDRIFT_MARKER}\n"
+        "- If this task includes a `fixdrift` block (in the description), run:\n"
+        "  ./.workgraph/fixdrift wg check --task {{task_id}} --write-log --create-followups\n"
+        "- Or run the unified check (runs fixdrift when a spec is present):\n"
+        "  ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups\n"
+        "- Artifacts live under `.workgraph/.fixdrift/`.\n"
+    )
+
+    return body[:end].rstrip("\n") + "\n" + insert + "\n" + body[end:]
+
+
 def _inject_yagnidrift_into_template(body: str) -> str | None:
     if YAGNIDRIFT_MARKER in body:
         return None
@@ -540,6 +589,7 @@ def ensure_executor_guidance(
     include_archdrift: bool,
     include_uxdrift: bool,
     include_therapydrift: bool,
+    include_fixdrift: bool,
     include_yagnidrift: bool,
     include_redrift: bool,
 ) -> tuple[bool, list[str]]:
@@ -555,6 +605,7 @@ def ensure_executor_guidance(
                 include_archdrift=include_archdrift,
                 include_uxdrift=include_uxdrift,
                 include_therapydrift=include_therapydrift,
+                include_fixdrift=include_fixdrift,
                 include_yagnidrift=include_yagnidrift,
                 include_redrift=include_redrift,
             ),
@@ -587,6 +638,12 @@ def ensure_executor_guidance(
 
         if include_therapydrift:
             new_text = _inject_therapydrift_into_template(cur)
+            if new_text is not None:
+                cur = new_text
+                changed = True
+
+        if include_fixdrift:
+            new_text = _inject_fixdrift_into_template(cur)
             if new_text is not None:
                 cur = new_text
                 changed = True
@@ -789,7 +846,7 @@ def ensure_amplifier_autostart_hook(project_dir: Path) -> tuple[bool, bool]:
         "fi\n\n"
         "if [[ ! -x \".workgraph/drifts\" || ! -x \".workgraph/coredrift\" || ! -x \".workgraph/executors/amplifier-run.sh\" ]]; then\n"
         "  if command -v driftdriver >/dev/null 2>&1; then\n"
-        "    driftdriver --dir \"$PROJECT_DIR\" install --wrapper-mode portable --with-amplifier-executor --no-ensure-contracts >/dev/null 2>&1 || \\\n"
+        "    driftdriver --dir \"$PROJECT_DIR\" install --wrapper-mode portable --with-fixdrift --with-amplifier-executor --no-ensure-contracts >/dev/null 2>&1 || \\\n"
         "      driftdriver --dir \"$PROJECT_DIR\" install --wrapper-mode portable --no-ensure-contracts >/dev/null 2>&1 || true\n"
         "  fi\n"
         "fi\n\n"
@@ -866,3 +923,40 @@ def ensure_amplifier_autostart_hook(project_dir: Path) -> tuple[bool, bool]:
     )
     wrote_json = _write_text_if_changed(hook_json, hook_json_text)
     return (wrote_script, wrote_json)
+
+
+@dataclass(frozen=True)
+class CodexAdapterResult:
+    wrote_agents_md: bool
+
+
+def install_codex_adapter(project_dir: Path) -> CodexAdapterResult:
+    """
+    Inject the Driftdriver Integration Protocol into the project's AGENTS.md.
+
+    Reads the AGENTS.md.partial template bundled with driftdriver and either
+    creates AGENTS.md (if absent) or appends to it (if present).  The operation
+    is idempotent: a second call returns wrote_agents_md=False when the marker
+    is already present.
+    """
+    template_path = (
+        Path(__file__).parent
+        / "templates"
+        / "adapters"
+        / "codex"
+        / "AGENTS.md.partial"
+    )
+    partial = template_path.read_text(encoding="utf-8")
+
+    agents_md = project_dir / "AGENTS.md"
+
+    if agents_md.exists():
+        existing = agents_md.read_text(encoding="utf-8")
+        if CODEX_ADAPTER_MARKER in existing:
+            return CodexAdapterResult(wrote_agents_md=False)
+        new_content = existing.rstrip("\n") + "\n\n" + partial
+    else:
+        new_content = partial
+
+    agents_md.write_text(new_content, encoding="utf-8")
+    return CodexAdapterResult(wrote_agents_md=True)
