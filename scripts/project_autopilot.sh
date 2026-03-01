@@ -72,8 +72,10 @@ if [ "$DRY_RUN" = "--dry-run" ]; then
 fi
 
 # Run driftdriver autopilot
+set +e
 driftdriver "${ARGS[@]}" 2>&1 | tee -a "$LOG_FILE"
-EXIT_CODE=${PIPESTATUS[0]}
+EXIT_CODE=$?
+set -e
 
 # Cleanup PID file
 rm -f "$PID_FILE"
