@@ -60,6 +60,46 @@ Task: {task_id} — {task_title}
    wg fail {task_id} --reason "description of what needs human input"
 """
 
+REVIEW_PROMPT_TEMPLATE = """\
+You are a milestone reviewer in: {project_dir}
+
+## Goal
+{goal}
+
+## Completed Tasks
+{completed_tasks}
+
+## Failed/Escalated Tasks
+{problem_tasks}
+
+## Review Protocol
+
+You must verify the milestone by TRACING EXECUTION PATHS, not by assumption.
+
+### Rules
+1. **Map the full execution graph**: For each completed task, identify what
+   the controller did, what the worker did, and what drift checks verified.
+   Read the actual code and wg logs — do not assume.
+2. **Trace claims through code**: For each acceptance criterion in the goal,
+   follow the concrete code path that satisfies it. Cite file:line evidence.
+3. **Distinguish delegation from absence**: "The controller doesn't do X"
+   is NOT the same as "X isn't done." Check whether a worker, drift check,
+   or workgraph resolution handles it.
+4. **Test empirically**: Run dry-run or read output artifacts to verify
+   claims. Check .workgraph/output/ logs and drift findings.
+
+### Output
+Write your review to: .workgraph/.autopilot/milestone-review.md
+
+Structure:
+- **Verified**: claims confirmed with evidence (file:line or artifact path)
+- **Unverified**: claims that lack traceable evidence
+- **Gaps**: genuine missing capabilities (not delegation misunderstandings)
+- **Grade**: percentage of goal acceptance criteria met with evidence
+
+Log your findings: wg log autopilot-review "summary"
+"""
+
 
 @dataclass
 class AutopilotConfig:
@@ -183,6 +223,26 @@ def build_worker_prompt(task: dict, project_dir: Path) -> str:
         task_id=task["id"],
         task_title=task.get("title", ""),
         task_description=task.get("description", ""),
+    )
+
+
+def build_review_prompt(run: "AutopilotRun") -> str:
+    """Build the prompt for milestone review."""
+    completed = "\n".join(f"- {tid}" for tid in sorted(run.completed_tasks)) or "none"
+    problems = []
+    for tid in sorted(run.failed_tasks):
+        problems.append(f"- {tid} (failed)")
+    for tid in sorted(run.escalated_tasks):
+        ctx = run.workers.get(tid)
+        findings = ctx.drift_findings[:3] if ctx else []
+        problems.append(f"- {tid} (escalated): {'; '.join(findings)}")
+    problem_str = "\n".join(problems) or "none"
+
+    return REVIEW_PROMPT_TEMPLATE.format(
+        project_dir=str(run.config.project_dir),
+        goal=run.config.goal,
+        completed_tasks=completed,
+        problem_tasks=problem_str,
     )
 
 
@@ -418,6 +478,49 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
                 print(f"[autopilot] Completed: {task['id']}")
 
     return run
+
+
+def run_milestone_review(
+    run: AutopilotRun,
+    scripts_dir: Path | None = None,
+) -> str:
+    """Dispatch a reviewer worker to verify milestone completion."""
+    project_dir = run.config.project_dir
+    prompt = build_review_prompt(run)
+
+    if run.config.dry_run:
+        print("[dry-run] Would dispatch milestone review")
+        return "[dry-run] Review skipped"
+
+    print("[autopilot] Running milestone review...")
+
+    if scripts_dir:
+        worker_name = "ap-reviewer"
+        worker_info = launch_worker(scripts_dir, worker_name, project_dir)
+        if worker_info:
+            session_id = worker_info.get("session_id")
+            response = converse(
+                scripts_dir, worker_name, session_id, prompt, 600,
+            )
+            stop_worker(scripts_dir, worker_name, session_id)
+            return response
+
+    # Fallback: direct CLI
+    result = subprocess.run(
+        [
+            "claude",
+            "--print",
+            "--dangerously-skip-permissions",
+            "--no-session-persistence",
+            "-p",
+            prompt,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(project_dir),
+        timeout=660,
+    )
+    return result.stdout
 
 
 def decompose_goal(

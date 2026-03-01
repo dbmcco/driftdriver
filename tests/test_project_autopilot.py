@@ -15,6 +15,7 @@ from driftdriver.project_autopilot import (
     AutopilotRun,
     WorkerContext,
     build_decompose_prompt,
+    build_review_prompt,
     build_worker_prompt,
     discover_session_driver,
     generate_report,
@@ -145,6 +146,55 @@ class TestWorkerContext(unittest.TestCase):
         self.assertEqual(ctx.status, "running")
         ctx.status = "completed"
         self.assertEqual(ctx.status, "completed")
+
+
+class TestReviewPrompt(unittest.TestCase):
+    def test_review_prompt_includes_goal_and_tasks(self):
+        config = AutopilotConfig(
+            project_dir=Path("/project"),
+            goal="Build auth system",
+        )
+        run = AutopilotRun(
+            config=config,
+            started_at=100.0,
+            completed_tasks={"auth-1", "auth-2"},
+        )
+        prompt = build_review_prompt(run)
+        self.assertIn("Build auth system", prompt)
+        self.assertIn("auth-1", prompt)
+        self.assertIn("auth-2", prompt)
+        self.assertIn("Trace claims through code", prompt)
+        self.assertIn("Distinguish delegation from absence", prompt)
+
+    def test_review_prompt_includes_escalated_tasks(self):
+        config = AutopilotConfig(
+            project_dir=Path("/project"),
+            goal="Build feature",
+        )
+        ctx = WorkerContext(
+            task_id="stuck-1", task_title="Stuck", worker_name="w1",
+            drift_findings=["finding: scope drift"],
+            drift_fail_count=3,
+        )
+        run = AutopilotRun(
+            config=config,
+            started_at=100.0,
+            escalated_tasks={"stuck-1"},
+            workers={"stuck-1": ctx},
+        )
+        prompt = build_review_prompt(run)
+        self.assertIn("stuck-1 (escalated)", prompt)
+        self.assertIn("scope drift", prompt)
+
+    def test_review_prompt_empty_run(self):
+        config = AutopilotConfig(
+            project_dir=Path("/project"),
+            goal="Test",
+        )
+        run = AutopilotRun(config=config, started_at=100.0)
+        prompt = build_review_prompt(run)
+        self.assertIn("Test", prompt)
+        self.assertIn("none", prompt)
 
 
 class TestDryRun(unittest.TestCase):

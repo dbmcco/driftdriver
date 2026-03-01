@@ -2306,6 +2306,7 @@ def _build_parser() -> argparse.ArgumentParser:
     autopilot_p.add_argument("--worker-timeout", type=int, default=1800, help="Worker timeout in seconds (default: 1800)")
     autopilot_p.add_argument("--dry-run", action="store_true", help="Print plan without dispatching workers")
     autopilot_p.add_argument("--skip-decompose", action="store_true", help="Skip goal decomposition, use existing wg tasks")
+    autopilot_p.add_argument("--skip-review", action="store_true", help="Skip milestone review after completion")
     autopilot_p.set_defaults(func=cmd_autopilot)
 
     return p
@@ -2325,6 +2326,7 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
         discover_session_driver,
         generate_report,
         run_autopilot_loop,
+        run_milestone_review,
     )
 
     project_dir = Path(args.dir) if args.dir else Path.cwd()
@@ -2373,7 +2375,16 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
     # Save final run state
     save_run_state(project_dir, run)
 
-    # Step 3: Generate report
+    # Step 3: Milestone review — evidence-based verification
+    if run.completed_tasks and not args.skip_review:
+        scripts_dir = discover_session_driver()
+        review = run_milestone_review(run, scripts_dir)
+        review_file = (wg_dir / ".autopilot" / "milestone-review.md")
+        review_file.parent.mkdir(parents=True, exist_ok=True)
+        review_file.write_text(review)
+        print(f"[autopilot] Milestone review saved to: {review_file}")
+
+    # Step 4: Generate report
     report = generate_report(run)
     report_path = wg_dir / ".autopilot"
     report_path.mkdir(parents=True, exist_ok=True)
