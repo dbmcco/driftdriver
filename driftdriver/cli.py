@@ -2313,6 +2313,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def cmd_autopilot(args: argparse.Namespace) -> int:
     """Run the project autopilot."""
+    from driftdriver.autopilot_state import (
+        clear_run_state,
+        save_run_state,
+        save_worker_event,
+    )
     from driftdriver.project_autopilot import (
         AutopilotConfig,
         AutopilotRun,
@@ -2353,10 +2358,20 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
                 cwd=str(project_dir),
             )
 
+    # Clear previous state for fresh run
+    clear_run_state(project_dir)
+
     # Step 2: Run autopilot loop
     run = AutopilotRun(config=config)
     print("[autopilot] Starting execution loop...")
     run = run_autopilot_loop(run)
+
+    # Persist worker events for completed workers
+    for tid, ctx in run.workers.items():
+        save_worker_event(project_dir, ctx, ctx.status)
+
+    # Save final run state
+    save_run_state(project_dir, run)
 
     # Step 3: Generate report
     report = generate_report(run)
