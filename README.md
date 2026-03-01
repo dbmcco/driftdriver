@@ -296,6 +296,43 @@ Config template:
 cp docs/ecosystem-review.example.json ./.workgraph/.driftdriver/ecosystem-review.json
 ```
 
+## Project Autopilot
+
+Full-loop autonomous execution: goal → task decomposition → parallel worker dispatch → drift checks → milestone review → report.
+
+```bash
+# Decompose a goal and execute it end-to-end
+driftdriver autopilot --goal "Build user authentication system"
+
+# Skip decomposition, use existing workgraph tasks
+driftdriver autopilot --goal "Complete remaining tasks" --skip-decompose
+
+# Dry run — show what would be dispatched without executing
+driftdriver autopilot --goal "Add API pagination" --dry-run
+
+# Control parallelism and timeouts
+driftdriver autopilot --goal "Refactor data layer" --max-parallel 2 --worker-timeout 3600
+
+# Skip the post-loop milestone review
+driftdriver autopilot --goal "Quick fix" --skip-decompose --skip-review
+```
+
+The autopilot:
+1. **Decomposes** the goal into Workgraph tasks (via claude-session-driver worker or direct CLI)
+2. **Dispatches** workers for each ready task, respecting dependencies
+3. **Drift-checks** after each task completes; creates follow-up tasks on findings
+4. **Escalates** to human only when drift failures exceed threshold (default: 3)
+5. **Reviews** the milestone with an evidence-based verification worker
+6. **Reports** results to `.workgraph/.autopilot/latest-report.md`
+
+State is persisted to `.workgraph/.autopilot/` (run-state.json, workers.jsonl).
+
+Shell wrapper with SIGTERM handling and PID tracking:
+
+```bash
+scripts/project_autopilot.sh /path/to/project "Your goal here" 4
+```
+
 ## Use Tools Separately
 
 You can run each tool directly without `driftdriver`:
