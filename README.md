@@ -20,6 +20,40 @@ Today it supports:
 
 Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
 
+## Evolution & External Integration
+
+Driftdriver started as a thin orchestrator routing `coredrift` checks. It has grown into a full ecosystem coordinator:
+
+- **10 specialized drift lanes** from baseline contract checks (coredrift) through brownfield rebuilds (redrift)
+- **Configurable ecosystem monitoring** — a daily scanner tracks 23+ repos, 7 GitHub users/orgs, and watched report URLs for upstream changes
+- **Runtime-agnostic integration** — works with Amplifier (Microsoft), Claude Code, and any CLI agent runtime
+- **Automatic update detection** — surfaces upstream changes as Workgraph eval tasks for human decision; no auto-updates applied
+
+Driftdriver is intentionally reliant on external projects rather than reimplementing their capabilities:
+
+| Dependency | Role |
+|---|---|
+| [Workgraph](https://github.com/graphwork/workgraph) | Task graph spine — all tasks, deps, loops, and contracts flow through `wg` |
+| [Amplifier](https://github.com/microsoft/amplifier) | Agent runtime — session management, executor dispatch, hook-based auto-bootstrap |
+| [claude-session-driver](https://github.com/obra/claude-session-driver) | Multi-agent orchestration — fan-out workers, supervised pipelines |
+| [superpowers](https://github.com/obra/superpowers) | Skills/workflow plugin — brainstorming, planning, TDD, code review patterns |
+| [mira-OSS](https://github.com/taylorsatula/mira-OSS) | Memory decay patterns for long-running agent sessions |
+| [beads](https://github.com/steveyegge/beads) | Git-backed task tracking via `bd` CLI |
+
+### Automated Ecosystem Monitoring
+
+The daily ecosystem scanner (`scripts/daily_ecosystem_eval.sh`) runs on a configurable schedule:
+
+1. Queries GitHub for HEAD commits on all core and configured external repos
+2. Scans watched GitHub users for new or updated repositories
+3. Fetches watched report URLs and detects content changes via keyword matching
+4. Creates Workgraph eval tasks when actionable findings are detected
+5. Retains the last 30 review snapshots (JSON + Markdown) under `.workgraph/.driftdriver/reviews/`
+
+Configure monitoring via `.workgraph/.driftdriver/ecosystem-review.json` (template: `docs/ecosystem-review.example.json`).
+
+Findings are advisory — humans decide via the generated eval tasks whether to update, defer, or investigate.
+
 ## Ecosystem Map
 
 This project is part of the Speedrift suite for Workgraph-first drift control.
@@ -55,6 +89,10 @@ The daily ecosystem scanner monitors these for new repos and activity:
 - [@steveyegge](https://github.com/steveyegge) (Beads)
 - [@ramparte](https://github.com/ramparte) (Amplifier bundles/extensions)
 - [@ekg](https://github.com/ekg) (Erik Garrison — Workgraph / [graphwork](https://github.com/graphwork))
+- [@dsifry](https://github.com/dsifry) (Metaswarm — multi-agent orchestration)
+- [@Joi](https://github.com/Joi) (AI agent learnings)
+
+The vibez community (WhatsApp "code code code" group) is an additional intelligence source — members actively share repos and tools relevant to agentic development. Community discoveries are triaged via [vibez-monitor](https://github.com/dbmcco/vibez-monitor) and added to the scanner config when relevant.
 
 ## Install (CLI)
 
