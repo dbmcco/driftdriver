@@ -2300,7 +2300,82 @@ def _build_parser() -> argparse.ArgumentParser:
     reflect_p = sub.add_parser("reflect", help="Run self-reflect on recent task")
     reflect_p.set_defaults(func=cmd_wire_reflect)
 
+    autopilot_p = sub.add_parser("autopilot", help="Run project autopilot: goal → tasks → workers → drift → done")
+    autopilot_p.add_argument("--goal", required=True, help="High-level goal to decompose and execute")
+    autopilot_p.add_argument("--max-parallel", type=int, default=4, help="Max parallel workers (default: 4)")
+    autopilot_p.add_argument("--worker-timeout", type=int, default=1800, help="Worker timeout in seconds (default: 1800)")
+    autopilot_p.add_argument("--dry-run", action="store_true", help="Print plan without dispatching workers")
+    autopilot_p.add_argument("--skip-decompose", action="store_true", help="Skip goal decomposition, use existing wg tasks")
+    autopilot_p.set_defaults(func=cmd_autopilot)
+
     return p
+
+
+def cmd_autopilot(args: argparse.Namespace) -> int:
+    """Run the project autopilot."""
+    from driftdriver.project_autopilot import (
+        AutopilotConfig,
+        AutopilotRun,
+        decompose_goal,
+        discover_session_driver,
+        generate_report,
+        run_autopilot_loop,
+    )
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    wg_dir = project_dir / ".workgraph"
+    if not wg_dir.exists():
+        print("Error: no .workgraph found. Run `wg init` first.", file=sys.stderr)
+        return 1
+
+    config = AutopilotConfig(
+        project_dir=project_dir,
+        max_parallel=args.max_parallel,
+        worker_timeout=args.worker_timeout,
+        dry_run=args.dry_run,
+        goal=args.goal,
+    )
+
+    # Step 1: Decompose goal into workgraph tasks (unless --skip-decompose)
+    if not args.skip_decompose:
+        print(f"[autopilot] Decomposing goal: {args.goal}")
+        scripts_dir = discover_session_driver()
+        response = decompose_goal(args.goal, project_dir, scripts_dir)
+        print(f"[autopilot] Decomposition complete:\n{response[:500]}")
+
+        # Ensure contracts on new tasks
+        coredrift = wg_dir / "coredrift"
+        if coredrift.exists():
+            subprocess.run(
+                [str(coredrift), "ensure-contracts", "--apply"],
+                capture_output=True,
+                text=True,
+                cwd=str(project_dir),
+            )
+
+    # Step 2: Run autopilot loop
+    run = AutopilotRun(config=config)
+    print("[autopilot] Starting execution loop...")
+    run = run_autopilot_loop(run)
+
+    # Step 3: Generate report
+    report = generate_report(run)
+    report_path = wg_dir / ".autopilot"
+    report_path.mkdir(parents=True, exist_ok=True)
+    report_file = report_path / "latest-report.md"
+    report_file.write_text(report)
+
+    print(f"\n{report}")
+    print(f"Report saved to: {report_file}")
+
+    if run.escalated_tasks:
+        print("\n[autopilot] Some tasks need human judgment. Review the report above.")
+        return 3
+
+    if run.failed_tasks:
+        return 1
+
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
