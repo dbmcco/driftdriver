@@ -2307,7 +2307,18 @@ def _build_parser() -> argparse.ArgumentParser:
     autopilot_p.add_argument("--dry-run", action="store_true", help="Print plan without dispatching workers")
     autopilot_p.add_argument("--skip-decompose", action="store_true", help="Skip goal decomposition, use existing wg tasks")
     autopilot_p.add_argument("--skip-review", action="store_true", help="Skip milestone review after completion")
+    autopilot_p.add_argument("--no-peer-dispatch", action="store_true", help="Disable cross-repo peer dispatch")
     autopilot_p.set_defaults(func=cmd_autopilot)
+
+    # -- Peer federation commands --
+    peer_list_p = sub.add_parser("peer-list", help="Discover and list workgraph peers")
+    peer_list_p.set_defaults(func=cmd_peer_list_cli)
+
+    peer_health_p = sub.add_parser("peer-health", help="Check health of all known peers")
+    peer_health_p.set_defaults(func=cmd_peer_health_cli)
+
+    health_workers_p = sub.add_parser("health-workers", help="Check liveness of autopilot workers")
+    health_workers_p.set_defaults(func=cmd_health_workers_cli)
 
     return p
 
@@ -2401,6 +2412,62 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
     if run.failed_tasks:
         return 1
 
+    return 0
+
+
+def cmd_peer_list_cli(args: argparse.Namespace) -> int:
+    """List workgraph peers."""
+    from driftdriver.wire import cmd_peer_list
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    peers = cmd_peer_list(project_dir)
+    if not peers:
+        print("No peers discovered.")
+        return 0
+
+    # Table header
+    print(f"{'Name':<20} {'Path':<40} {'Service':<10} {'Description'}")
+    print("-" * 90)
+    for p in peers:
+        svc = "running" if p["service_running"] else "stopped"
+        print(f"{p['name']:<20} {p['path']:<40} {svc:<10} {p['description']}")
+    return 0
+
+
+def cmd_peer_health_cli(args: argparse.Namespace) -> int:
+    """Check health of all peers."""
+    from driftdriver.wire import cmd_peer_health
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    reports = cmd_peer_health(project_dir)
+    if not reports:
+        print("No peers to check.")
+        return 0
+
+    print(f"{'Peer':<20} {'Reachable':<12} {'Service':<12} {'Latency':<12} {'Error'}")
+    print("-" * 80)
+    for r in reports:
+        reachable = "yes" if r["reachable"] else "no"
+        svc = "running" if r["service_running"] else "stopped"
+        latency = f"{r['latency_ms']}ms"
+        print(f"{r['peer']:<20} {reachable:<12} {svc:<12} {latency:<12} {r['error']}")
+    return 0
+
+
+def cmd_health_workers_cli(args: argparse.Namespace) -> int:
+    """Check liveness of autopilot workers."""
+    from driftdriver.wire import cmd_health_workers
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    workers = cmd_health_workers(project_dir)
+    if not workers:
+        print("No workers found (no autopilot state).")
+        return 0
+
+    print(f"{'Task ID':<20} {'Session':<30} {'Status':<12} {'Last Event':<20} {'Count'}")
+    print("-" * 95)
+    for w in workers:
+        print(f"{w['task_id']:<20} {w['session_id']:<30} {w['status']:<12} {w['last_event_type']:<20} {w['event_count']}")
     return 0
 
 

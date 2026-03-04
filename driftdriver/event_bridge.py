@@ -20,6 +20,8 @@ class MappedEvent:
     event_type: str  # decision, error, observation, tool_use
     project: str
     payload: dict
+    peer_id: str = ""
+    cross_repo_ref: str = ""
 
 
 def map_event(raw_event: dict, session_id: str, project: str) -> MappedEvent | None:
@@ -76,3 +78,32 @@ def format_mcp_call(event: MappedEvent) -> dict:
         "project": event.project,
         "payload": event.payload,
     }
+
+
+def federate_learnings(project_dir: Path, peer_registry: object) -> list[dict]:
+    """Read knowledge.jsonl from each reachable peer and return combined entries.
+
+    Args:
+        project_dir: local project directory (unused but kept for API symmetry)
+        peer_registry: PeerRegistry instance with .peers() method
+    """
+    all_entries: list[dict] = []
+    for peer in peer_registry.peers():
+        kb_path = Path(peer.path) / ".workgraph" / "knowledge.jsonl"
+        if not kb_path.exists():
+            continue
+        try:
+            with kb_path.open() as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        entry["_peer"] = peer.name
+                        all_entries.append(entry)
+                    except json.JSONDecodeError:
+                        pass
+        except OSError:
+            continue
+    return all_entries

@@ -112,3 +112,72 @@ def cmd_rollback_eval(drift_score: float, task_id: str, project_dir: Path) -> di
         "reason": result.reason,
         "confidence": result.confidence,
     }
+
+
+def cmd_peer_list(project_dir: Path) -> list[dict]:
+    """Discover workgraph peers and return info dicts."""
+    from driftdriver.peer_registry import PeerRegistry
+
+    registry = PeerRegistry(project_dir)
+    peers = registry.peers()
+    return [
+        {
+            "name": p.name,
+            "path": p.path,
+            "description": p.description,
+            "service_running": p.service_running,
+        }
+        for p in peers
+    ]
+
+
+def cmd_peer_health(project_dir: Path) -> list[dict]:
+    """Check health of all known peers and return reports."""
+    from driftdriver.peer_registry import PeerRegistry
+
+    registry = PeerRegistry(project_dir)
+    peers = registry.peers()
+    reports = []
+    for peer in peers:
+        report = registry.health(peer.name)
+        reports.append({
+            "peer": report.peer_name,
+            "reachable": report.reachable,
+            "service_running": report.service_running,
+            "latency_ms": round(report.latency_ms, 1),
+            "task_summary": report.task_summary,
+            "error": report.error,
+        })
+    return reports
+
+
+def cmd_health_workers(project_dir: Path) -> list[dict]:
+    """Check liveness of all autopilot workers from saved state."""
+    import json
+
+    from driftdriver.worker_monitor import check_worker_liveness
+
+    state_file = project_dir / ".workgraph" / ".autopilot" / "run-state.json"
+    if not state_file.exists():
+        return []
+
+    try:
+        state = json.loads(state_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    workers = state.get("workers", {})
+    results = []
+    for task_id, ctx in workers.items():
+        session_id = ctx.get("session_id", "")
+        if not session_id:
+            continue
+        health = check_worker_liveness(session_id)
+        results.append({
+            "task_id": task_id,
+            "session_id": session_id,
+            "status": health.status,
+            "last_event_type": health.last_event_type,
+            "event_count": health.event_count,
+        })
+    return results

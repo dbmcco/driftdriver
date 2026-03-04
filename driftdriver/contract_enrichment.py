@@ -91,3 +91,52 @@ def enrich_contract(
         contract_updated=True,
         injected_context=injected,
     )
+
+
+def enrich_with_peer_learnings(
+    task_id: str,
+    description: str,
+    project: str,
+    local_knowledge: list[dict],
+    peer_knowledge: list[dict],
+    max_entries: int = 5,
+) -> EnrichmentResult:
+    """Combine local and peer knowledge, weighting peer entries at 0.7x.
+
+    Finds relevant learnings from both pools, scores them, and returns
+    an EnrichmentResult with the combined top entries.
+    """
+    local_relevant = find_relevant_learnings(description, local_knowledge, max_entries=max_entries)
+    peer_relevant = find_relevant_learnings(description, peer_knowledge, max_entries=max_entries)
+
+    # Score local entries normally, peer entries at 0.7x weight
+    words = {w.lower() for w in description.split() if len(w) > 2}
+    scored: list[tuple[float, dict]] = []
+
+    for entry in local_relevant:
+        content_words = {w.lower() for w in entry.get("content", "").split()}
+        score = float(len(words & content_words))
+        scored.append((score, entry))
+
+    for entry in peer_relevant:
+        content_words = {w.lower() for w in entry.get("content", "").split()}
+        score = float(len(words & content_words)) * 0.7
+        scored.append((score, entry))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    combined = [entry for _, entry in scored[:max_entries]]
+
+    if not combined:
+        return EnrichmentResult(
+            task_id=task_id,
+            learnings_added=0,
+            contract_updated=False,
+        )
+
+    injected = [entry.get("content", "") for entry in combined]
+    return EnrichmentResult(
+        task_id=task_id,
+        learnings_added=len(combined),
+        contract_updated=True,
+        injected_context=injected,
+    )
