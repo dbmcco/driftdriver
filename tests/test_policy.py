@@ -81,6 +81,42 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.loop_max_ready_drift_followups, 0)
             self.assertFalse(p.loop_block_followup_creation)
 
+    def test_reporting_section_defaults(self) -> None:
+        """No [reporting] section → sensible defaults."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            ensure_drift_policy(wg_dir)
+            p = load_drift_policy(wg_dir)
+            self.assertEqual(p.reporting_central_repo, "")
+            self.assertTrue(p.reporting_auto_report)
+            self.assertTrue(p.reporting_include_knowledge)
+
+    def test_reporting_section_explicit_values(self) -> None:
+        """Explicit [reporting] values are parsed correctly."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            (wg_dir / "drift-policy.toml").write_text(
+                "\n".join(
+                    [
+                        "schema = 1",
+                        'mode = "redirect"',
+                        'order = ["coredrift"]',
+                        "",
+                        "[reporting]",
+                        'central_repo = "/tmp/my-central"',
+                        "auto_report = false",
+                        "include_knowledge = false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            p = load_drift_policy(wg_dir)
+            self.assertEqual(p.reporting_central_repo, "/tmp/my-central")
+            self.assertFalse(p.reporting_auto_report)
+            self.assertFalse(p.reporting_include_knowledge)
+
     def test_ordered_optional_plugins(self) -> None:
         ordered = _ordered_optional_plugins(["yagnidrift", "specdrift", "unknown", "specdrift", "redrift"])
         self.assertEqual(ordered[0], "yagnidrift")

@@ -37,6 +37,9 @@ class DriftPolicy:
     loop_max_redrift_depth: int
     loop_max_ready_drift_followups: int
     loop_block_followup_creation: bool
+    reporting_central_repo: str
+    reporting_auto_report: bool
+    reporting_include_knowledge: bool
 
 
 def _default_policy_text() -> str:
@@ -63,6 +66,11 @@ def _default_policy_text() -> str:
         "max_redrift_depth = 2\n"
         "max_ready_drift_followups = 20\n"
         "block_followup_creation = true\n"
+        "\n"
+        "[reporting]\n"
+        "central_repo = \"\"\n"
+        "auto_report = true\n"
+        "include_knowledge = true\n"
     )
 
 
@@ -98,6 +106,9 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             loop_max_redrift_depth=2,
             loop_max_ready_drift_followups=20,
             loop_block_followup_creation=True,
+            reporting_central_repo="",
+            reporting_auto_report=True,
+            reporting_include_knowledge=True,
         )
 
     try:
@@ -118,6 +129,9 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             loop_max_redrift_depth=2,
             loop_max_ready_drift_followups=20,
             loop_block_followup_creation=True,
+            reporting_central_repo="",
+            reporting_auto_report=True,
+            reporting_include_knowledge=True,
         )
 
     schema = int(data.get("schema", 1))
@@ -167,6 +181,11 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         loop_max_ready_drift_followups = 0
     loop_block_followup_creation = bool(loop_safety.get("block_followup_creation", True))
 
+    reporting = data.get("reporting") if isinstance(data.get("reporting"), dict) else {}
+    reporting_central_repo = str(reporting.get("central_repo", ""))
+    reporting_auto_report = bool(reporting.get("auto_report", True))
+    reporting_include_knowledge = bool(reporting.get("include_knowledge", True))
+
     return DriftPolicy(
         schema=schema,
         mode=mode,
@@ -182,4 +201,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         loop_max_redrift_depth=loop_max_redrift_depth,
         loop_max_ready_drift_followups=loop_max_ready_drift_followups,
         loop_block_followup_creation=loop_block_followup_creation,
+        reporting_central_repo=reporting_central_repo,
+        reporting_auto_report=reporting_auto_report,
+        reporting_include_knowledge=reporting_include_knowledge,
     )

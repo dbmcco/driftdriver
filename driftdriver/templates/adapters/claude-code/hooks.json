@@ -23,6 +23,11 @@
       {
         "type": "command",
         "command": ".workgraph/handlers/agent-stop.sh --cli claude-code"
+      },
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/session-report.sh --cli claude-code",
+        "timeout": 30
       }
     ]
   }

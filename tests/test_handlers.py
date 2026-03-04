@@ -16,6 +16,7 @@ HANDLER_SCRIPTS = [
     "progress-check.sh",
     "agent-stop.sh",
     "agent-error.sh",
+    "session-report.sh",
 ]
 
 NON_COMMON_SCRIPTS = [s for s in HANDLER_SCRIPTS if s != "common.sh"]

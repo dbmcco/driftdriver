@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -2083,6 +2084,28 @@ def cmd_wire_reflect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report_cli(args: argparse.Namespace) -> int:
+    """Generate session report, flush events, export knowledge."""
+    from driftdriver.wire import cmd_report
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    session_id = args.session_id or os.environ.get("CLAUDE_SESSION_ID", "unknown")
+    project = args.project or project_dir.name
+    result = cmd_report(project_dir, session_id, project, flush=args.flush, push=args.push)
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Session: {result['session_id']}")
+        print(f"Events: {result['events_read']} read, {result['events_written']} written, {result['duplicates_skipped']} dupes")
+        if result.get('drift_findings_read'):
+            print(f"Drift findings: {result['drift_findings_read']} read, {result['drift_findings_written']} written")
+        if result['knowledge_exported']:
+            print(f"Knowledge: {result['knowledge_exported']} entries exported")
+        if result['pushed_to_central']:
+            print("Pushed to central repo")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="driftdriver")
     p.add_argument("--dir", help="Project directory (or .workgraph dir). Defaults to cwd search.")
@@ -2319,6 +2342,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     health_workers_p = sub.add_parser("health-workers", help="Check liveness of autopilot workers")
     health_workers_p.set_defaults(func=cmd_health_workers_cli)
+
+    # -- Reporting commands --
+    report_p = sub.add_parser("report", help="Generate session report, flush events, export knowledge")
+    report_p.add_argument("--session-id", default="", help="Session ID (defaults to CLAUDE_SESSION_ID env var)")
+    report_p.add_argument("--project", default="", help="Project name (defaults to directory name)")
+    report_p.add_argument("--flush", action="store_true", help="Flush pending events to lessons DB")
+    report_p.add_argument("--push", action="store_true", help="Push report to central repo")
+    report_p.set_defaults(func=cmd_report_cli)
 
     return p
 

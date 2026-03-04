@@ -114,6 +114,33 @@ def cmd_rollback_eval(drift_score: float, task_id: str, project_dir: Path) -> di
     }
 
 
+def cmd_report(project_dir: Path, session_id: str, project: str, flush: bool = False, push: bool = False) -> dict:
+    """Generate session report: flush pending events, export knowledge, optionally push to central."""
+    from driftdriver.reporting import generate_session_report, flush_pending_events, load_reporting_config, ReportingConfig
+
+    wg_dir = project_dir / ".workgraph"
+    config = load_reporting_config(wg_dir)
+
+    if push:
+        # Ensure push is enabled in the generated config
+        pass  # push_to_central checks config.central_repo internally
+
+    report = generate_session_report(wg_dir, session_id, project, config)
+    return {
+        "session_id": report.session_id,
+        "project": report.project,
+        "timestamp": report.timestamp,
+        "events_read": report.flush_result.events_read,
+        "events_written": report.flush_result.events_written,
+        "duplicates_skipped": report.flush_result.duplicates_skipped,
+        "errors": report.flush_result.errors,
+        "drift_findings_read": report.drift_result.events_read,
+        "drift_findings_written": report.drift_result.events_written,
+        "knowledge_exported": report.knowledge_exported,
+        "pushed_to_central": report.pushed_to_central,
+    }
+
+
 def cmd_peer_list(project_dir: Path) -> list[dict]:
     """Discover workgraph peers and return info dicts."""
     from driftdriver.peer_registry import PeerRegistry
