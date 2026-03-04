@@ -72,6 +72,9 @@ You are a milestone reviewer in: {project_dir}
 ## Failed/Escalated Tasks
 {problem_tasks}
 
+## Workgraph Evaluation Evidence
+{wg_eval_evidence}
+
 ## Review Protocol
 
 You must verify the milestone by TRACING EXECUTION PATHS, not by assumption.
@@ -87,6 +90,10 @@ You must verify the milestone by TRACING EXECUTION PATHS, not by assumption.
    or workgraph resolution handles it.
 4. **Test empirically**: Run dry-run or read output artifacts to verify
    claims. Check .workgraph/output/ logs and drift findings.
+5. **Incorporate wg evaluation scores**: If workgraph agency evaluation data
+   is present above, use it as supplementary evidence. These scores come from
+   wg's 6-step evaluation cascade (individual quality 70%% + org impact 30%%).
+   They are advisory — cross-reference with code evidence.
 
 ### Output
 Write your review to: .workgraph/.autopilot/milestone-review.md
@@ -109,6 +116,7 @@ class AutopilotConfig:
     drift_failure_threshold: int = 3
     dry_run: bool = False
     goal: str = ""
+    no_peer_dispatch: bool = False
 
 
 @dataclass
@@ -226,6 +234,55 @@ def build_worker_prompt(task: dict, project_dir: Path) -> str:
     )
 
 
+def get_wg_eval_scores(project_dir: Path, task_ids: set[str]) -> str:
+    """Fetch workgraph agency evaluation scores for completed tasks.
+
+    Checks .workgraph/output/{task_id} and wg show output for evaluation
+    data from wg's 6-step evaluation cascade. Returns formatted evidence
+    string or 'none' if no evaluation data exists.
+    """
+    eval_lines: list[str] = []
+
+    for tid in sorted(task_ids):
+        # Check output log for evaluation scores
+        output_dir = project_dir / ".workgraph" / "output" / tid
+        if output_dir.exists() and output_dir.is_file():
+            try:
+                content = output_dir.read_text(encoding="utf-8")
+                # Look for evaluation score patterns in output
+                for line in content.splitlines():
+                    line_lower = line.strip().lower()
+                    if any(
+                        kw in line_lower
+                        for kw in ("avg_score", "evaluation", "score:", "quality:")
+                    ):
+                        eval_lines.append(f"- {tid}: {line.strip()}")
+                        break
+            except OSError:
+                pass
+
+        # Also check wg show for evaluation log entries
+        try:
+            result = subprocess.run(
+                ["wg", "show", tid],
+                capture_output=True,
+                text=True,
+                cwd=str(project_dir),
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    line_lower = line.strip().lower()
+                    if "evaluat" in line_lower and (
+                        "score" in line_lower or "grade" in line_lower
+                    ):
+                        eval_lines.append(f"- {tid}: {line.strip()}")
+                        break
+        except OSError:
+            pass
+
+    return "\n".join(eval_lines) if eval_lines else "none (no wg agency evaluations found)"
+
+
 def build_review_prompt(run: "AutopilotRun") -> str:
     """Build the prompt for milestone review."""
     completed = "\n".join(f"- {tid}" for tid in sorted(run.completed_tasks)) or "none"
@@ -238,11 +295,14 @@ def build_review_prompt(run: "AutopilotRun") -> str:
         problems.append(f"- {tid} (escalated): {'; '.join(findings)}")
     problem_str = "\n".join(problems) or "none"
 
+    wg_eval = get_wg_eval_scores(run.config.project_dir, run.completed_tasks)
+
     return REVIEW_PROMPT_TEMPLATE.format(
         project_dir=str(run.config.project_dir),
         goal=run.config.goal,
         completed_tasks=completed,
         problem_tasks=problem_str,
+        wg_eval_evidence=wg_eval,
     )
 
 
@@ -415,14 +475,114 @@ def dispatch_task(
     return ctx
 
 
+def _init_peer_registry(project_dir: Path) -> object | None:
+    """Initialize peer registry if peers are configured."""
+    from driftdriver.peer_registry import PeerRegistry
+
+    registry = PeerRegistry(project_dir)
+    peers = registry.peers()
+    if peers:
+        return registry
+    return None
+
+
+def _run_peer_dispatch(
+    run: AutopilotRun,
+    actionable: list[dict],
+    peer_registry: object,
+) -> list[str]:
+    """Dispatch @peer:-annotated tasks to remote repos. Returns dispatched task IDs."""
+    from driftdriver.pm_coordination import plan_peer_dispatch, dispatch_to_peer
+
+    project_dir = run.config.project_dir
+    assignments = plan_peer_dispatch(peer_registry, actionable)
+    dispatched: list[str] = []
+
+    for assignment in assignments:
+        task = next((t for t in actionable if t["id"] == assignment.task_id), None)
+        if not task:
+            continue
+
+        if run.config.dry_run:
+            print(f"[dry-run] Would dispatch to peer {assignment.peer_name}: {task['id']}")
+            dispatched.append(task["id"])
+            continue
+
+        print(f"[autopilot] Dispatching to peer {assignment.peer_name}: {task['id']}")
+        remote_id = dispatch_to_peer(project_dir, assignment.peer_name, task, peer_registry)
+        if remote_id:
+            print(f"[autopilot] Peer {assignment.peer_name} accepted: {task['id']} → {remote_id}")
+            ctx = WorkerContext(
+                task_id=task["id"],
+                task_title=task.get("title", ""),
+                worker_name=f"peer-{assignment.peer_name}-{task['id']}",
+                status="completed",
+            )
+            run.workers[task["id"]] = ctx
+            run.completed_tasks.add(task["id"])
+            dispatched.append(task["id"])
+        else:
+            print(f"[autopilot] Peer dispatch failed for {task['id']}, will try locally")
+
+    return dispatched
+
+
+def _run_health_check(run: AutopilotRun) -> None:
+    """Check liveness of running workers and triage dead ones."""
+    from driftdriver.worker_monitor import detect_dead_workers, triage_dead_worker
+
+    # Build map of running workers: session_id → task_id
+    running = {}
+    for task_id, ctx in run.workers.items():
+        if ctx.status == "running" and ctx.session_id:
+            running[ctx.session_id] = task_id
+
+    if not running:
+        return
+
+    dead_sessions = detect_dead_workers(running)
+    for session_id in dead_sessions:
+        task_id = running[session_id]
+        ctx = run.workers[task_id]
+        action = triage_dead_worker(
+            {
+                "session_id": session_id,
+                "task_id": task_id,
+                "status": ctx.status,
+                "drift_fail_count": ctx.drift_fail_count,
+            },
+            strategy="conservative",
+        )
+        print(f"[autopilot] Dead worker detected: {task_id} ({session_id}) → {action.action}: {action.reason}")
+
+        if action.action == "escalate":
+            ctx.status = "escalated"
+            run.escalated_tasks.add(task_id)
+        elif action.action == "abandon":
+            ctx.status = "failed"
+            run.failed_tasks.add(task_id)
+        # "restart" is not handled here — would need session-driver restart logic
+
+
 def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
     """Main autopilot loop: dispatch → drift check → loop until done."""
     project_dir = run.config.project_dir
     scripts_dir = discover_session_driver()
     run.started_at = time.time()
 
+    # Initialize peer registry if federation is enabled
+    peer_registry = None
+    if not run.config.no_peer_dispatch:
+        peer_registry = _init_peer_registry(project_dir)
+        if peer_registry:
+            print("[autopilot] Peer federation enabled")
+
     while True:
         run.loop_count += 1
+
+        # Health check running workers before dispatching new ones
+        _run_health_check(run)
+
         ready = get_ready_tasks(project_dir)
 
         # Filter out already-processed tasks
@@ -437,8 +597,15 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
         if not actionable:
             break
 
-        # Dispatch up to max_parallel
-        batch = actionable[: run.config.max_parallel]
+        # Phase 1: Dispatch @peer:-annotated tasks to remote repos
+        peer_dispatched: set[str] = set()
+        if peer_registry:
+            dispatched_ids = _run_peer_dispatch(run, actionable, peer_registry)
+            peer_dispatched = set(dispatched_ids)
+
+        # Phase 2: Dispatch remaining tasks locally
+        local_tasks = [t for t in actionable if t["id"] not in peer_dispatched]
+        batch = local_tasks[: run.config.max_parallel]
 
         for task in batch:
             if run.config.dry_run:

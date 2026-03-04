@@ -19,6 +19,7 @@ from driftdriver.project_autopilot import (
     build_worker_prompt,
     discover_session_driver,
     generate_report,
+    get_wg_eval_scores,
     run_autopilot_loop,
     should_escalate,
 )
@@ -197,13 +198,63 @@ class TestReviewPrompt(unittest.TestCase):
         self.assertIn("none", prompt)
 
 
+class TestWgEvalScores(unittest.TestCase):
+    def test_returns_none_message_when_no_eval_data(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            (project_dir / ".workgraph" / "output").mkdir(parents=True)
+            result = get_wg_eval_scores(project_dir, {"task-1"})
+            self.assertIn("none", result)
+
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    def test_picks_up_eval_score_from_output_file(self, mock_run):
+        mock_run.return_value = type("R", (), {"returncode": 1, "stdout": ""})()
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            output_dir = project_dir / ".workgraph" / "output"
+            output_dir.mkdir(parents=True)
+            (output_dir / "task-1").write_text("avg_score: 0.85\nother stuff\n")
+            result = get_wg_eval_scores(project_dir, {"task-1"})
+            self.assertIn("task-1", result)
+            self.assertIn("avg_score", result)
+
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    def test_picks_up_eval_from_wg_show(self, mock_run):
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "Log:\n  evaluation score: 0.9 quality\n"}
+        )()
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            (project_dir / ".workgraph" / "output").mkdir(parents=True)
+            result = get_wg_eval_scores(project_dir, {"task-2"})
+            self.assertIn("task-2", result)
+            self.assertIn("evaluation score", result)
+
+    def test_review_prompt_includes_wg_eval_section(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            (project_dir / ".workgraph" / "output").mkdir(parents=True)
+            config = AutopilotConfig(project_dir=project_dir, goal="Test")
+            run = AutopilotRun(
+                config=config, started_at=100.0,
+                completed_tasks={"t1"},
+            )
+            with patch("driftdriver.project_autopilot.subprocess.run") as mock_run:
+                mock_run.return_value = type("R", (), {"returncode": 1, "stdout": ""})()
+                prompt = build_review_prompt(run)
+            self.assertIn("Workgraph Evaluation Evidence", prompt)
+            self.assertIn("Incorporate wg evaluation scores", prompt)
+
+
 class TestDryRun(unittest.TestCase):
+    @patch("driftdriver.peer_registry.subprocess.run")
     @patch("driftdriver.project_autopilot.get_ready_tasks")
-    def test_dry_run_does_not_dispatch(self, mock_ready):
+    def test_dry_run_does_not_dispatch(self, mock_ready, mock_peer_run):
         mock_ready.side_effect = [
             [{"id": "t1", "title": "Test task", "description": ""}],
             [],  # second call returns empty
         ]
+        mock_peer_run.return_value = type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})()
         config = AutopilotConfig(
             project_dir=Path("/project"),
             goal="Test",

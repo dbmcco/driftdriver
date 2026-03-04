@@ -2352,6 +2352,7 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
         worker_timeout=args.worker_timeout,
         dry_run=args.dry_run,
         goal=args.goal,
+        no_peer_dispatch=args.no_peer_dispatch,
     )
 
     # Step 1: Decompose goal into workgraph tasks (unless --skip-decompose)
