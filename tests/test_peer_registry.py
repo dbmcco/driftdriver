@@ -13,6 +13,7 @@ from driftdriver.peer_registry import (
     HealthReport,
     PeerInfo,
     PeerRegistry,
+    auto_discover_sibling_peers,
     check_peer_health,
     discover_peers,
     get_peer_detail,
@@ -175,6 +176,93 @@ class RegisterPeerTests(unittest.TestCase):
         mock_run.return_value = _make_subprocess_result(returncode=1)
         result = register_peer(Path("/tmp"), "bad", "/nonexistent")
         self.assertFalse(result)
+
+
+class AutoDiscoverSiblingPeersTests(unittest.TestCase):
+    def _make_project_tree(self, tmp: Path, names: list[str]) -> Path:
+        """Create sibling project dirs, each with .workgraph/."""
+        parent = tmp / "projects"
+        parent.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            (parent / name / ".workgraph").mkdir(parents=True, exist_ok=True)
+        return parent
+
+    @patch("driftdriver.peer_registry.register_peer")
+    @patch("driftdriver.peer_registry.discover_peers")
+    def test_discovers_siblings_with_workgraph(self, mock_discover, mock_register) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = self._make_project_tree(Path(tmp), ["alpha", "beta", "gamma"])
+            project_dir = parent / "alpha"
+            mock_discover.return_value = []  # no existing peers
+            mock_register.return_value = True
+            registered = auto_discover_sibling_peers(project_dir)
+            self.assertEqual(set(registered), {"beta", "gamma"})
+            self.assertEqual(mock_register.call_count, 2)
+
+    @patch("driftdriver.peer_registry.register_peer")
+    @patch("driftdriver.peer_registry.discover_peers")
+    def test_skips_self(self, mock_discover, mock_register) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = self._make_project_tree(Path(tmp), ["me", "other"])
+            project_dir = parent / "me"
+            mock_discover.return_value = []
+            mock_register.return_value = True
+            registered = auto_discover_sibling_peers(project_dir)
+            self.assertNotIn("me", registered)
+            self.assertIn("other", registered)
+
+    @patch("driftdriver.peer_registry.register_peer")
+    @patch("driftdriver.peer_registry.discover_peers")
+    def test_skips_already_registered(self, mock_discover, mock_register) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = self._make_project_tree(Path(tmp), ["alpha", "beta", "gamma"])
+            project_dir = parent / "alpha"
+            mock_discover.return_value = [PeerInfo(name="beta", path=str(parent / "beta"))]
+            mock_register.return_value = True
+            registered = auto_discover_sibling_peers(project_dir)
+            self.assertEqual(registered, ["gamma"])
+            self.assertEqual(mock_register.call_count, 1)
+
+    @patch("driftdriver.peer_registry.register_peer")
+    @patch("driftdriver.peer_registry.discover_peers")
+    def test_skips_dirs_without_workgraph(self, mock_discover, mock_register) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "projects"
+            parent.mkdir()
+            (parent / "has_wg" / ".workgraph").mkdir(parents=True)
+            (parent / "no_wg").mkdir()  # no .workgraph
+            project_dir = parent / "has_wg"
+            mock_discover.return_value = []
+            registered = auto_discover_sibling_peers(project_dir)
+            self.assertEqual(registered, [])
+
+    @patch("driftdriver.peer_registry.register_peer")
+    @patch("driftdriver.peer_registry.discover_peers")
+    def test_handles_register_failure_gracefully(self, mock_discover, mock_register) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = self._make_project_tree(Path(tmp), ["alpha", "beta"])
+            project_dir = parent / "alpha"
+            mock_discover.return_value = []
+            mock_register.return_value = False  # registration fails
+            registered = auto_discover_sibling_peers(project_dir)
+            self.assertEqual(registered, [])  # nothing registered successfully
+
+    @patch("driftdriver.peer_registry.register_peer")
+    @patch("driftdriver.peer_registry.discover_peers")
+    def test_empty_parent_returns_empty(self, mock_discover, mock_register) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            project_dir = Path(tmp) / "solo"
+            project_dir.mkdir()
+            (project_dir / ".workgraph").mkdir()
+            mock_discover.return_value = []
+            registered = auto_discover_sibling_peers(project_dir)
+            self.assertEqual(registered, [])
 
 
 if __name__ == "__main__":

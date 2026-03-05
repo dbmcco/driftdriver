@@ -456,6 +456,100 @@ class TestIngestDriftOutputs(unittest.TestCase):
             self.assertEqual(r2.events_written, 0)
 
 
+def _create_chat_files(wg_dir: Path, inbox: list[dict], outbox: list[dict]) -> None:
+    """Create .workgraph/chat/ inbox.jsonl and outbox.jsonl."""
+    chat_dir = wg_dir / "chat"
+    chat_dir.mkdir(parents=True, exist_ok=True)
+    if inbox:
+        with open(chat_dir / "inbox.jsonl", "w") as f:
+            for msg in inbox:
+                f.write(json.dumps(msg) + "\n")
+    if outbox:
+        with open(chat_dir / "outbox.jsonl", "w") as f:
+            for msg in outbox:
+                f.write(json.dumps(msg) + "\n")
+
+
+class TestIngestChatHistory(unittest.TestCase):
+    def test_ingest_chat_history_captures_messages(self) -> None:
+        """Chat inbox and outbox messages are written to DB as chat_message events."""
+        from driftdriver.reporting import ingest_chat_history
+
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td)
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            _create_chat_files(wg_dir, inbox=[
+                {"id": 1, "timestamp": "2025-01-01T10:00:00Z", "role": "user", "content": "Decompose auth module", "request_id": "r1"},
+            ], outbox=[
+                {"id": 1, "timestamp": "2025-01-01T10:00:05Z", "role": "coordinator", "content": "Created 3 tasks for auth module", "request_id": "r1"},
+            ])
+
+            result = ingest_chat_history(wg_dir, "sess-chat", "myproject", db_path)
+            self.assertEqual(result.events_read, 2)
+            self.assertEqual(result.events_written, 2)
+
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute("SELECT event_type, payload FROM session_events ORDER BY timestamp").fetchall()
+            conn.close()
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(all(r[0] == "chat_message" for r in rows))
+            p0 = json.loads(rows[0][1])
+            self.assertEqual(p0["role"], "user")
+            self.assertIn("auth module", p0["content"])
+
+    def test_ingest_chat_history_no_chat_dir(self) -> None:
+        """Missing chat directory → graceful no-op."""
+        from driftdriver.reporting import ingest_chat_history
+
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td)
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            result = ingest_chat_history(wg_dir, "sess-nochat", "myproject", db_path)
+            self.assertEqual(result.events_read, 0)
+            self.assertEqual(result.events_written, 0)
+
+    def test_ingest_chat_history_deduplicates(self) -> None:
+        """Same chat ingested twice → no duplicate rows."""
+        from driftdriver.reporting import ingest_chat_history
+
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td)
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            _create_chat_files(wg_dir, inbox=[
+                {"id": 1, "timestamp": "2025-01-01T10:00:00Z", "role": "user", "content": "Plan the sprint", "request_id": "r2"},
+            ], outbox=[])
+
+            r1 = ingest_chat_history(wg_dir, "sess-dedup", "myproject", db_path)
+            r2 = ingest_chat_history(wg_dir, "sess-dedup", "myproject", db_path)
+            self.assertEqual(r1.events_written, 1)
+            self.assertEqual(r2.duplicates_skipped, 1)
+            self.assertEqual(r2.events_written, 0)
+
+    def test_ingest_chat_history_empty_files(self) -> None:
+        """Empty JSONL files → zero events, no errors."""
+        from driftdriver.reporting import ingest_chat_history
+
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td)
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            chat_dir = wg_dir / "chat"
+            chat_dir.mkdir(parents=True)
+            (chat_dir / "inbox.jsonl").write_text("")
+            (chat_dir / "outbox.jsonl").write_text("")
+
+            result = ingest_chat_history(wg_dir, "sess-empty", "myproject", db_path)
+            self.assertEqual(result.events_read, 0)
+            self.assertEqual(result.events_written, 0)
+
+
 class TestFormatReportMarkdown(unittest.TestCase):
     def test_format_report_markdown(self) -> None:
         """Verifies output shape: header, sections, stats."""

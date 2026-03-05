@@ -136,6 +136,8 @@ def cmd_report(project_dir: Path, session_id: str, project: str, flush: bool = F
         "errors": report.flush_result.errors,
         "drift_findings_read": report.drift_result.events_read,
         "drift_findings_written": report.drift_result.events_written,
+        "chat_messages_read": report.chat_result.events_read,
+        "chat_messages_written": report.chat_result.events_written,
         "knowledge_exported": report.knowledge_exported,
         "pushed_to_central": report.pushed_to_central,
     }

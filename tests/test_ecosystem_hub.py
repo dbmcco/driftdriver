@@ -172,6 +172,41 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertIsInstance(snap.task_graph_edges, list)
             self.assertIn("repo:", snap.narrative)
 
+    def test_collect_repo_snapshot_marks_stalled_when_open_without_in_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            _write_graph(
+                repo,
+                [
+                    {"id": "d0", "title": "done", "status": "done"},
+                    {"id": "o1", "title": "open", "status": "open", "after": ["d0"]},
+                    {"id": "o2", "title": "blocked", "status": "open", "after": ["missing-task"]},
+                ],
+            )
+            snap = collect_repo_snapshot("repo", repo)
+            self.assertEqual(snap.activity_state, "stalled")
+            self.assertTrue(snap.stalled)
+            self.assertGreater(len(snap.stall_reasons), 0)
+            self.assertIn("stalled", snap.narrative)
+
+    def test_collect_repo_snapshot_marks_idle_when_only_done_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            _write_graph(
+                repo,
+                [
+                    {"id": "d0", "title": "done", "status": "done"},
+                    {"id": "d1", "title": "done2", "status": "done"},
+                ],
+            )
+            snap = collect_repo_snapshot("repo", repo)
+            self.assertEqual(snap.activity_state, "idle")
+            self.assertFalse(snap.stalled)
+
     def test_collect_repo_snapshot_flags_aging_and_dependency_gaps(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -456,6 +491,7 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("Narrated Overview", html)
         self.assertIn("Action Center", html)
         self.assertIn("Dependency Graph", html)
+        self.assertIn("Stalled Repos", html)
         self.assertIn("graph-zoom-in", html)
         self.assertIn("graph-mode", html)
         self.assertIn("all repos", html)

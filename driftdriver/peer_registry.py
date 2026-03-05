@@ -190,7 +190,7 @@ def get_peer_socket(project_dir: Path, name: str) -> str | None:
 
 def register_peer(project_dir: Path, name: str, path: str, desc: str = "") -> bool:
     """Register a new peer via `wg peer add`."""
-    cmd = ["wg", "peer", "add", name, "--path", path]
+    cmd = ["wg", "peer", "add", name, path]
     if desc:
         cmd.extend(["--description", desc])
     result = subprocess.run(
@@ -200,3 +200,35 @@ def register_peer(project_dir: Path, name: str, path: str, desc: str = "") -> bo
         cwd=str(project_dir),
     )
     return result.returncode == 0
+
+
+def auto_discover_sibling_peers(project_dir: Path) -> list[str]:
+    """Scan sibling directories for .workgraph/ and register as peers.
+
+    Returns list of newly registered peer names.
+    """
+    parent = project_dir.resolve().parent
+    if not parent.is_dir():
+        return []
+
+    # Get existing peers to avoid re-registering.
+    existing = {p.name for p in discover_peers(project_dir)}
+
+    self_name = project_dir.resolve().name
+    registered: list[str] = []
+
+    for sibling in sorted(parent.iterdir()):
+        if not sibling.is_dir():
+            continue
+        if sibling.resolve().name == self_name:
+            continue
+        if not (sibling / ".workgraph").is_dir():
+            continue
+        name = sibling.name
+        if name in existing:
+            continue
+        ok = register_peer(project_dir, name, str(sibling.resolve()))
+        if ok:
+            registered.append(name)
+
+    return registered

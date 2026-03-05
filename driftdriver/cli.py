@@ -76,6 +76,13 @@ from driftdriver.updates import (
     render_review_markdown,
     summarize_updates,
 )
+from driftdriver.factorydrift import (
+    build_factory_cycle,
+    emit_factory_followups,
+    execute_factory_cycle,
+    summarize_factory_cycle,
+    write_factory_ledger,
+)
 from driftdriver import wire
 from driftdriver.project_profiles import build_profile, format_profile_report
 from driftdriver.pm_coordination import get_ready_tasks
@@ -1406,6 +1413,15 @@ def cmd_install(args: argparse.Namespace) -> int:
     )
     wrote_policy = ensure_drift_policy(wg_dir)
 
+    # Auto-register sibling repos as workgraph peers (best-effort).
+    auto_registered_peers: list[str] = []
+    try:
+        from driftdriver.peer_registry import auto_discover_sibling_peers
+
+        auto_registered_peers = auto_discover_sibling_peers(project_dir)
+    except Exception:
+        pass  # Never fail install due to peer discovery.
+
     ensured_contracts = False
     if not args.no_ensure_contracts:
         # Delegate to coredrift, since it owns the wg-contract format and defaults.
@@ -1469,6 +1485,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         if enabled:
             msg += f" (with {', '.join(enabled)})"
         print(msg)
+        if auto_registered_peers:
+            print(f"Auto-registered peers: {', '.join(auto_registered_peers)}")
 
     return ExitCode.ok
 
@@ -1965,6 +1983,206 @@ def cmd_run(args: argparse.Namespace) -> int:
     return int(rc)
 
 
+def cmd_factory(args: argparse.Namespace) -> int:
+    from driftdriver.ecosystem_hub import collect_ecosystem_snapshot, resolve_central_repo_path
+
+    if bool(getattr(args, "plan_only", False)) and bool(getattr(args, "execute", False)):
+        print("error: --plan-only and --execute are mutually exclusive", file=sys.stderr)
+        return ExitCode.usage
+
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    project_dir = wg_dir.parent.resolve()
+    policy = load_drift_policy(wg_dir)
+    factory_cfg = getattr(policy, "factory", {})
+    if not isinstance(factory_cfg, dict):
+        factory_cfg = {}
+
+    policy_enabled = bool(factory_cfg.get("enabled", False))
+    if not policy_enabled and not bool(getattr(args, "force", False)):
+        print(
+            "Factory loop is disabled in drift-policy.toml ([factory].enabled = false). "
+            "Use --force to generate an on-demand cycle anyway."
+        )
+        return ExitCode.ok
+
+    workspace_root = (
+        Path(str(args.workspace_root)).expanduser().resolve()
+        if getattr(args, "workspace_root", "")
+        else project_dir.parent
+    )
+    ecosystem_toml = (
+        Path(str(args.ecosystem_toml)).expanduser().resolve()
+        if getattr(args, "ecosystem_toml", "")
+        else None
+    )
+    central_repo = resolve_central_repo_path(project_dir, explicit_path=str(getattr(args, "central_repo", "") or ""))
+    include_updates = not bool(getattr(args, "skip_updates", False))
+    max_next = max(1, int(getattr(args, "max_next", 5)))
+
+    plan_only_override: bool | None = None
+    if bool(getattr(args, "plan_only", False)):
+        plan_only_override = True
+    elif bool(getattr(args, "execute", False)):
+        plan_only_override = False
+
+    snapshot = collect_ecosystem_snapshot(
+        project_dir=project_dir,
+        workspace_root=workspace_root,
+        ecosystem_toml=ecosystem_toml,
+        include_updates=include_updates,
+        max_next=max_next,
+        central_repo=central_repo,
+    )
+    cycle = build_factory_cycle(
+        snapshot=snapshot,
+        policy=policy,
+        project_name=project_dir.name,
+        plan_only_override=plan_only_override,
+    )
+    execution_mode = str(cycle.get("execution_mode") or "plan_only")
+
+    emit_followups = bool(factory_cfg.get("emit_followups", False))
+    if bool(getattr(args, "emit_followups", False)):
+        emit_followups = True
+    followups: dict[str, Any] = {
+        "enabled": bool(emit_followups),
+        "attempted": 0,
+        "created": 0,
+        "existing": 0,
+        "skipped": 0,
+        "errors": [],
+        "tasks": [],
+    }
+    execution: dict[str, Any] = {
+        "attempted": 0,
+        "executed": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "skipped": 0,
+        "hard_stop": bool(factory_cfg.get("hard_stop_on_failed_verification", True)),
+        "stopped_early": False,
+        "stop_reason": "",
+        "attempts": [],
+        "followups": followups,
+    }
+
+    if execution_mode != "plan_only":
+        execution = execute_factory_cycle(
+            cycle=cycle,
+            snapshot=snapshot,
+            policy=policy,
+            project_dir=project_dir,
+            emit_followups=emit_followups,
+            max_followups_per_repo=max(1, int(factory_cfg.get("max_followups_per_repo", 2))),
+            allow_execute_draft_prs=bool(getattr(args, "execute_draft_prs", False)),
+        )
+        followups = execution.get("followups") if isinstance(execution.get("followups"), dict) else followups
+    elif emit_followups:
+        followups = emit_factory_followups(
+            cycle=cycle,
+            snapshot=snapshot,
+            max_followups_per_repo=max(1, int(factory_cfg.get("max_followups_per_repo", 2))),
+        )
+        execution["followups"] = followups
+
+    summary = summarize_factory_cycle(cycle)
+
+    ledger = {
+        "written": False,
+        "local_latest": "",
+        "local_history": "",
+        "central_latest": "",
+        "central_history": "",
+        "central_written": False,
+    }
+    if not bool(getattr(args, "no_write_ledger", False)):
+        ledger = write_factory_ledger(
+            project_dir=project_dir,
+            cycle=cycle,
+            central_repo=central_repo,
+            write_decision_ledger=bool(factory_cfg.get("write_decision_ledger", True)),
+        )
+        ledger["written"] = True
+
+    payload = {
+        "policy_factory_enabled": policy_enabled,
+        "forced": bool(getattr(args, "force", False)),
+        "summary": summary,
+        "cycle": cycle,
+        "execution": execution,
+        "followups": followups,
+        "ledger": ledger,
+    }
+
+    write_path = str(getattr(args, "write", "") or "").strip()
+    if write_path:
+        out = Path(write_path).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(payload, indent=2, sort_keys=False))
+        return ExitCode.ok
+
+    print(f"Factory cycle: {summary['cycle_id']}")
+    print(f"Execution mode: {summary['execution_mode']}")
+    print(f"Execution status: {summary['execution_status']}")
+    print(f"Selected repos: {summary['selected_repos']}")
+    print(f"Planned actions: {summary['planned_actions']}")
+    if summary["execution_mode"] != "plan_only":
+        print(
+            "Executed actions: "
+            f"{summary.get('executed_actions', 0)} "
+            f"(failed={summary.get('failed_actions', 0)})"
+        )
+    if summary.get("next_cycle_hints"):
+        print("Hints:")
+        for hint in list(summary.get("next_cycle_hints") or [])[:4]:
+            print(f"- {hint}")
+
+    if ledger.get("written"):
+        print("Decision ledger:")
+        local_latest = str(ledger.get("local_latest") or "")
+        local_history = str(ledger.get("local_history") or "")
+        if local_latest:
+            print(f"- local latest: {local_latest}")
+        if local_history:
+            print(f"- local history: {local_history}")
+        if bool(ledger.get("central_written")):
+            print(f"- central latest: {ledger.get('central_latest')}")
+            print(f"- central history: {ledger.get('central_history')}")
+
+    if emit_followups:
+        print("Corrective follow-up tasks:")
+        print(
+            f"- attempted={followups.get('attempted', 0)} "
+            f"created={followups.get('created', 0)} "
+            f"existing={followups.get('existing', 0)} "
+            f"skipped={followups.get('skipped', 0)}"
+        )
+        errors = followups.get("errors") if isinstance(followups.get("errors"), list) else []
+        if errors:
+            print("- errors:")
+            for msg in errors[:4]:
+                print(f"  - {msg}")
+
+    actions = cycle.get("action_plan")
+    max_prompts = max(1, int(getattr(args, "max_prompts", 8)))
+    if isinstance(actions, list) and actions:
+        print("Action prompts:")
+        for row in actions[:max_prompts]:
+            if not isinstance(row, dict):
+                continue
+            repo = str(row.get("repo") or "")
+            module = str(row.get("module") or "")
+            prompt = str(row.get("prompt") or "")
+            print(f"- [{repo}:{module}] {prompt}")
+    else:
+        print("Action prompts: none")
+
+    return ExitCode.ok
+
+
 def cmd_orchestrate(args: argparse.Namespace) -> int:
     """
     Run drift "pit wall" loops.
@@ -2099,6 +2317,8 @@ def cmd_report_cli(args: argparse.Namespace) -> int:
         print(f"Events: {result['events_read']} read, {result['events_written']} written, {result['duplicates_skipped']} dupes")
         if result.get('drift_findings_read'):
             print(f"Drift findings: {result['drift_findings_read']} read, {result['drift_findings_written']} written")
+        if result.get('chat_messages_read'):
+            print(f"Chat history: {result['chat_messages_read']} read, {result['chat_messages_written']} written")
         if result['knowledge_exported']:
             print(f"Knowledge: {result['knowledge_exported']} entries exported")
         if result['pushed_to_central']:
@@ -2268,6 +2488,35 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-next", type=int, default=3, help="Max queued next actions to print (default: 3)")
     run.add_argument("--json", action="store_true", help="JSON output")
     run.set_defaults(func=cmd_run)
+
+    factory = sub.add_parser("factory", help="Generate one autonomous factory cycle plan + decision ledger")
+    factory.add_argument(
+        "--workspace-root",
+        default="",
+        help="Workspace root containing ecosystem repos (default: parent of project dir)",
+    )
+    factory.add_argument(
+        "--ecosystem-toml",
+        default="",
+        help="Path to ecosystem.toml (default: <workspace-root>/speedrift-ecosystem/ecosystem.toml)",
+    )
+    factory.add_argument(
+        "--central-repo",
+        default="",
+        help="Override central register repo path (default: policy reporting.central_repo)",
+    )
+    factory.add_argument("--skip-updates", action="store_true", help="Skip remote update checks for this cycle")
+    factory.add_argument("--max-next", type=int, default=5, help="Max next-work items per repo for snapshot context")
+    factory.add_argument("--plan-only", action="store_true", help="Force plan-only mode for this cycle")
+    factory.add_argument("--execute", action="store_true", help="Request execute mode in cycle metadata")
+    factory.add_argument("--force", action="store_true", help="Run even when [factory].enabled is false")
+    factory.add_argument("--emit-followups", action="store_true", help="Create/update local corrective workgraph tasks")
+    factory.add_argument("--execute-draft-prs", action="store_true", help="Allow factory executor to open upstream draft PRs")
+    factory.add_argument("--no-write-ledger", action="store_true", help="Do not write local/central decision ledger")
+    factory.add_argument("--write", default="", help="Write JSON payload to this path")
+    factory.add_argument("--max-prompts", type=int, default=8, help="Max prompts to print in text mode")
+    factory.add_argument("--json", action="store_true", help="JSON output")
+    factory.set_defaults(func=cmd_factory)
 
     orch = sub.add_parser("orchestrate", help="Run continuous drift monitor+redirect loops (delegates to coredrift)")
     orch.add_argument("--interval", type=int, default=30, help="Monitor poll interval seconds (default: 30)")

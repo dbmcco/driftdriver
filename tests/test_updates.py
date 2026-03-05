@@ -15,6 +15,9 @@ from driftdriver.updates import (
     fetch_report_content,
     load_review_config,
     load_update_state,
+    mark_finding_referenced,
+    score_all_findings,
+    score_finding,
     summarize_updates,
 )
 
@@ -260,6 +263,68 @@ class UpdateChecksTests(unittest.TestCase):
             self.assertEqual(cfg["github_users"], ["jesse", "2389"])
             self.assertEqual(cfg["reports"][0]["name"], "bibez")
             self.assertEqual(cfg["user_repo_limit"], 25)
+
+
+class TestFindingDecay(unittest.TestCase):
+    def test_fresh_finding_gets_newness_boost(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
+        entry = {"seen_at": "2026-03-01T10:00:00+00:00"}
+        score = score_finding(entry, now=now)
+        self.assertGreater(score, 1.0)
+        self.assertAlmostEqual(score, 1.3, places=1)
+
+    def test_old_unreferenced_finding_decays(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
+        entry = {
+            "seen_at": "2026-01-01T00:00:00+00:00",
+            "first_seen_at": "2026-01-01T00:00:00+00:00",
+        }
+        score = score_finding(entry, now=now)
+        self.assertLess(score, 0.1)
+
+    def test_recently_referenced_stays_high(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
+        entry = {
+            "seen_at": "2026-01-01T00:00:00+00:00",
+            "first_seen_at": "2026-01-01T00:00:00+00:00",
+            "last_referenced_at": "2026-02-28T00:00:00+00:00",
+        }
+        score = score_finding(entry, now=now)
+        self.assertGreater(score, 0.9)
+
+    def test_mark_referenced_updates_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            check_ecosystem_updates(
+                wg_dir=wg_dir,
+                interval_seconds=0,
+                repos={"coredrift": "dbmcco/coredrift"},
+                fetcher=lambda _repo: ("abc123", "2026-02-18T00:00:00Z"),
+            )
+            mark_finding_referenced(wg_dir, "repos", "coredrift")
+            state = load_update_state(wg_dir)
+            self.assertIn("last_referenced_at", state["repos"]["coredrift"])
+
+    def test_score_all_returns_sorted_by_importance(self):
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            check_ecosystem_updates(
+                wg_dir=wg_dir,
+                interval_seconds=0,
+                repos={
+                    "coredrift": "dbmcco/coredrift",
+                    "specdrift": "dbmcco/specdrift",
+                },
+                fetcher=lambda _repo: ("abc123", "2026-02-18T00:00:00Z"),
+            )
+            scored = score_all_findings(wg_dir)
+            self.assertEqual(len(scored), 2)
+            self.assertGreaterEqual(scored[0]["importance"], scored[1]["importance"])
 
 
 def test_parse_iso_none():

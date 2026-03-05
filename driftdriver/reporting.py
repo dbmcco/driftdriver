@@ -36,6 +36,7 @@ class SessionReport:
     timestamp: str
     flush_result: FlushResult
     drift_result: FlushResult = field(default_factory=FlushResult)
+    chat_result: FlushResult = field(default_factory=FlushResult)
     knowledge_exported: int = 0
     pushed_to_central: bool = False
 
@@ -225,6 +226,57 @@ def ingest_drift_outputs(wg_dir: Path, session_id: str, project: str, db_path: P
     return result
 
 
+def ingest_chat_history(wg_dir: Path, session_id: str, project: str, db_path: Path) -> FlushResult:
+    """Read .workgraph/chat/ inbox + outbox and write messages as chat_message events to DB."""
+    chat_dir = wg_dir / "chat"
+    result = FlushResult()
+
+    if not chat_dir.is_dir():
+        return result
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for filename in ("inbox.jsonl", "outbox.jsonl"):
+        path = chat_dir / filename
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                result.errors += 1
+                continue
+
+            result.events_read += 1
+            event = {
+                "tool": "chat_message",
+                "ts": msg.get("timestamp", ""),
+                "args": {
+                    "event_type": "chat_message",
+                    "payload": {
+                        "role": msg.get("role", "unknown"),
+                        "content": msg.get("content", ""),
+                        "request_id": msg.get("request_id", ""),
+                        "chat_id": msg.get("id", 0),
+                        "source": filename,
+                    },
+                },
+            }
+            try:
+                inserted = _write_event_to_db(db_path, session_id, project, event)
+                if inserted:
+                    result.events_written += 1
+                else:
+                    result.duplicates_skipped += 1
+            except Exception:
+                result.errors += 1
+
+    return result
+
+
 def export_knowledge(db_path: Path, project: str, wg_dir: Path) -> int:
     """Read knowledge_entries from lessons.db, write as knowledge.jsonl in KnowledgeFact format."""
     if not db_path.exists():
@@ -307,7 +359,10 @@ def generate_session_report(
     # Step 2: Ingest drift outputs
     drift_result = ingest_drift_outputs(wg_dir, session_id, project, db_path)
 
-    # Step 3: Export knowledge from DB to knowledge.jsonl
+    # Step 3: Ingest coordinator chat history
+    chat_result = ingest_chat_history(wg_dir, session_id, project, db_path)
+
+    # Step 4: Export knowledge from DB to knowledge.jsonl
     knowledge_exported = 0
     if config.include_knowledge:
         knowledge_exported = export_knowledge(db_path, project, wg_dir)
@@ -318,11 +373,12 @@ def generate_session_report(
         timestamp=now_iso,
         flush_result=flush_result,
         drift_result=drift_result,
+        chat_result=chat_result,
         knowledge_exported=knowledge_exported,
         pushed_to_central=False,
     )
 
-    # Step 3: Push to central if configured
+    # Step 5: Push to central if configured
     if config.central_repo:
         pushed = push_to_central(report, wg_dir, config)
         report.pushed_to_central = pushed
@@ -350,6 +406,12 @@ def format_report_markdown(report: SessionReport) -> str:
         f"- Drift findings read: {report.drift_result.events_read}",
         f"- Drift findings written: {report.drift_result.events_written}",
         f"- Drift duplicates skipped: {report.drift_result.duplicates_skipped}",
+        "",
+        "## Chat History Ingestion",
+        "",
+        f"- Chat messages read: {report.chat_result.events_read}",
+        f"- Chat messages written: {report.chat_result.events_written}",
+        f"- Chat duplicates skipped: {report.chat_result.duplicates_skipped}",
         "",
         "## Knowledge Export",
         "",

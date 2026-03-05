@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,6 +98,94 @@ def save_update_state(wg_dir: Path, state: dict[str, Any]) -> None:
     path = _state_path(wg_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+_DECAY_RATE = 0.95
+_NEWNESS_WINDOW_DAYS = 7
+_NEWNESS_BOOST = 1.3
+
+
+def score_finding(
+    entry: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> float:
+    """Compute activity-weighted importance for an ecosystem finding.
+
+    Uses MIRA-style decay: score = base * decay^(days_since_last_reference) * newness_boost
+    """
+    if now is None:
+        now = _now_utc()
+
+    last_ref = _parse_iso(
+        str(entry.get("last_referenced_at") or entry.get("seen_at") or "")
+    )
+    if last_ref:
+        days_since_ref = max(0, (now - last_ref).days)
+    else:
+        days_since_ref = 0
+
+    decay = _DECAY_RATE ** days_since_ref
+
+    first_seen = _parse_iso(
+        str(entry.get("first_seen_at") or entry.get("seen_at") or "")
+    )
+    if first_seen:
+        age_days = max(0, (now - first_seen).days)
+    else:
+        age_days = 0
+
+    newness = _NEWNESS_BOOST if age_days < _NEWNESS_WINDOW_DAYS else 1.0
+
+    return round(decay * newness, 4)
+
+
+def mark_finding_referenced(
+    wg_dir: Path,
+    source_type: str,
+    key: str,
+) -> None:
+    """Mark an ecosystem finding as referenced (resets decay timer).
+
+    source_type: 'repos', 'users', or 'reports'
+    key: the tool name, user name, or report URL
+    """
+    state = load_update_state(wg_dir)
+    bucket = state.get(source_type)
+    if not isinstance(bucket, dict):
+        return
+    entry = bucket.get(key)
+    if not isinstance(entry, dict):
+        return
+    entry["last_referenced_at"] = _iso(_now_utc())
+    if "first_seen_at" not in entry:
+        entry["first_seen_at"] = entry.get("seen_at", _iso(_now_utc()))
+    save_update_state(wg_dir, state)
+
+
+def score_all_findings(wg_dir: Path) -> list[dict[str, Any]]:
+    """Score all ecosystem state entries and return sorted by importance."""
+    state = load_update_state(wg_dir)
+    now = _now_utc()
+    scored: list[dict[str, Any]] = []
+
+    for source_type in ("repos", "users", "reports"):
+        bucket = state.get(source_type)
+        if not isinstance(bucket, dict):
+            continue
+        for key, entry in bucket.items():
+            if not isinstance(entry, dict):
+                continue
+            importance = score_finding(entry, now=now)
+            scored.append({
+                "source_type": source_type,
+                "key": key,
+                "importance": importance,
+                "entry": entry,
+            })
+
+    scored.sort(key=lambda x: x["importance"], reverse=True)
+    return scored
 
 
 def _github_headers() -> dict[str, str]:

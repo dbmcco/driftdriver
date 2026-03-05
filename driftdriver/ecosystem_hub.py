@@ -26,6 +26,13 @@ from driftdriver.updates import (
     load_review_config,
     summarize_updates,
 )
+from driftdriver.factorydrift import (
+    build_factory_cycle,
+    emit_factory_followups,
+    execute_factory_cycle,
+    summarize_factory_cycle,
+    write_factory_ledger,
+)
 from driftdriver.policy import load_drift_policy
 from driftdriver.workgraph import load_workgraph
 
@@ -124,15 +131,40 @@ def _run(
     cwd: Path | None = None,
     timeout: float = 8.0,
 ) -> tuple[int, str, str]:
-    try:
-        proc = subprocess.run(
-            cmd,
+    def _invoke(actual_cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            actual_cmd,
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
             timeout=timeout,
         )
+
+    try:
+        proc = _invoke(cmd)
     except FileNotFoundError as exc:
+        if cmd and str(cmd[0]) == "wg":
+            candidates = [
+                str(Path.home() / ".cargo" / "bin" / "wg"),
+                "/opt/homebrew/bin/wg",
+                "/usr/local/bin/wg",
+            ]
+            users_root = Path("/Users")
+            if users_root.exists():
+                for discovered in users_root.glob("*/.cargo/bin/wg"):
+                    candidates.append(str(discovered))
+            seen: set[str] = set()
+            for candidate in candidates:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                if not Path(candidate).exists():
+                    continue
+                try:
+                    proc = _invoke([candidate, *cmd[1:]])
+                    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+                except FileNotFoundError:
+                    continue
         return 127, "", str(exc)
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
@@ -347,6 +379,9 @@ class RepoSnapshot:
     cross_repo_dependencies: list[dict[str, Any]] = field(default_factory=list)
     task_graph_nodes: list[dict[str, Any]] = field(default_factory=list)
     task_graph_edges: list[dict[str, Any]] = field(default_factory=list)
+    activity_state: str = "unknown"
+    stalled: bool = False
+    stall_reasons: list[str] = field(default_factory=list)
     narrative: str = ""
 
     def top_next_work(self, limit: int = 3) -> list[NextWorkItem]:
@@ -830,6 +865,12 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
         parts.append(f"{ready} ready to start")
     if open_count > 0 and in_progress == 0:
         parts.append(f"{open_count} open without active execution")
+    if snap.stalled and snap.stall_reasons:
+        parts.append(f"stalled: {snap.stall_reasons[0]}")
+    if snap.activity_state == "idle":
+        parts.append("no open tasks currently tracked")
+    if snap.activity_state == "untracked":
+        parts.append("workgraph graph not found")
     if snap.blocked_open > 0:
         parts.append(f"{snap.blocked_open} open tasks blocked by dependencies")
     if snap.missing_dependencies > 0:
@@ -847,6 +888,51 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
     if not parts:
         return f"{snap.name}: healthy, no immediate blockers."
     return f"{snap.name}: " + "; ".join(parts[:6]) + "."
+
+
+def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
+    if not snap.exists:
+        return "missing", ["repo missing from workspace"]
+    if snap.errors:
+        reason = ", ".join(snap.errors[:2])
+        return "error", [f"errors present ({reason})"]
+    if not snap.workgraph_exists:
+        return "untracked", ["no .workgraph/graph.jsonl detected"]
+
+    in_progress = len(snap.in_progress)
+    ready = len(snap.ready)
+    open_count = int(snap.task_counts.get("open", 0)) + int(snap.task_counts.get("ready", 0))
+
+    if in_progress > 0:
+        return "active", []
+    if open_count <= 0:
+        return "idle", ["no open or ready tasks in graph"]
+
+    reasons: list[str] = [f"{open_count} open/ready tasks but none in-progress"]
+    if ready > 0:
+        reasons.append(f"{ready} ready tasks not started")
+    if snap.blocked_open >= open_count and open_count > 0:
+        reasons.append("all open tasks are dependency blocked")
+    elif snap.blocked_open > 0:
+        reasons.append(f"{snap.blocked_open} open tasks are dependency blocked")
+    if snap.missing_dependencies > 0:
+        reasons.append(f"{snap.missing_dependencies} missing dependency references")
+    if snap.workgraph_exists and not snap.service_running:
+        reasons.append("workgraph service not running")
+    if snap.stale_open:
+        reasons.append(f"{len(snap.stale_open)} open tasks are aging")
+    if len(reasons) == 1:
+        reasons.append("no active executor currently claiming work")
+    return "stalled", reasons[:6]
+
+
+def _finalize_repo_snapshot(snap: RepoSnapshot) -> RepoSnapshot:
+    activity_state, stall_reasons = _derive_repo_activity_state(snap)
+    snap.activity_state = activity_state
+    snap.stalled = activity_state == "stalled"
+    snap.stall_reasons = stall_reasons[:6]
+    snap.narrative = _build_repo_narrative(snap)
+    return snap
 
 
 def _build_repo_task_graph(tasks: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -937,12 +1023,10 @@ def collect_repo_snapshot(
     snap = RepoSnapshot(name=repo_name, path=str(repo_path), exists=repo_path.exists())
     if not snap.exists:
         snap.errors.append("repo_missing")
-        snap.narrative = _build_repo_narrative(snap)
-        return snap
+        return _finalize_repo_snapshot(snap)
     if not (repo_path / ".git").exists():
         snap.errors.append("not_a_git_repo")
-        snap.narrative = _build_repo_narrative(snap)
-        return snap
+        return _finalize_repo_snapshot(snap)
 
     rc, branch, err = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path)
     if rc != 0:
@@ -969,8 +1053,7 @@ def collect_repo_snapshot(
 
     wg_dir = repo_path / ".workgraph"
     if not (wg_dir / "graph.jsonl").exists():
-        snap.narrative = _build_repo_narrative(snap)
-        return snap
+        return _finalize_repo_snapshot(snap)
 
     snap.workgraph_exists = True
 
@@ -1087,8 +1170,7 @@ def collect_repo_snapshot(
         known_repo_names=known_repo_names or set(),
         policy_order=policy_order,
     )
-    snap.narrative = _build_repo_narrative(snap)
-    return snap
+    return _finalize_repo_snapshot(snap)
 
 
 def rank_next_work(repos: list[RepoSnapshot], *, limit: int = 20) -> list[dict[str, Any]]:
@@ -1233,6 +1315,10 @@ def _repo_attention_entry(repo: RepoSnapshot) -> dict[str, Any] | None:
     if repo.workgraph_exists and not repo.service_running:
         score += 10
         reasons.append("workgraph service stopped")
+    if repo.stalled:
+        score += 12
+        top_reason = repo.stall_reasons[0] if repo.stall_reasons else "no active execution"
+        reasons.append(f"stalled: {top_reason}")
     if repo.missing_dependencies > 0:
         score += min(20, repo.missing_dependencies * 4)
         reasons.append(f"missing dependencies: {repo.missing_dependencies}")
@@ -1278,6 +1364,9 @@ def build_ecosystem_overview(
     missing_dependencies = 0
     repos_with_errors = 0
     repos_with_inactive_service = 0
+    repos_stalled = 0
+    repos_idle = 0
+    repos_untracked = 0
     repos_dirty = 0
     total_ahead = 0
     total_behind = 0
@@ -1296,6 +1385,12 @@ def build_ecosystem_overview(
             repos_with_errors += 1
         if repo.workgraph_exists and not repo.service_running:
             repos_with_inactive_service += 1
+        if repo.activity_state == "stalled":
+            repos_stalled += 1
+        elif repo.activity_state == "idle":
+            repos_idle += 1
+        elif repo.activity_state in ("untracked", "missing", "error"):
+            repos_untracked += 1
         if repo.git_dirty:
             repos_dirty += 1
         total_ahead += repo.ahead
@@ -1309,6 +1404,9 @@ def build_ecosystem_overview(
         "repos_total": len(repos),
         "repos_with_errors": repos_with_errors,
         "repos_with_inactive_service": repos_with_inactive_service,
+        "repos_stalled": repos_stalled,
+        "repos_idle": repos_idle,
+        "repos_untracked": repos_untracked,
         "repos_dirty": repos_dirty,
         "tasks_open": total_open,
         "tasks_ready": total_ready,
@@ -1336,11 +1434,12 @@ def build_ecosystem_narrative(overview: dict[str, Any]) -> str:
     blockers = int(overview.get("blocked_open") or 0) + int(overview.get("missing_dependencies") or 0)
     stale = int(overview.get("stale_open") or 0) + int(overview.get("stale_in_progress") or 0)
     service_gaps = int(overview.get("repos_with_inactive_service") or 0)
+    stalled_repos = int(overview.get("repos_stalled") or 0)
     error_repos = int(overview.get("repos_with_errors") or 0)
     active = int(overview.get("tasks_in_progress") or 0)
     ready = int(overview.get("tasks_ready") or 0)
 
-    if error_repos > 0 or service_gaps > 0 or int(overview.get("missing_dependencies") or 0) > 0:
+    if error_repos > 0 or service_gaps > 0 or stalled_repos > 0 or int(overview.get("missing_dependencies") or 0) > 0:
         tone = "Alert posture"
     elif stale > 0 or blockers > 0:
         tone = "Watch posture"
@@ -1351,7 +1450,7 @@ def build_ecosystem_narrative(overview: dict[str, Any]) -> str:
         f"{tone}: tracking {repos_total} repos with {active} active tasks and {ready} ready tasks."
     )
     pressure = (
-        f"Pressure points: {blockers} dependency blockers, {stale} aging tasks, "
+        f"Pressure points: {blockers} dependency blockers, {stale} aging tasks, {stalled_repos} stalled repos, "
         f"{service_gaps} repos without a running workgraph service."
     )
     attention = overview.get("attention_repos") or []
@@ -1999,9 +2098,35 @@ def render_dashboard_html() -> str:
       cursor: pointer;
       transition: border-color 120ms ease, box-shadow 120ms ease;
     }
+    @keyframes repoCardPulse {
+      0% {
+        border-color: #0f6f7c;
+        box-shadow: 0 0 0 0 rgba(15, 111, 124, 0.42);
+      }
+      72% {
+        border-color: #5e95a0;
+        box-shadow: 0 0 0 8px rgba(15, 111, 124, 0);
+      }
+      100% {
+        border-color: #0f6f7c;
+        box-shadow: 0 0 0 0 rgba(15, 111, 124, 0);
+      }
+    }
+    .repo-card.active-running {
+      border-color: #0f6f7c;
+      animation: repoCardPulse 1.95s ease-out infinite;
+    }
     .repo-card:hover {
       border-color: #9cb7bc;
       box-shadow: 0 3px 8px rgba(30, 58, 64, 0.12);
+    }
+    .repo-card.active-running:hover {
+      border-color: #0f6f7c;
+      box-shadow: 0 0 0 0 rgba(15, 111, 124, 0.42), 0 3px 10px rgba(30, 58, 64, 0.15);
+    }
+    .repo-card.stalled {
+      border-color: #d8b596;
+      background: rgba(255, 250, 243, 0.9);
     }
     .repo-head {
       display: flex;
@@ -2037,6 +2162,15 @@ def render_dashboard_html() -> str:
       font-size: 0.84rem;
       color: #2d3a33;
       line-height: 1.35;
+    }
+    .repo-note.stall {
+      margin-top: 0.35rem;
+      color: #7a4322;
+    }
+    .repo-note.signal {
+      margin-top: 0.32rem;
+      color: #5f3e22;
+      font-style: italic;
     }
     .repo-note.warn { color: var(--warn); }
     .repo-actions { margin-top: 0.45rem; }
@@ -2089,6 +2223,47 @@ def render_dashboard_html() -> str:
     #graph.dragging {
       cursor: grabbing;
     }
+    @keyframes taskPulseHalo {
+      0% {
+        opacity: 0.9;
+        transform: scale(0.82);
+      }
+      70% {
+        opacity: 0;
+        transform: scale(1.72);
+      }
+      100% {
+        opacity: 0;
+        transform: scale(1.8);
+      }
+    }
+    @keyframes repoPulseHalo {
+      0% {
+        opacity: 0.88;
+        transform: scale(0.86);
+      }
+      72% {
+        opacity: 0;
+        transform: scale(1.62);
+      }
+      100% {
+        opacity: 0;
+        transform: scale(1.66);
+      }
+    }
+    .graph-node .pulse-halo {
+      display: none;
+      pointer-events: none;
+      transform-origin: center;
+      transform-box: fill-box;
+    }
+    .graph-node.status-in-progress .pulse-halo {
+      display: block;
+      animation: taskPulseHalo 1.7s ease-out infinite;
+    }
+    .graph-node.status-in-progress .base-node {
+      filter: drop-shadow(0 0 4px rgba(15, 111, 124, 0.5));
+    }
     .graph-legend {
       display: flex;
       gap: 0.6rem;
@@ -2137,6 +2312,19 @@ def render_dashboard_html() -> str:
       background: #fffcf8;
       display: block;
       overflow: visible;
+    }
+    .repo-dep-node .repo-pulse {
+      display: none;
+      pointer-events: none;
+      transform-origin: center;
+      transform-box: fill-box;
+    }
+    .repo-dep-node.active .repo-pulse {
+      display: block;
+      animation: repoPulseHalo 1.85s ease-out infinite;
+    }
+    .repo-dep-node.active .repo-main {
+      filter: drop-shadow(0 0 5px rgba(15, 111, 124, 0.45));
     }
     #repo-dep-note {
       margin-top: 0.35rem;
@@ -2354,8 +2542,8 @@ def render_dashboard_html() -> str:
         <select id="graph-repo"></select>
         <label for="graph-mode">Mode:</label>
         <select id="graph-mode">
-          <option value="focus" selected>focus chain</option>
-          <option value="active">active + blocked</option>
+          <option value="focus">focus chain</option>
+          <option value="active" selected>active + blocked</option>
           <option value="full">full graph</option>
         </select>
         <button id="graph-zoom-out" type="button">-</button>
@@ -2366,7 +2554,7 @@ def render_dashboard_html() -> str:
       <div class="repo-dep-wrap">
         <div class="repo-dep-meta" id="repo-dep-meta">Loading repo dependency overview…</div>
         <svg id="repo-dep-graph" viewBox="0 0 1200 280" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="cmd" id="repo-dep-note">Edge A -> B means repo A has dependency signals pointing to repo B. Click a repo to focus its task graph.</div>
+        <div class="cmd" id="repo-dep-note">Edge A -> B means repo A has dependency signals pointing to repo B. Pulsing repo nodes have in-progress tasks. Click a repo to focus its task graph.</div>
       </div>
       <div class="graph-wrap">
         <svg id="graph" viewBox="0 0 1200 340" preserveAspectRatio="xMidYMin meet"></svg>
@@ -2378,6 +2566,7 @@ def render_dashboard_html() -> str:
         <span><span class="dot" style="background:#a26c13"></span>Open/Ready</span>
         <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
         <span><span class="dot" style="background:#8c2f2f"></span>Cycle edge</span>
+        <span>Pulsing node = currently active work</span>
       </div>
       <div class="graph-path" id="graph-path">Select a node to inspect dependency chain.</div>
     </section>
@@ -2452,7 +2641,7 @@ def render_dashboard_html() -> str:
     let pollTimer = null;
     let reconnectTimer = null;
     let selectedRepo = '';
-    let graphMode = 'focus';
+    let graphMode = 'active';
     let currentData = null;
     let selectedNodeId = '';
     let actionRepoFilter = '__all__';
@@ -2509,8 +2698,8 @@ def render_dashboard_html() -> str:
 
     function qualityPill(repo) {
       const score = n(repo.blocked_open) + n(repo.missing_dependencies) + n((repo.stale_open || []).length) + n((repo.stale_in_progress || []).length);
-      if ((repo.errors || []).length || score >= 5) return ['risk', 'bad'];
-      if (score >= 2 || (repo.workgraph_exists && !repo.service_running)) return ['watch', 'warn'];
+      if ((repo.errors || []).length || score >= 5 || (repo.stalled && score >= 2)) return ['risk', 'bad'];
+      if (score >= 2 || repo.stalled || (repo.workgraph_exists && !repo.service_running)) return ['watch', 'warn'];
       return ['healthy', 'good'];
     }
 
@@ -2520,9 +2709,30 @@ def render_dashboard_html() -> str:
       const blockedWeight = n(repo.blocked_open) * 4;
       const staleWeight = n((repo.stale_open || []).length) * 2 + n((repo.stale_in_progress || []).length) * 3;
       const serviceWeight = repo.workgraph_exists && !repo.service_running ? 8 : 0;
+      const stalledWeight = repo.stalled ? 10 : 0;
       const behindWeight = Math.min(10, n(repo.behind));
       const dirtyWeight = repo.git_dirty ? 2 : 0;
-      return errorWeight + missingWeight + blockedWeight + staleWeight + serviceWeight + behindWeight + dirtyWeight;
+      return errorWeight + missingWeight + blockedWeight + staleWeight + serviceWeight + stalledWeight + behindWeight + dirtyWeight;
+    }
+
+    function riskWatchSentence(repo, label) {
+      if (label !== 'risk' && label !== 'watch') return '';
+      const reasons = [];
+      if ((repo.errors || []).length) reasons.push(`errors=${(repo.errors || []).slice(0, 2).join(',')}`);
+      if (repo.stalled) {
+        const stallTop = Array.isArray(repo.stall_reasons) && repo.stall_reasons.length ? String(repo.stall_reasons[0]) : 'no active execution';
+        reasons.push(`stalled (${stallTop})`);
+      }
+      if (n(repo.missing_dependencies) > 0) reasons.push(`${n(repo.missing_dependencies)} missing dependencies`);
+      if (n(repo.blocked_open) > 0) reasons.push(`${n(repo.blocked_open)} blocked open tasks`);
+      if (n((repo.stale_open || []).length) > 0) reasons.push(`${n((repo.stale_open || []).length)} aging open`);
+      if (n((repo.stale_in_progress || []).length) > 0) reasons.push(`${n((repo.stale_in_progress || []).length)} aging active`);
+      if (repo.workgraph_exists && !repo.service_running) reasons.push('workgraph service stopped');
+      if (n(repo.behind) > 0) reasons.push(`behind upstream by ${n(repo.behind)}`);
+      if (repo.git_dirty) reasons.push('dirty working tree');
+      if (!reasons.length) return '';
+      const intro = label === 'risk' ? 'At risk because' : 'Watch because';
+      return `${intro} ${reasons.slice(0, 3).join('; ')}.`;
     }
 
     function repoDirtyAllowed(repo) {
@@ -2650,6 +2860,9 @@ def render_dashboard_html() -> str:
         const label = String(payload.label || '');
         const ageDays = Number(payload.age_days || 0);
         const ageText = ageDays > 0 ? ` (age ${ageDays}d)` : '';
+        if (label === 'stalled repo') {
+          return `In repo ${repoName}, diagnose and unblock stalled execution (${title || 'no reason supplied'}). Start one ready task or create missing dependency tasks, update Workgraph statuses/dependencies, and report the exact unblock step taken.`;
+        }
         return `In repo ${repoName}, resolve ${label} for task ${taskId || 'unknown'} ${title}${ageText}. Decide execute vs unblock vs close, fix dependency state in Workgraph, and summarize what changed.`;
       }
       if (kind === 'next') {
@@ -2880,6 +3093,8 @@ def render_dashboard_html() -> str:
           if (!entry) return '';
           const row = repoByName(id) || {};
           const [_pill, kind] = qualityPill(row);
+          const activeCount = Array.isArray(row.in_progress) ? row.in_progress.length : 0;
+          const isRepoActive = activeCount > 0;
           const connected = !selectedRepo || selectedRepo === "__all__" || !related.size || related.has(id);
           const isSelected = selectedRepo === id;
           const fill = kind === 'bad' ? '#f7dfdf' : (kind === 'warn' ? '#f9ead7' : '#e2f0e4');
@@ -2887,10 +3102,11 @@ def render_dashboard_html() -> str:
           const stroke = isSelected ? '#0f6f7c' : '#385148';
           const strokeW = isSelected ? 3 : 1.4;
           const opacity = connected ? 1 : 0.34;
-          const hint = `${id} | out=${n(node.outbound)} (${n(node.outbound_weight)}) | in=${n(node.inbound)} (${n(node.inbound_weight)})`;
+          const hint = `${id} | out=${n(node.outbound)} (${n(node.outbound_weight)}) | in=${n(node.inbound)} (${n(node.inbound_weight)}) | in-progress=${activeCount}`;
           return `
-            <g data-focus-repo="${escAttr(id)}" data-scroll-graph="1" style="cursor:pointer; opacity:${opacity}">
-              <circle cx="${entry.x}" cy="${entry.y}" r="${radiusNode}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />
+            <g class="repo-dep-node ${isRepoActive ? 'active' : ''}" data-focus-repo="${escAttr(id)}" data-scroll-graph="1" style="cursor:pointer; opacity:${opacity}">
+              ${isRepoActive ? `<circle class="repo-pulse" cx="${entry.x}" cy="${entry.y}" r="${radiusNode + 6}" fill="none" stroke="#0f6f7c" stroke-width="2.2" />` : ''}
+              <circle class="repo-main" cx="${entry.x}" cy="${entry.y}" r="${radiusNode}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" />
               <text x="${entry.x + radiusNode + 6}" y="${entry.y + 4}" fill="#2e3d35" font-size="12">${esc(id)}</text>
               <title>${esc(hint)}</title>
             </g>
@@ -2918,7 +3134,7 @@ def render_dashboard_html() -> str:
       const outText = topOut && topOut.repo ? `${topOut.repo} (${n(topOut.weight)})` : 'n/a';
       const inText = topIn && topIn.repo ? `${topIn.repo} (${n(topIn.weight)})` : 'n/a';
       note.innerHTML =
-        `Edge A -> B means repo A has dependency signals pointing to repo B. Top outbound: <code>${esc(outText)}</code>. Top inbound: <code>${esc(inText)}</code>.`;
+        `Edge A -> B means repo A has dependency signals pointing to repo B. Pulsing repo nodes have in-progress tasks. Top outbound: <code>${esc(outText)}</code>. Top inbound: <code>${esc(inText)}</code>.`;
     }
 
     function renderOverviewCards(data) {
@@ -2927,6 +3143,7 @@ def render_dashboard_html() -> str:
       const cards = [
         ['Repos', ov.repos_total],
         ['In Progress', ov.tasks_in_progress],
+        ['Stalled Repos', ov.repos_stalled],
         ['Ready', ov.tasks_ready],
         ['Blocked', ov.blocked_open],
         ['Aging Open', ov.stale_open],
@@ -3015,6 +3232,17 @@ def render_dashboard_html() -> str:
             age_days: 0,
           });
         });
+        if (repo.stalled) {
+          const reasons = Array.isArray(repo.stall_reasons) ? repo.stall_reasons : [];
+          issues.push({
+            severity: 3,
+            repo: repo.name,
+            label: 'stalled repo',
+            task: {id: '', title: reasons.slice(0, 2).join('; '), age_days: 0},
+            priority: 28 + n(repo.blocked_open) + n(repo.missing_dependencies),
+            age_days: 0,
+          });
+        }
       });
       const shaped = issues.map((item) => {
         const repoName = String(item.repo || '');
@@ -3070,11 +3298,20 @@ def render_dashboard_html() -> str:
       rows.forEach((repo) => {
         const repoName = String(repo.name || '');
         const card = document.createElement('article');
-        card.className = 'repo-card';
+        const activeCount = Array.isArray(repo.in_progress) ? repo.in_progress.length : 0;
+        const isActiveRunning = activeCount > 0;
+        const isStalled = !!repo.stalled;
+        card.className = `repo-card${isActiveRunning ? ' active-running' : ''}${isStalled ? ' stalled' : ''}`;
         card.setAttribute('data-repo-name', repoName);
         const [pillLabel, pillKind] = qualityPill(repo);
         const priorityScore = repoPriorityScore(repo);
         const errs = (repo.errors || []).length ? `<div class="warn">errors=${esc((repo.errors || []).join(','))}</div>` : '';
+        const stallReasons = Array.isArray(repo.stall_reasons) ? repo.stall_reasons : [];
+        const stallNote = isStalled
+          ? `<p class="repo-note stall"><strong>stalled:</strong> ${esc(stallReasons.slice(0, 3).join('; ') || 'no active execution reason captured')}</p>`
+          : '';
+        const signalSentence = riskWatchSentence(repo, pillLabel);
+        const signalNote = signalSentence ? `<p class="repo-note signal">${esc(signalSentence)}</p>` : '';
         card.innerHTML = `
           <div class="repo-head">
             <span class="repo-name"><code>${esc(repoName)}</code></span>
@@ -3082,6 +3319,7 @@ def render_dashboard_html() -> str:
           </div>
           <div class="repo-meta">
             <span>priority=<code>${esc(priorityScore)}</code></span>
+            <span>activity=${esc(repo.activity_state || 'unknown')}</span>
             <span>branch=<code>${esc(repo.git_branch || 'n/a')}</code></span>
             <span>dirty=${repo.git_dirty ? 'yes' : 'no'}</span>
             <span>ahead=${esc(repo.ahead || 0)} behind=${esc(repo.behind || 0)}</span>
@@ -3092,6 +3330,8 @@ def render_dashboard_html() -> str:
           </div>
           ${errs}
           <p class="repo-note ${pillKind === 'bad' ? 'warn' : ''}">${esc(repo.narrative || '')}</p>
+          ${signalNote}
+          ${stallNote}
           <div class="repo-actions">
             <button class="action-link" data-focus-repo="${escAttr(repoName)}" data-scroll-graph="1">open graph</button>
           </div>
@@ -3578,6 +3818,9 @@ def render_dashboard_html() -> str:
 
       const nodeSvg = Object.values(model.pos).map((entry) => {
         const label = String(entry.node.label || entry.node.id || '').slice(0, 28);
+        const status = String(entry.node.status || '').toLowerCase();
+        const statusClass = status.replace(/[^a-z0-9]+/g, '-');
+        const isInProgress = status === 'in-progress';
         const age = Number.isFinite(Number(entry.node.age_days)) ? `${entry.node.age_days}d` : '';
         const isSelected = activeNodeId && String(entry.node.id) === String(activeNodeId);
         const inPath = traversal ? traversal.pathNodes.has(String(entry.node.id)) : false;
@@ -3585,8 +3828,9 @@ def render_dashboard_html() -> str:
         const strokeW = isSelected ? 3 : (inPath ? 2 : 1);
         const opacity = traversal ? (inPath ? 1 : 0.34) : 1;
         return `
-          <g class="graph-node" data-node-id="${esc(entry.node.id)}" style="opacity:${opacity}; cursor:pointer;">
-            <circle cx="${entry.x}" cy="${entry.y}" r="10" fill="${colorFor(entry.node)}" stroke="${stroke}" stroke-width="${strokeW}" />
+          <g class="graph-node status-${statusClass}" data-node-id="${esc(entry.node.id)}" style="opacity:${opacity}; cursor:pointer;">
+            ${isInProgress ? `<circle class="pulse-halo" cx="${entry.x}" cy="${entry.y}" r="14" fill="none" stroke="#0f6f7c" stroke-width="2.3" />` : ''}
+            <circle class="base-node" cx="${entry.x}" cy="${entry.y}" r="10" fill="${colorFor(entry.node)}" stroke="${stroke}" stroke-width="${strokeW}" />
             <text x="${entry.x + 16}" y="${entry.y + 5}" fill="#2b3932" font-size="12">${esc(entry.node.id)}</text>
             <text x="${entry.x + 16}" y="${entry.y + 20}" fill="#6b776f" font-size="10">${esc(label)} ${esc(age)}</text>
           </g>
@@ -3602,8 +3846,13 @@ def render_dashboard_html() -> str:
         `<rect x="0" y="0" width="${model.width}" height="${model.height}" fill="#fffdfa" pointer-events="none" />` +
         `<g id="graph-content" transform="translate(${graphView.tx} ${graphView.ty}) scale(${graphView.scale})">${depthLabels}${edgeSvg}${nodeSvg}</g>`;
       const loopCount = cycleEdges.size;
+      const totalNodes = Number((baseModel.nodes || []).length);
+      const totalEdges = Number((baseModel.edges || []).length);
+      const scope = graphMode === 'full'
+        ? `${model.nodes.length} nodes, ${model.edges.length} edges`
+        : `${model.nodes.length}/${totalNodes} nodes, ${model.edges.length}/${totalEdges} edges`;
       graphMeta.textContent =
-        `${repo.name} | mode=${graphMode} | ${model.nodes.length} nodes, ${model.edges.length} edges, loops=${loopCount} | zoom=${graphView.scale.toFixed(2)}x`;
+        `${repo.name} | mode=${graphMode} | ${scope}, loops=${loopCount} | zoom=${graphView.scale.toFixed(2)}x`;
       setGraphPathText(
         model,
         activeNodeId,
@@ -3796,7 +4045,7 @@ def render_dashboard_html() -> str:
       if (currentData) render(currentData, 'filtered');
     });
     el('graph-mode').addEventListener('change', (event) => {
-      graphMode = String(event.target.value || 'focus');
+      graphMode = String(event.target.value || 'active');
       selectedNodeId = '';
       if (currentData) drawGraph(currentData);
     });
@@ -3948,6 +4197,84 @@ def run_service_foreground(
                         "attempts": [],
                     }
                 snapshot["supervisor"] = supervisor
+
+                # Phase 0 dark-factory loop: produce policy-bounded cycle plan + decision ledger.
+                wg_dir = project_dir / ".workgraph"
+                try:
+                    policy = load_drift_policy(wg_dir)
+                    factory_cfg = policy.factory if isinstance(policy.factory, dict) else {}
+                except Exception:
+                    policy = None
+                    factory_cfg = {}
+
+                factory_enabled = bool(factory_cfg.get("enabled", False))
+                if factory_enabled and policy is not None:
+                    cycle = build_factory_cycle(
+                        snapshot=snapshot,
+                        policy=policy,
+                        project_name=project_dir.name,
+                    )
+                    execution_mode = str(cycle.get("execution_mode") or "plan_only")
+                    emit_followups = bool(factory_cfg.get("emit_followups", False))
+                    execution = {
+                        "attempted": 0,
+                        "executed": 0,
+                        "succeeded": 0,
+                        "failed": 0,
+                        "skipped": 0,
+                        "hard_stop": bool(factory_cfg.get("hard_stop_on_failed_verification", True)),
+                        "stopped_early": False,
+                        "stop_reason": "",
+                        "attempts": [],
+                        "followups": {},
+                    }
+                    followups = {
+                        "enabled": emit_followups,
+                        "attempted": 0,
+                        "created": 0,
+                        "existing": 0,
+                        "skipped": 0,
+                        "errors": [],
+                        "tasks": [],
+                    }
+                    if execution_mode != "plan_only":
+                        execution = execute_factory_cycle(
+                            cycle=cycle,
+                            snapshot=snapshot,
+                            policy=policy,
+                            project_dir=project_dir,
+                            emit_followups=emit_followups,
+                            max_followups_per_repo=max(1, int(factory_cfg.get("max_followups_per_repo", 2))),
+                            allow_execute_draft_prs=bool(execute_draft_prs),
+                        )
+                        followups = execution.get("followups") if isinstance(execution.get("followups"), dict) else followups
+                    elif emit_followups:
+                        followups = emit_factory_followups(
+                            cycle=cycle,
+                            snapshot=snapshot,
+                            max_followups_per_repo=max(1, int(factory_cfg.get("max_followups_per_repo", 2))),
+                        )
+                        execution["followups"] = followups
+                    factory_ledger = write_factory_ledger(
+                        project_dir=project_dir,
+                        cycle=cycle,
+                        central_repo=central_repo,
+                        write_decision_ledger=bool(factory_cfg.get("write_decision_ledger", True)),
+                    )
+                    snapshot["factory"] = {
+                        "enabled": True,
+                        "summary": summarize_factory_cycle(cycle),
+                        "action_plan": cycle.get("action_plan") if isinstance(cycle.get("action_plan"), list) else [],
+                        "execution": execution,
+                        "followups": followups,
+                        "ledger": factory_ledger,
+                    }
+                else:
+                    snapshot["factory"] = {
+                        "enabled": False,
+                        "reason": "factory disabled in drift-policy",
+                    }
+
                 _write_json(paths["snapshot"], snapshot)
                 _write_json(paths["heartbeat"], {"last_tick_at": _iso_now(), "supervisor": supervisor})
                 candidates = [

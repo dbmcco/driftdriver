@@ -550,6 +550,64 @@ Smoke test:
 scripts/ecosystem_hub_smoke.sh .
 ```
 
+## Autonomous Dark Factory Plan (Model-Mediated)
+
+Design docs for the next-stage ecosystem control plane:
+
+- `docs/plans/factorydrift-model-mediated-contract.md`
+- `docs/plans/drift-policy-factory-extensions.md`
+- `docs/plans/dark-factory-operating-model.md`
+
+These documents define:
+- model-vs-code decision ownership
+- new ecosystem drift modules (`sourcedrift`, `syncdrift`, `stalledrift`, `servicedrift`, `federatedrift`, `factorydrift`)
+- policy extensions for autonomy tiers and safety budgets
+- phased rollout toward autonomous dark-factory operation
+  with upstream pull-down integration and verifiable guardrails
+  across growing repo counts.
+
+Phase 0 implementation is now available:
+
+```bash
+# run one policy-bounded factory cycle (plan + prompts + decision ledger)
+driftdriver factory --json
+
+# force a cycle even if [factory].enabled=false
+driftdriver factory --force --json
+
+# execute safe automated handlers for this cycle
+driftdriver factory --execute --json
+
+# force local corrective task emission (writes to each repo's workgraph)
+driftdriver factory --emit-followups --json
+
+# run without writing local/central ledger files
+driftdriver factory --no-write-ledger --json
+```
+
+Factory cycle writes:
+- local ledger: `.workgraph/service/factoryd/latest.json` and `.workgraph/service/factoryd/history/<timestamp>.json`
+- central ledger (when configured): `<central_repo>/ecosystem-hub/factory/register/<project>.json`
+  and `<central_repo>/ecosystem-hub/factory/history/<project>/<timestamp>.json`
+
+When `[factory].enabled = true`, the ecosystem hub daemon emits a factory cycle each tick,
+runs safe automated handlers when `[factory].plan_only = false`, and persists decision ledger + execution results.
+
+To have the auditor create corrective tasks in local repos for agents to pick up, set:
+- `[factory].emit_followups = true`
+- `[factory].max_followups_per_repo = 2` (or your preferred cap)
+
+To move out of plan-only mode:
+- `[factory].plan_only = false`
+- keep `[factory].hard_stop_on_failed_verification = true` for safety
+
+Current automated handlers include:
+- restart stopped repo workgraph services
+- run `git fetch --all --prune` for sync signals
+- run driftdriver checks for active tasks
+- run upstream update checks
+- delegate risky corrective actions to explicit local follow-up tasks
+
 ## Development
 
 ```bash
