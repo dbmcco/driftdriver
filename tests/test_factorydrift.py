@@ -51,6 +51,14 @@ def _policy() -> SimpleNamespace:
             "emit_review_tasks": True,
             "max_review_tasks_per_repo": 2,
         },
+        sessiondriver={
+            "enabled": True,
+            "require_session_driver": True,
+            "allow_cli_fallback": False,
+            "max_dispatch_per_repo": 2,
+            "worker_timeout_seconds": 1800,
+            "drift_failure_threshold": 3,
+        },
         plandrift={
             "enabled": True,
             "emit_review_tasks": True,
@@ -144,6 +152,37 @@ class FactoryDriftTests(unittest.TestCase):
         self.assertIn("restart_workgraph_service", kinds)
         self.assertIn("unblock_stalled_execution", kinds)
         self.assertIn("repair_dependency_chain", kinds)
+
+    def test_build_factory_cycle_includes_sessiondriver_dispatch_action(self) -> None:
+        policy = _policy()
+        snapshot = {
+            "overview": {"attention_repos": [{"repo": "repo-a", "score": 16}]},
+            "repos": [
+                {
+                    "name": "repo-a",
+                    "exists": True,
+                    "workgraph_exists": True,
+                    "service_running": True,
+                    "activity_state": "active",
+                    "missing_dependencies": 0,
+                    "blocked_open": 0,
+                    "stale_open": [],
+                    "stale_in_progress": [],
+                    "behind": 0,
+                    "git_dirty": False,
+                    "ready": [{"id": "r1"}],
+                    "in_progress": [],
+                    "security": {"findings_total": 0, "critical": 0, "high": 0},
+                    "quality": {"findings_total": 0, "quality_score": 92, "at_risk": False},
+                }
+            ],
+            "upstream_candidates": [],
+            "updates": {},
+        }
+        cycle = build_factory_cycle(snapshot=snapshot, policy=policy, project_name="driftdriver")
+        actions = [row for row in (cycle.get("action_plan") or []) if isinstance(row, dict)]
+        kinds = {str(row.get("kind") or "") for row in actions}
+        self.assertIn("dispatch_ready_workers", kinds)
 
     def test_build_factory_cycle_includes_sec_and_quality_actions(self) -> None:
         policy = _policy()
@@ -540,6 +579,56 @@ class FactoryDriftTests(unittest.TestCase):
             self.assertEqual(str(attempts[0]["status"]), "succeeded")
             self.assertEqual(str(attempts[1]["status"]), "succeeded")
             self.assertEqual(str(attempts[2]["status"]), "succeeded")
+
+    def test_execute_factory_cycle_dispatches_sessiondriver_workers(self) -> None:
+        policy = _policy()
+        cycle = {
+            "cycle_id": "factory-test",
+            "generated_at": "2026-03-05T12:00:00+00:00",
+            "execution_mode": "execute",
+            "execution_status": "planned_only",
+            "policy": {"factory": {"hard_stop_on_failed_verification": True}},
+            "action_plan": [
+                {
+                    "id": "repo-a:dispatch_ready_workers:1",
+                    "repo": "repo-a",
+                    "module": "sessiondriver",
+                    "kind": "dispatch_ready_workers",
+                    "automation_allowed": True,
+                }
+            ],
+            "outcomes": {"planned_actions": 1, "executed_actions": 0},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "repo-a"
+            (repo / ".workgraph").mkdir(parents=True, exist_ok=True)
+            snapshot = {"repos": [{"name": "repo-a", "path": str(repo)}]}
+            dispatch = {
+                "ok": True,
+                "status": "succeeded",
+                "reason": "processed 1 task(s); dispatched=1 failed=0 escalated=0",
+                "using_session_driver": True,
+                "attempted": 1,
+                "ready_seen": 1,
+                "dispatched": [{"task_id": "r1", "worker_status": "completed"}],
+                "failed": [],
+                "escalated": [],
+            }
+            with patch("driftdriver.factorydrift._dispatch_ready_workers", return_value=dispatch):
+                execution = execute_factory_cycle(
+                    cycle=cycle,
+                    snapshot=snapshot,
+                    policy=policy,
+                    project_dir=root,
+                    emit_followups=False,
+                    max_followups_per_repo=2,
+                    allow_execute_draft_prs=False,
+                )
+            self.assertEqual(execution["executed"], 1)
+            self.assertEqual(execution["failed"], 0)
+            attempts = execution.get("attempts") or []
+            self.assertEqual(str(attempts[0]["status"]), "succeeded")
 
 
 if __name__ == "__main__":

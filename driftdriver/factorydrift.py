@@ -440,6 +440,29 @@ def _plan_repo_actions(
             gate=True,
         )
 
+    sessiondriver_cfg = getattr(policy, "sessiondriver", {})
+    if (
+        isinstance(sessiondriver_cfg, dict)
+        and bool(sessiondriver_cfg.get("enabled", True))
+        and bool(repo.get("workgraph_exists"))
+        and bool(repo.get("service_running"))
+        and has_ready
+    ):
+        dispatch_cap = max(1, int(sessiondriver_cfg.get("max_dispatch_per_repo", 2)))
+        add(
+            module="sessiondriver",
+            kind="dispatch_ready_workers",
+            priority=80,
+            reason=f"ready queue has {len(ready)} task(s); dispatch cap={dispatch_cap}",
+            prompt=_make_prompt(
+                repo_name,
+                "Dispatch ready tasks via claude-session-driver workers, run drift checks per task, and keep task "
+                "states/logs consistent. Escalate unresolved drift and avoid destructive operations.",
+            ),
+            requires=["claude-session-driver scripts"],
+            gate=True,
+        )
+
     sourcedrift_cfg = getattr(policy, "sourcedrift", {})
     if (
         isinstance(sourcedrift_cfg, dict)
@@ -732,6 +755,11 @@ def build_factory_cycle(
                 if isinstance(getattr(policy, "qadrift", {}), dict)
                 else {}
             ),
+            "sessiondriver": (
+                dict(getattr(policy, "sessiondriver"))
+                if isinstance(getattr(policy, "sessiondriver", {}), dict)
+                else {}
+            ),
             "plandrift": (
                 dict(getattr(policy, "plandrift"))
                 if isinstance(getattr(policy, "plandrift", {}), dict)
@@ -835,6 +863,134 @@ def _followup_description(action: dict[str, Any], cycle: dict[str, Any]) -> str:
         "Suggested local agent prompt:\n"
         f"{prompt}\n"
     )
+
+
+def _dispatch_ready_workers(
+    *,
+    repo_path: Path,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    from driftdriver.project_autopilot import (
+        AutopilotConfig,
+        AutopilotRun,
+        dispatch_task,
+        discover_session_driver,
+        get_ready_tasks,
+        run_drift_check,
+        should_escalate,
+    )
+
+    max_dispatch = max(1, int(cfg.get("max_dispatch_per_repo", 2)))
+    worker_timeout = max(60, int(cfg.get("worker_timeout_seconds", 1800)))
+    drift_failure_threshold = max(1, int(cfg.get("drift_failure_threshold", 3)))
+    require_session_driver = bool(cfg.get("require_session_driver", True))
+    allow_cli_fallback = bool(cfg.get("allow_cli_fallback", False))
+
+    scripts_dir = discover_session_driver()
+    using_session_driver = scripts_dir is not None
+    if scripts_dir is None and require_session_driver and not allow_cli_fallback:
+        return {
+            "ok": False,
+            "status": "failed",
+            "reason": "claude-session-driver scripts not found and CLI fallback disabled",
+            "using_session_driver": False,
+            "attempted": 0,
+            "ready_seen": 0,
+            "dispatched": [],
+            "failed": [],
+            "escalated": [],
+        }
+
+    if scripts_dir is None and not allow_cli_fallback:
+        return {
+            "ok": False,
+            "status": "failed",
+            "reason": "session-driver unavailable and fallback disabled",
+            "using_session_driver": False,
+            "attempted": 0,
+            "ready_seen": 0,
+            "dispatched": [],
+            "failed": [],
+            "escalated": [],
+        }
+
+    ready = get_ready_tasks(repo_path)
+    ready_tasks = [row for row in ready if isinstance(row, dict) and str(row.get("id") or "").strip()]
+    selected = ready_tasks[:max_dispatch]
+
+    run = AutopilotRun(
+        config=AutopilotConfig(
+            project_dir=repo_path,
+            max_parallel=max_dispatch,
+            worker_timeout=worker_timeout,
+            drift_failure_threshold=drift_failure_threshold,
+            dry_run=False,
+            goal="factory session-driver ready dispatch",
+            no_peer_dispatch=True,
+        )
+    )
+
+    dispatched: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    escalated: list[dict[str, Any]] = []
+
+    for task in selected:
+        task_id = str(task.get("id") or "").strip()
+        if not task_id:
+            continue
+        ctx = dispatch_task(task, repo_path, scripts_dir if scripts_dir is not None else None, run)
+        row: dict[str, Any] = {
+            "task_id": task_id,
+            "worker_name": str(ctx.worker_name or ""),
+            "worker_status": str(ctx.status or ""),
+        }
+        if ctx.status != "completed":
+            row["error"] = (ctx.response or "worker dispatch failed")[:220]
+            failed.append(row)
+            continue
+
+        drift = run_drift_check(repo_path, task_id)
+        row["drift_score"] = str(drift.get("score") or "")
+        row["drift_findings"] = list(drift.get("findings") or [])[:6]
+        row["drift_exit_code"] = int(drift.get("exit_code") or 0)
+
+        if str(drift.get("score") or "").strip().lower() == "red":
+            ctx.drift_fail_count += 1
+            ctx.drift_findings = list(drift.get("findings") or [])[:20]
+            if should_escalate(ctx, drift_failure_threshold):
+                row["worker_status"] = "escalated"
+                escalated.append(row)
+            else:
+                row["worker_status"] = "completed_with_drift_followups"
+                dispatched.append(row)
+        else:
+            dispatched.append(row)
+
+    status = "succeeded"
+    ok = True
+    reason = (
+        f"processed {len(dispatched) + len(failed) + len(escalated)} task(s); "
+        f"dispatched={len(dispatched)} failed={len(failed)} escalated={len(escalated)}"
+    )
+    if failed and not dispatched and not escalated:
+        status = "failed"
+        ok = False
+        reason = "all session-driver dispatch attempts failed"
+    elif not selected:
+        status = "noop"
+        reason = "no ready tasks available"
+
+    return {
+        "ok": ok,
+        "status": status,
+        "reason": reason,
+        "using_session_driver": using_session_driver,
+        "attempted": len(selected),
+        "ready_seen": len(ready_tasks),
+        "dispatched": dispatched[:24],
+        "failed": failed[:24],
+        "escalated": escalated[:24],
+    }
 
 
 def execute_factory_cycle(
@@ -1003,6 +1159,39 @@ def execute_factory_cycle(
                 _done("succeeded", reason=f"verified {len(task_ids)} active task(s)", details={"checks": checks})
             else:
                 _done("failed", reason="one or more active task checks failed", exit_code=1, details={"checks": checks})
+            continue
+
+        if kind == "dispatch_ready_workers":
+            sd_cfg = getattr(policy, "sessiondriver", {})
+            sd_cfg = dict(sd_cfg) if isinstance(sd_cfg, dict) else {}
+            dispatch = _dispatch_ready_workers(
+                repo_path=repo_path,
+                cfg=sd_cfg,
+            )
+            details = {
+                "dispatch": dispatch,
+                "policy": sd_cfg,
+            }
+            status = str(dispatch.get("status") or "failed")
+            if status == "failed":
+                _done(
+                    "failed",
+                    reason=str(dispatch.get("reason") or "session-driver dispatch failed"),
+                    exit_code=1,
+                    details=details,
+                )
+            elif status == "noop":
+                _done(
+                    "skipped",
+                    reason=str(dispatch.get("reason") or "no ready tasks"),
+                    details=details,
+                )
+            else:
+                _done(
+                    "succeeded",
+                    reason=str(dispatch.get("reason") or "session-driver dispatch completed"),
+                    details=details,
+                )
             continue
 
         if kind == "review_upstream_deltas":

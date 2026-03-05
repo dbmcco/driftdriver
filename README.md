@@ -605,6 +605,7 @@ To move out of plan-only mode:
 
 Current automated handlers include:
 - restart stopped repo workgraph services
+- dispatch bounded ready-task execution via `claude-session-driver` workers
 - run `git fetch --all --prune` for sync signals
 - run driftdriver checks for active tasks
 - run upstream update checks
@@ -634,6 +635,14 @@ max_review_tasks_per_repo = 3
 include_playwright = true
 include_test_health = true
 include_workgraph_health = true
+
+[sessiondriver]
+enabled = true
+require_session_driver = true
+allow_cli_fallback = false
+max_dispatch_per_repo = 2
+worker_timeout_seconds = 1800
+drift_failure_threshold = 3
 
 [plandrift]
 enabled = true

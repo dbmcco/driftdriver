@@ -49,6 +49,9 @@ class PolicyTests(unittest.TestCase):
             self.assertFalse(p.secdrift["run_pentest"])
             self.assertTrue(p.qadrift["include_playwright"])
             self.assertEqual(p.qadrift["interval_seconds"], 21600)
+            self.assertTrue(p.sessiondriver["enabled"])
+            self.assertTrue(p.sessiondriver["require_session_driver"])
+            self.assertFalse(p.sessiondriver["allow_cli_fallback"])
             self.assertTrue(p.plandrift["enabled"])
             self.assertEqual(p.plandrift["continuation_runtime"], "double-shot-latte")
             self.assertEqual(p.plandrift["orchestration_runtime"], "claude-session-driver")
@@ -157,6 +160,14 @@ class PolicyTests(unittest.TestCase):
                         "include_test_health = false",
                         "include_workgraph_health = false",
                         "",
+                        "[sessiondriver]",
+                        "enabled = false",
+                        "require_session_driver = false",
+                        "allow_cli_fallback = true",
+                        "max_dispatch_per_repo = -1",
+                        "worker_timeout_seconds = -5",
+                        "drift_failure_threshold = 0",
+                        "",
                         "[plandrift]",
                         "enabled = false",
                         "interval_seconds = -99",
@@ -254,6 +265,12 @@ class PolicyTests(unittest.TestCase):
             self.assertFalse(p.qadrift["include_playwright"])
             self.assertFalse(p.qadrift["include_test_health"])
             self.assertFalse(p.qadrift["include_workgraph_health"])
+            self.assertFalse(p.sessiondriver["enabled"])
+            self.assertFalse(p.sessiondriver["require_session_driver"])
+            self.assertTrue(p.sessiondriver["allow_cli_fallback"])
+            self.assertEqual(p.sessiondriver["max_dispatch_per_repo"], 1)
+            self.assertEqual(p.sessiondriver["worker_timeout_seconds"], 60)
+            self.assertEqual(p.sessiondriver["drift_failure_threshold"], 1)
             self.assertFalse(p.plandrift["enabled"])
             self.assertEqual(p.plandrift["interval_seconds"], 0)
             self.assertEqual(p.plandrift["max_findings_per_repo"], 1)

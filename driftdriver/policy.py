@@ -124,6 +124,17 @@ def _default_qadrift_cfg() -> dict[str, Any]:
     }
 
 
+def _default_sessiondriver_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "require_session_driver": True,
+        "allow_cli_fallback": False,
+        "max_dispatch_per_repo": 2,
+        "worker_timeout_seconds": 1800,
+        "drift_failure_threshold": 3,
+    }
+
+
 def _default_plandrift_cfg() -> dict[str, Any]:
     return {
         "enabled": True,
@@ -180,6 +191,7 @@ class DriftPolicy:
     federatedrift: dict[str, Any]
     secdrift: dict[str, Any]
     qadrift: dict[str, Any]
+    sessiondriver: dict[str, Any]
     plandrift: dict[str, Any]
     autonomy_default: dict[str, Any]
     autonomy_repos: list[dict[str, Any]]
@@ -289,6 +301,14 @@ def _default_policy_text() -> str:
         "include_test_health = true\n"
         "include_workgraph_health = true\n"
         "\n"
+        "[sessiondriver]\n"
+        "enabled = true\n"
+        "require_session_driver = true\n"
+        "allow_cli_fallback = false\n"
+        "max_dispatch_per_repo = 2\n"
+        "worker_timeout_seconds = 1800\n"
+        "drift_failure_threshold = 3\n"
+        "\n"
         "[plandrift]\n"
         "enabled = true\n"
         "interval_seconds = 14400\n"
@@ -357,6 +377,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             federatedrift=_default_federatedrift_cfg(),
             secdrift=_default_secdrift_cfg(),
             qadrift=_default_qadrift_cfg(),
+            sessiondriver=_default_sessiondriver_cfg(),
             plandrift=_default_plandrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
@@ -392,6 +413,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             federatedrift=_default_federatedrift_cfg(),
             secdrift=_default_secdrift_cfg(),
             qadrift=_default_qadrift_cfg(),
+            sessiondriver=_default_sessiondriver_cfg(),
             plandrift=_default_plandrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
@@ -601,6 +623,25 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         qadrift_raw.get("include_workgraph_health", qadrift["include_workgraph_health"])
     )
 
+    sessiondriver_raw = data.get("sessiondriver") if isinstance(data.get("sessiondriver"), dict) else {}
+    sessiondriver = _default_sessiondriver_cfg()
+    sessiondriver["enabled"] = bool(sessiondriver_raw.get("enabled", sessiondriver["enabled"]))
+    sessiondriver["require_session_driver"] = bool(
+        sessiondriver_raw.get("require_session_driver", sessiondriver["require_session_driver"])
+    )
+    sessiondriver["allow_cli_fallback"] = bool(
+        sessiondriver_raw.get("allow_cli_fallback", sessiondriver["allow_cli_fallback"])
+    )
+    sessiondriver["max_dispatch_per_repo"] = max(
+        1, int(sessiondriver_raw.get("max_dispatch_per_repo", sessiondriver["max_dispatch_per_repo"]))
+    )
+    sessiondriver["worker_timeout_seconds"] = max(
+        60, int(sessiondriver_raw.get("worker_timeout_seconds", sessiondriver["worker_timeout_seconds"]))
+    )
+    sessiondriver["drift_failure_threshold"] = max(
+        1, int(sessiondriver_raw.get("drift_failure_threshold", sessiondriver["drift_failure_threshold"]))
+    )
+
     plandrift_raw = data.get("plandrift") if isinstance(data.get("plandrift"), dict) else {}
     plandrift = _default_plandrift_cfg()
     plandrift["enabled"] = bool(plandrift_raw.get("enabled", plandrift["enabled"]))
@@ -698,6 +739,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         federatedrift=federatedrift,
         secdrift=secdrift,
         qadrift=qadrift,
+        sessiondriver=sessiondriver,
         plandrift=plandrift,
         autonomy_default=autonomy_default,
         autonomy_repos=autonomy_repos,
