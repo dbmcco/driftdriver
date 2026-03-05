@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from hashlib import sha1
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -275,3 +279,391 @@ def format_report(report: QAReport) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+_PROGRAM_SEVERITY_RANK = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+}
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _fingerprint(parts: list[str]) -> str:
+    key = "|".join(str(part or "").strip().lower() for part in parts)
+    return sha1(key.encode("utf-8")).hexdigest()  # noqa: S324 - non-crypto identity hash
+
+
+def _quality_prompt(repo_name: str, finding: dict[str, Any]) -> str:
+    fingerprint = str(finding.get("fingerprint") or "")
+    category = str(finding.get("category") or "quality-finding")
+    severity = str(finding.get("severity") or "medium")
+    evidence = str(finding.get("evidence") or "")
+    recommendation = str(finding.get("recommendation") or "")
+    return (
+        f"In `{repo_name}`, triage qadrift finding `{fingerprint}` ({severity}/{category}). "
+        f"Evidence: {evidence}. Determine root cause, smallest safe remediation, validation plan, "
+        f"and exact Workgraph task/dependency updates. Recommendation seed: {recommendation}"
+    )
+
+
+def _normalize_program_cfg(policy_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    raw = dict(policy_cfg) if isinstance(policy_cfg, dict) else {}
+    return {
+        "enabled": bool(raw.get("enabled", True)),
+        "max_findings_per_repo": max(1, int(raw.get("max_findings_per_repo", 40))),
+        "emit_review_tasks": bool(raw.get("emit_review_tasks", True)),
+        "max_review_tasks_per_repo": max(1, int(raw.get("max_review_tasks_per_repo", 3))),
+        "include_playwright": bool(raw.get("include_playwright", True)),
+        "include_test_health": bool(raw.get("include_test_health", True)),
+        "include_workgraph_health": bool(raw.get("include_workgraph_health", True)),
+    }
+
+
+def _looks_like_web_repo(repo_path: Path) -> bool:
+    if not (repo_path / "package.json").exists():
+        return False
+    for marker in ("next.config.js", "next.config.mjs", "vite.config.ts", "playwright.config.ts", "playwright.config.js"):
+        if (repo_path / marker).exists():
+            return True
+    src_dir = repo_path / "src"
+    if src_dir.exists():
+        for suffix in (".tsx", ".jsx", ".vue", ".svelte"):
+            if any(src_dir.rglob(f"*{suffix}")):
+                return True
+    return False
+
+
+def run_program_quality_scan(
+    *,
+    repo_name: str,
+    repo_path: Path,
+    repo_snapshot: dict[str, Any] | None = None,
+    policy_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cfg = _normalize_program_cfg(policy_cfg)
+    if not cfg["enabled"]:
+        return {
+            "repo": repo_name,
+            "path": str(repo_path),
+            "generated_at": _iso_now(),
+            "enabled": False,
+            "summary": {
+                "findings_total": 0,
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "at_risk": False,
+                "quality_score": 100,
+                "narrative": "qadrift disabled by policy",
+            },
+            "findings": [],
+            "top_findings": [],
+            "recommended_reviews": [],
+            "model_contract": {},
+            "errors": [],
+        }
+
+    snapshot = dict(repo_snapshot) if isinstance(repo_snapshot, dict) else {}
+    findings: list[dict[str, Any]] = []
+
+    # Reuse existing qadrift lane heuristics as the deterministic quality baseline.
+    qa = run_qa_check(repo_path)
+    for row in qa.findings:
+        sev = str(row.severity or "MEDIUM").strip().lower()
+        sev = sev if sev in ("high", "medium", "low") else "medium"
+        fp = _fingerprint([repo_name, row.category, row.file, row.description])
+        findings.append(
+            {
+                "fingerprint": fp,
+                "category": str(row.category or "qa"),
+                "severity": sev,
+                "title": f"QA signal: {row.category}",
+                "evidence": f"{row.file}: {row.description}",
+                "recommendation": "Add or strengthen deterministic tests and keep evidence in repo-local CI checks.",
+            }
+        )
+
+    if bool(cfg["include_workgraph_health"]):
+        if bool(snapshot.get("stalled")):
+            fp = _fingerprint([repo_name, "work-stalled", str(snapshot.get("stall_reasons") or "")])
+            reasons = snapshot.get("stall_reasons")
+            reason_line = "; ".join(str(item) for item in reasons[:2]) if isinstance(reasons, list) else "no reason"
+            findings.append(
+                {
+                    "fingerprint": fp,
+                    "category": "work-stalled",
+                    "severity": "high",
+                    "title": "Workgraph execution is stalled",
+                    "evidence": reason_line,
+                    "recommendation": "Unblock stalled tasks and tighten dependency chains before adding new scope.",
+                }
+            )
+        missing_deps = max(0, int(snapshot.get("missing_dependencies") or 0))
+        blocked_open = max(0, int(snapshot.get("blocked_open") or 0))
+        if missing_deps > 0 or blocked_open > 0:
+            fp = _fingerprint([repo_name, "dependency-gaps", str(missing_deps), str(blocked_open)])
+            findings.append(
+                {
+                    "fingerprint": fp,
+                    "category": "dependency-gaps",
+                    "severity": "medium",
+                    "title": "Dependency chain quality gaps detected",
+                    "evidence": f"missing_dependencies={missing_deps}; blocked_open={blocked_open}",
+                    "recommendation": "Repair task dependency integrity and verify ready queue transitions.",
+                }
+            )
+        has_work = bool(snapshot.get("in_progress")) or bool(snapshot.get("ready"))
+        if has_work and bool(snapshot.get("workgraph_exists")) and not bool(snapshot.get("service_running")):
+            fp = _fingerprint([repo_name, "executor-offline"])
+            findings.append(
+                {
+                    "fingerprint": fp,
+                    "category": "executor-offline",
+                    "severity": "medium",
+                    "title": "Workgraph service is stopped while work exists",
+                    "evidence": "ready/in-progress tasks present but service_running=false",
+                    "recommendation": "Restore service supervision and confirm heartbeat continuity.",
+                }
+            )
+
+    if bool(cfg["include_test_health"]):
+        has_src = (repo_path / "src").exists()
+        has_tests_dir = (repo_path / "tests").exists()
+        has_py_tests = any(repo_path.glob("tests/**/test_*.py")) or any(repo_path.glob("test_*.py"))
+        has_js_tests = any(repo_path.glob("**/*.test.ts")) or any(repo_path.glob("**/*.spec.ts")) or any(repo_path.glob("**/*.test.js"))
+        if has_src and not has_tests_dir and not has_py_tests and not has_js_tests:
+            fp = _fingerprint([repo_name, "tests-missing"])
+            findings.append(
+                {
+                    "fingerprint": fp,
+                    "category": "tests-missing",
+                    "severity": "high",
+                    "title": "Source exists without test surface",
+                    "evidence": "src/ present but no tests directory or obvious test files",
+                    "recommendation": "Create baseline behavioral tests before expanding feature work.",
+                }
+            )
+
+    if bool(cfg["include_playwright"]) and _looks_like_web_repo(repo_path):
+        playwright_cfg = (repo_path / "playwright.config.ts").exists() or (repo_path / "playwright.config.js").exists()
+        e2e_tests = any(repo_path.glob("tests/**/*.spec.ts")) or any(repo_path.glob("e2e/**/*.spec.ts"))
+        if not playwright_cfg or not e2e_tests:
+            fp = _fingerprint([repo_name, "ux-e2e-coverage"])
+            findings.append(
+                {
+                    "fingerprint": fp,
+                    "category": "ux-e2e-coverage",
+                    "severity": "medium",
+                    "title": "Web repo lacks robust Playwright regression surface",
+                    "evidence": f"playwright_config={playwright_cfg}; e2e_specs={e2e_tests}",
+                    "recommendation": "Add critical user-flow e2e coverage with Playwright and baseline screenshots.",
+                }
+            )
+
+    deduped: dict[str, dict[str, Any]] = {}
+    for row in findings:
+        fp = str(row.get("fingerprint") or "").strip()
+        if fp and fp not in deduped:
+            deduped[fp] = row
+
+    ordered = sorted(
+        deduped.values(),
+        key=lambda row: (
+            -_PROGRAM_SEVERITY_RANK.get(str(row.get("severity") or "").lower(), 0),
+            str(row.get("category") or ""),
+            str(row.get("evidence") or ""),
+        ),
+    )
+
+    top_findings = ordered[: int(cfg["max_findings_per_repo"])]
+    for row in top_findings:
+        row["model_prompt"] = _quality_prompt(repo_name, row)
+
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for row in top_findings:
+        sev = str(row.get("severity") or "").lower()
+        if sev in counts:
+            counts[sev] += 1
+    total = len(top_findings)
+    raw_total = len(ordered)
+    penalty = (counts["critical"] * 25) + (counts["high"] * 15) + (counts["medium"] * 8) + (counts["low"] * 3)
+    quality_score = max(0, 100 - min(95, penalty))
+    at_risk = counts["critical"] > 0 or counts["high"] > 0 or quality_score < 75 or raw_total > total
+    recommended_reviews = [row for row in top_findings if _PROGRAM_SEVERITY_RANK.get(str(row.get("severity") or "").lower(), 0) >= 2][:10]
+
+    narrative = (
+        f"qadrift evaluated `{repo_name}`: {total} prioritized findings "
+        f"(critical={counts['critical']}, high={counts['high']}, medium={counts['medium']}, low={counts['low']}). "
+        f"Quality score={quality_score}. Raw findings observed={raw_total}."
+    )
+    model_contract = {
+        "decision_owner": "model",
+        "triage_objective": "Prioritize quality remediations while preserving active work continuity.",
+        "required_outputs": [
+            "root_cause",
+            "smallest_safe_fix",
+            "validation_steps",
+            "workgraph_updates",
+        ],
+        "prompt_seed": (
+            "Review qadrift findings, request needed context, and generate prioritized corrective actions "
+            "without overriding local in-progress work."
+        ),
+    }
+    return {
+        "repo": repo_name,
+        "path": str(repo_path),
+        "generated_at": _iso_now(),
+        "enabled": True,
+        "summary": {
+            "findings_total": total,
+            "raw_findings_total": raw_total,
+            "critical": counts["critical"],
+            "high": counts["high"],
+            "medium": counts["medium"],
+            "low": counts["low"],
+            "at_risk": at_risk,
+            "quality_score": quality_score,
+            "narrative": narrative,
+            "modules_tested": qa.modules_tested,
+            "modules_untested": qa.modules_untested,
+        },
+        "findings": ordered,
+        "top_findings": top_findings,
+        "recommended_reviews": recommended_reviews,
+        "model_contract": model_contract,
+        "errors": [],
+    }
+
+
+def _run_cmd(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float = 40.0,
+) -> tuple[int, str, str]:
+    def _invoke(actual_cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            actual_cmd,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    try:
+        proc = _invoke(cmd)
+    except FileNotFoundError as exc:
+        if cmd and str(cmd[0]) == "wg":
+            candidates = [
+                str(Path.home() / ".cargo" / "bin" / "wg"),
+                "/opt/homebrew/bin/wg",
+                "/usr/local/bin/wg",
+            ]
+            seen: set[str] = set()
+            for candidate in candidates:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                if not Path(candidate).exists():
+                    continue
+                try:
+                    proc = _invoke([candidate, *cmd[1:]])
+                    return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
+                except FileNotFoundError:
+                    continue
+        return 127, "", str(exc)
+    except Exception as exc:
+        return 1, "", str(exc)
+    return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
+
+
+def emit_quality_review_tasks(
+    *,
+    repo_path: Path,
+    report: dict[str, Any],
+    max_tasks: int,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "enabled": True,
+        "attempted": 0,
+        "created": 0,
+        "existing": 0,
+        "skipped": 0,
+        "errors": [],
+        "tasks": [],
+    }
+    wg_dir = repo_path / ".workgraph"
+    if not wg_dir.exists():
+        out["errors"].append(f"{repo_path.name}: .workgraph missing")
+        return out
+
+    reviews = report.get("recommended_reviews")
+    review_rows = [row for row in reviews if isinstance(row, dict)] if isinstance(reviews, list) else []
+    for row in review_rows[: max(1, int(max_tasks))]:
+        fingerprint = str(row.get("fingerprint") or "")
+        if not fingerprint:
+            out["skipped"] = int(out["skipped"]) + 1
+            continue
+        task_id = f"qadrift-{fingerprint[:14]}"
+        title = f"qadrift: {str(row.get('severity') or 'medium')} {str(row.get('category') or 'finding')}"
+        prompt = str(row.get("model_prompt") or "")
+        desc = (
+            "Program-level qadrift review task.\n\n"
+            f"Finding: {row.get('title')}\n"
+            f"Severity: {row.get('severity')}\n"
+            f"Evidence: {row.get('evidence')}\n"
+            f"Recommendation: {row.get('recommendation')}\n\n"
+            f"Suggested agent prompt:\n{prompt}\n"
+        )
+
+        out["attempted"] = int(out["attempted"]) + 1
+        show_rc, _, show_err = _run_cmd(
+            ["wg", "--dir", str(wg_dir), "show", task_id, "--json"],
+            cwd=repo_path,
+            timeout=20.0,
+        )
+        if show_rc == 0:
+            out["existing"] = int(out["existing"]) + 1
+            out["tasks"].append({"task_id": task_id, "status": "existing"})
+            continue
+
+        add_rc, add_out, add_err = _run_cmd(
+            [
+                "wg",
+                "--dir",
+                str(wg_dir),
+                "add",
+                title,
+                "--id",
+                task_id,
+                "-d",
+                desc,
+                "-t",
+                "drift",
+                "-t",
+                "qadrift",
+                "-t",
+                "quality",
+                "-t",
+                "review",
+            ],
+            cwd=repo_path,
+            timeout=30.0,
+        )
+        if add_rc == 0:
+            out["created"] = int(out["created"]) + 1
+            out["tasks"].append({"task_id": task_id, "status": "created"})
+        else:
+            err = (add_err or add_out or show_err or "").strip()
+            out["errors"].append(f"{repo_path.name}: could not create {task_id}: {err[:220]}")
+
+    out["tasks"] = list(out.get("tasks") or [])[:80]
+    out["errors"] = list(out.get("errors") or [])[:80]
+    return out

@@ -40,6 +40,17 @@ def _policy() -> SimpleNamespace:
         stalledrift={"enabled": True},
         servicedrift={"enabled": True},
         federatedrift={"enabled": True, "open_draft_prs": True},
+        secdrift={
+            "enabled": True,
+            "emit_review_tasks": True,
+            "max_review_tasks_per_repo": 2,
+            "hard_stop_on_critical": False,
+        },
+        qadrift={
+            "enabled": True,
+            "emit_review_tasks": True,
+            "max_review_tasks_per_repo": 2,
+        },
         autonomy_default={
             "level": "safe-fix",
             "can_push": False,
@@ -127,6 +138,38 @@ class FactoryDriftTests(unittest.TestCase):
         self.assertIn("restart_workgraph_service", kinds)
         self.assertIn("unblock_stalled_execution", kinds)
         self.assertIn("repair_dependency_chain", kinds)
+
+    def test_build_factory_cycle_includes_sec_and_quality_actions(self) -> None:
+        policy = _policy()
+        snapshot = {
+            "overview": {"attention_repos": [{"repo": "repo-a", "score": 10}]},
+            "repos": [
+                {
+                    "name": "repo-a",
+                    "exists": True,
+                    "workgraph_exists": True,
+                    "service_running": True,
+                    "activity_state": "active",
+                    "missing_dependencies": 0,
+                    "blocked_open": 0,
+                    "stale_open": [],
+                    "stale_in_progress": [],
+                    "behind": 0,
+                    "git_dirty": False,
+                    "ready": [],
+                    "in_progress": [{"id": "ip1"}],
+                    "security": {"findings_total": 2, "critical": 0, "high": 1},
+                    "quality": {"findings_total": 3, "quality_score": 68, "at_risk": True},
+                }
+            ],
+            "upstream_candidates": [],
+            "updates": {},
+        }
+        cycle = build_factory_cycle(snapshot=snapshot, policy=policy, project_name="driftdriver")
+        actions = [row for row in (cycle.get("action_plan") or []) if isinstance(row, dict)]
+        kinds = {str(row.get("kind") or "") for row in actions}
+        self.assertIn("run_security_scan", kinds)
+        self.assertIn("run_quality_audit", kinds)
 
     def test_build_factory_cycle_respects_repo_and_global_budgets(self) -> None:
         policy = _policy()
@@ -389,6 +432,88 @@ class FactoryDriftTests(unittest.TestCase):
             self.assertEqual(cycle["execution_status"], "failed")
             attempts = execution.get("attempts") or []
             self.assertEqual(str(attempts[1]["status"]), "skipped")
+
+    def test_execute_factory_cycle_runs_sec_and_quality_actions(self) -> None:
+        policy = _policy()
+        cycle = {
+            "cycle_id": "factory-test",
+            "generated_at": "2026-03-05T12:00:00+00:00",
+            "execution_mode": "execute",
+            "execution_status": "planned_only",
+            "policy": {"factory": {"hard_stop_on_failed_verification": True}},
+            "action_plan": [
+                {
+                    "id": "repo-a:run_security_scan:1",
+                    "repo": "repo-a",
+                    "module": "secdrift",
+                    "kind": "run_security_scan",
+                    "automation_allowed": True,
+                },
+                {
+                    "id": "repo-a:run_quality_audit:2",
+                    "repo": "repo-a",
+                    "module": "qadrift",
+                    "kind": "run_quality_audit",
+                    "automation_allowed": True,
+                },
+            ],
+            "outcomes": {"planned_actions": 2, "executed_actions": 0},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "repo-a"
+            (repo / ".workgraph").mkdir(parents=True, exist_ok=True)
+            snapshot = {
+                "repos": [
+                    {
+                        "name": "repo-a",
+                        "path": str(repo),
+                        "stalled": False,
+                        "missing_dependencies": 0,
+                        "blocked_open": 0,
+                        "workgraph_exists": True,
+                        "service_running": True,
+                        "in_progress": [],
+                        "ready": [],
+                    }
+                ]
+            }
+
+            sec_report = {
+                "summary": {"findings_total": 2, "critical": 0, "high": 1},
+                "recommended_reviews": [{"fingerprint": "abc", "severity": "high"}],
+                "model_contract": {"decision_owner": "model"},
+            }
+            qa_report = {
+                "summary": {"findings_total": 3, "quality_score": 72},
+                "recommended_reviews": [{"fingerprint": "def", "severity": "medium"}],
+                "model_contract": {"decision_owner": "model"},
+            }
+            with patch("driftdriver.factorydrift.run_secdrift_scan", return_value=sec_report), patch(
+                "driftdriver.factorydrift.emit_security_review_tasks",
+                return_value={"enabled": True, "attempted": 1, "created": 1, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
+            ), patch(
+                "driftdriver.factorydrift.run_program_quality_scan",
+                return_value=qa_report,
+            ), patch(
+                "driftdriver.factorydrift.emit_quality_review_tasks",
+                return_value={"enabled": True, "attempted": 1, "created": 1, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
+            ):
+                execution = execute_factory_cycle(
+                    cycle=cycle,
+                    snapshot=snapshot,
+                    policy=policy,
+                    project_dir=root,
+                    emit_followups=False,
+                    max_followups_per_repo=2,
+                    allow_execute_draft_prs=False,
+                )
+
+            self.assertEqual(execution["executed"], 2)
+            self.assertEqual(execution["failed"], 0)
+            attempts = execution.get("attempts") or []
+            self.assertEqual(str(attempts[0]["status"]), "succeeded")
+            self.assertEqual(str(attempts[1]["status"]), "succeeded")
 
 
 if __name__ == "__main__":

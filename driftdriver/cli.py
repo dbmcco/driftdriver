@@ -2508,7 +2508,7 @@ def _build_parser() -> argparse.ArgumentParser:
     factory.add_argument("--skip-updates", action="store_true", help="Skip remote update checks for this cycle")
     factory.add_argument("--max-next", type=int, default=5, help="Max next-work items per repo for snapshot context")
     factory.add_argument("--plan-only", action="store_true", help="Force plan-only mode for this cycle")
-    factory.add_argument("--execute", action="store_true", help="Request execute mode in cycle metadata")
+    factory.add_argument("--execute", action="store_true", help="Run execute mode with deterministic safe handlers")
     factory.add_argument("--force", action="store_true", help="Run even when [factory].enabled is false")
     factory.add_argument("--emit-followups", action="store_true", help="Create/update local corrective workgraph tasks")
     factory.add_argument("--execute-draft-prs", action="store_true", help="Allow factory executor to open upstream draft PRs")

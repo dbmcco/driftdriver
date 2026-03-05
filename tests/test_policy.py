@@ -44,6 +44,11 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.stalledrift["open_without_progress_minutes"], 120)
             self.assertEqual(p.servicedrift["restart_budget_per_cycle"], 4)
             self.assertEqual(p.federatedrift["required_checks"], ["drifts", "tests", "lint"])
+            self.assertEqual(p.secdrift["interval_seconds"], 14400)
+            self.assertEqual(p.secdrift["max_review_tasks_per_repo"], 3)
+            self.assertFalse(p.secdrift["run_pentest"])
+            self.assertTrue(p.qadrift["include_playwright"])
+            self.assertEqual(p.qadrift["interval_seconds"], 21600)
             self.assertEqual(p.autonomy_default["level"], "observe")
             self.assertFalse(p.autonomy_default["can_push"])
             self.assertEqual(p.autonomy_repos, [])
@@ -126,6 +131,29 @@ class PolicyTests(unittest.TestCase):
                         "allow_auto_merge = true",
                         "required_checks = [\"\", \"unit\"]",
                         "",
+                        "[secdrift]",
+                        "enabled = false",
+                        "interval_seconds = -10",
+                        "max_findings_per_repo = 0",
+                        "scan_max_files = -1",
+                        "scan_max_file_bytes = -4096",
+                        "run_pentest = true",
+                        "allow_network_scans = true",
+                        "target_urls = [\"\", \"https://example.com\"]",
+                        "emit_review_tasks = false",
+                        "max_review_tasks_per_repo = -3",
+                        "hard_stop_on_critical = true",
+                        "",
+                        "[qadrift]",
+                        "enabled = false",
+                        "interval_seconds = -1",
+                        "max_findings_per_repo = 0",
+                        "emit_review_tasks = false",
+                        "max_review_tasks_per_repo = -2",
+                        "include_playwright = false",
+                        "include_test_health = false",
+                        "include_workgraph_health = false",
+                        "",
                         "[autonomy.default]",
                         "level = \"invalid-tier\"",
                         "can_push = true",
@@ -189,6 +217,25 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.servicedrift["escalate_after_consecutive_failures"], 1)
             self.assertFalse(p.federatedrift["enabled"])
             self.assertEqual(p.federatedrift["required_checks"], ["unit"])
+            self.assertFalse(p.secdrift["enabled"])
+            self.assertEqual(p.secdrift["interval_seconds"], 0)
+            self.assertEqual(p.secdrift["max_findings_per_repo"], 1)
+            self.assertEqual(p.secdrift["scan_max_files"], 20)
+            self.assertEqual(p.secdrift["scan_max_file_bytes"], 2048)
+            self.assertTrue(p.secdrift["run_pentest"])
+            self.assertTrue(p.secdrift["allow_network_scans"])
+            self.assertEqual(p.secdrift["target_urls"], ["https://example.com"])
+            self.assertFalse(p.secdrift["emit_review_tasks"])
+            self.assertEqual(p.secdrift["max_review_tasks_per_repo"], 1)
+            self.assertTrue(p.secdrift["hard_stop_on_critical"])
+            self.assertFalse(p.qadrift["enabled"])
+            self.assertEqual(p.qadrift["interval_seconds"], 0)
+            self.assertEqual(p.qadrift["max_findings_per_repo"], 1)
+            self.assertFalse(p.qadrift["emit_review_tasks"])
+            self.assertEqual(p.qadrift["max_review_tasks_per_repo"], 1)
+            self.assertFalse(p.qadrift["include_playwright"])
+            self.assertFalse(p.qadrift["include_test_health"])
+            self.assertFalse(p.qadrift["include_workgraph_health"])
             self.assertEqual(p.autonomy_default["level"], "observe")
             self.assertTrue(p.autonomy_default["can_push"])
             self.assertTrue(p.autonomy_default["can_open_pr"])

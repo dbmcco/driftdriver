@@ -336,6 +336,10 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertIn("overview", snapshot)
             self.assertIn("repo_dependency_overview", snapshot)
             self.assertIn("narrative", snapshot)
+            self.assertIn("secdrift", snapshot)
+            self.assertIn("qadrift", snapshot)
+            self.assertIn("security", snapshot["repos"][0])
+            self.assertIn("quality", snapshot["repos"][0])
             packets = render_upstream_packets([])
             self.assertIn("No upstream contribution candidates detected", packets)
 
@@ -490,6 +494,8 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("/api/status", html)
         self.assertIn("Narrated Overview", html)
         self.assertIn("Action Center", html)
+        self.assertIn("Security Reviews", html)
+        self.assertIn("Quality Reviews", html)
         self.assertIn("Dependency Graph", html)
         self.assertIn("Stalled Repos", html)
         self.assertIn("graph-zoom-in", html)
@@ -626,6 +632,12 @@ class EcosystemHubTests(unittest.TestCase):
                     dep_payload = json.loads(resp.read().decode("utf-8"))
                 self.assertIn("nodes", dep_payload)
                 self.assertIn("edges", dep_payload)
+                with urlopen(f"http://127.0.0.1:{port}/api/security", timeout=1.0) as resp:  # noqa: S310
+                    security_payload = json.loads(resp.read().decode("utf-8"))
+                self.assertIn("summary", security_payload)
+                with urlopen(f"http://127.0.0.1:{port}/api/quality", timeout=1.0) as resp:  # noqa: S310
+                    quality_payload = json.loads(resp.read().decode("utf-8"))
+                self.assertIn("summary", quality_payload)
             finally:
                 stop_service_process(project)
 

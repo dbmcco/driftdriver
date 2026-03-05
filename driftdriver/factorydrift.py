@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from driftdriver.qadrift import emit_quality_review_tasks, run_program_quality_scan
+from driftdriver.secdrift import emit_security_review_tasks, run_secdrift_scan
+
 
 _DRIFTDRIVER_ROOT = Path(__file__).resolve().parents[1]
 
@@ -153,6 +156,16 @@ def _update_count(snapshot: dict[str, Any]) -> dict[str, int]:
     return out
 
 
+def _repo_security_summary(repo: dict[str, Any]) -> dict[str, Any]:
+    row = repo.get("security")
+    return dict(row) if isinstance(row, dict) else {}
+
+
+def _repo_quality_summary(repo: dict[str, Any]) -> dict[str, Any]:
+    row = repo.get("quality")
+    return dict(row) if isinstance(row, dict) else {}
+
+
 def _repo_priority(
     *,
     repo: dict[str, Any],
@@ -225,6 +238,31 @@ def _repo_priority(
     if bool(repo.get("git_dirty")):
         score += 3
         reasons.append("dirty_worktree")
+
+    sec = _repo_security_summary(repo)
+    sec_critical = max(0, int(sec.get("critical") or 0))
+    sec_high = max(0, int(sec.get("high") or 0))
+    sec_total = max(0, int(sec.get("findings_total") or 0))
+    if sec_critical > 0:
+        score += min(34, sec_critical * 14)
+        reasons.append(f"security_critical={sec_critical}")
+    if sec_high > 0:
+        score += min(22, sec_high * 8)
+        reasons.append(f"security_high={sec_high}")
+    if sec_total > 0 and sec_critical <= 0 and sec_high <= 0:
+        score += min(10, sec_total * 2)
+        reasons.append(f"security_findings={sec_total}")
+
+    quality = _repo_quality_summary(repo)
+    quality_high = max(0, int(quality.get("high") or 0))
+    quality_score = max(0, int(quality.get("quality_score") or 100))
+    quality_at_risk = bool(quality.get("at_risk"))
+    if quality_at_risk:
+        score += min(16, 8 + quality_high * 3)
+        reasons.append("quality_at_risk")
+    if quality_score < 85:
+        score += min(10, max(1, (85 - quality_score) // 4))
+        reasons.append(f"quality_score={quality_score}")
 
     return score, reasons
 
@@ -441,6 +479,54 @@ def _plan_repo_actions(
             ),
         )
 
+    secdrift_cfg = getattr(policy, "secdrift", {})
+    sec_summary = _repo_security_summary(repo)
+    sec_findings = max(0, int(sec_summary.get("findings_total") or 0))
+    sec_critical = max(0, int(sec_summary.get("critical") or 0))
+    sec_high = max(0, int(sec_summary.get("high") or 0))
+    if isinstance(secdrift_cfg, dict) and bool(secdrift_cfg.get("enabled", True)):
+        if sec_findings > 0 or sec_critical > 0 or sec_high > 0:
+            sec_priority = 98 if sec_critical > 0 else (84 if sec_high > 0 else 66)
+            add(
+                module="secdrift",
+                kind="run_security_scan",
+                priority=sec_priority,
+                reason=(
+                    "security findings require model triage "
+                    f"(critical={sec_critical}, high={sec_high}, total={sec_findings})"
+                ),
+                prompt=_make_prompt(
+                    repo_name,
+                    "Run secdrift triage. Keep analysis model-mediated, classify root cause, and create/update "
+                    "repo-local security review tasks with exact remediation prompts and verification steps.",
+                ),
+                gate=True,
+            )
+
+    qadrift_cfg = getattr(policy, "qadrift", {})
+    quality = _repo_quality_summary(repo)
+    quality_findings = max(0, int(quality.get("findings_total") or 0))
+    quality_score = max(0, int(quality.get("quality_score") or 100))
+    quality_at_risk = bool(quality.get("at_risk"))
+    if isinstance(qadrift_cfg, dict) and bool(qadrift_cfg.get("enabled", True)):
+        if quality_at_risk or quality_findings > 0 or quality_score < 85:
+            qa_priority = 82 if quality_score < 70 else (74 if quality_at_risk else 62)
+            add(
+                module="qadrift",
+                kind="run_quality_audit",
+                priority=qa_priority,
+                reason=(
+                    "quality signals require model triage "
+                    f"(score={quality_score}, findings={quality_findings}, at_risk={quality_at_risk})"
+                ),
+                prompt=_make_prompt(
+                    repo_name,
+                    "Run qadrift quality triage, preserve active work, and emit targeted review tasks "
+                    "for test/ux/dependency remediation in local workgraph.",
+                ),
+                gate=True,
+            )
+
     actions.sort(key=lambda row: (-int(row.get("priority") or 0), str(row.get("id") or "")))
     return actions
 
@@ -605,6 +691,16 @@ def build_factory_cycle(
                 "temperature": float(model_cfg.get("temperature") or 0.2),
                 "max_tool_rounds": max(1, int(model_cfg.get("max_tool_rounds") or 6)),
             },
+            "secdrift": (
+                dict(getattr(policy, "secdrift"))
+                if isinstance(getattr(policy, "secdrift", {}), dict)
+                else {}
+            ),
+            "qadrift": (
+                dict(getattr(policy, "qadrift"))
+                if isinstance(getattr(policy, "qadrift", {}), dict)
+                else {}
+            ),
         },
         "inputs": {
             "repo_count": len(repos),
@@ -883,6 +979,98 @@ def execute_factory_cycle(
                 _done("succeeded", reason="upstream delta review completed", details={"exit_code": rc, "stdout": out[:220]})
             else:
                 _done("failed", reason=(err or out or "updates command failed")[:220], exit_code=rc)
+            continue
+
+        if kind == "run_security_scan":
+            sec_cfg = getattr(policy, "secdrift", {})
+            sec_cfg = dict(sec_cfg) if isinstance(sec_cfg, dict) else {}
+            report = run_secdrift_scan(
+                repo_name=repo,
+                repo_path=repo_path,
+                policy_cfg=sec_cfg,
+            )
+            emit_cfg = bool(sec_cfg.get("emit_review_tasks", True))
+            max_tasks = max(1, int(sec_cfg.get("max_review_tasks_per_repo", 3)))
+            task_emit = {
+                "enabled": False,
+                "attempted": 0,
+                "created": 0,
+                "existing": 0,
+                "skipped": 0,
+                "errors": [],
+                "tasks": [],
+            }
+            if emit_cfg:
+                task_emit = emit_security_review_tasks(
+                    repo_path=repo_path,
+                    report=report,
+                    max_tasks=max_tasks,
+                )
+            summary_row = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+            critical = int(summary_row.get("critical") or 0)
+            total = int(summary_row.get("findings_total") or 0)
+            hard_stop_sec = bool(sec_cfg.get("hard_stop_on_critical", False))
+            details = {
+                "summary": summary_row,
+                "recommended_reviews": list(report.get("recommended_reviews") or [])[:8],
+                "task_emission": task_emit,
+                "model_contract": report.get("model_contract") if isinstance(report.get("model_contract"), dict) else {},
+            }
+            if hard_stop_sec and critical > 0:
+                _done(
+                    "failed",
+                    reason=f"secdrift critical findings={critical}",
+                    exit_code=1,
+                    details=details,
+                )
+            else:
+                _done(
+                    "succeeded",
+                    reason=f"secdrift findings={total} critical={critical}",
+                    details=details,
+                )
+            continue
+
+        if kind == "run_quality_audit":
+            qa_cfg = getattr(policy, "qadrift", {})
+            qa_cfg = dict(qa_cfg) if isinstance(qa_cfg, dict) else {}
+            repo_row = repo_rows.get(repo, {})
+            report = run_program_quality_scan(
+                repo_name=repo,
+                repo_path=repo_path,
+                repo_snapshot=repo_row if isinstance(repo_row, dict) else {},
+                policy_cfg=qa_cfg,
+            )
+            emit_cfg = bool(qa_cfg.get("emit_review_tasks", True))
+            max_tasks = max(1, int(qa_cfg.get("max_review_tasks_per_repo", 3)))
+            task_emit = {
+                "enabled": False,
+                "attempted": 0,
+                "created": 0,
+                "existing": 0,
+                "skipped": 0,
+                "errors": [],
+                "tasks": [],
+            }
+            if emit_cfg:
+                task_emit = emit_quality_review_tasks(
+                    repo_path=repo_path,
+                    report=report,
+                    max_tasks=max_tasks,
+                )
+            summary_row = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+            quality_score = int(summary_row.get("quality_score") or 100)
+            total = int(summary_row.get("findings_total") or 0)
+            _done(
+                "succeeded",
+                reason=f"qadrift findings={total} quality_score={quality_score}",
+                details={
+                    "summary": summary_row,
+                    "recommended_reviews": list(report.get("recommended_reviews") or [])[:8],
+                    "task_emission": task_emit,
+                    "model_contract": report.get("model_contract") if isinstance(report.get("model_contract"), dict) else {},
+                },
+            )
             continue
 
         if kind == "prepare_upstream_draft_prs":

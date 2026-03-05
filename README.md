@@ -557,10 +557,11 @@ Design docs for the next-stage ecosystem control plane:
 - `docs/plans/factorydrift-model-mediated-contract.md`
 - `docs/plans/drift-policy-factory-extensions.md`
 - `docs/plans/dark-factory-operating-model.md`
+- `docs/plans/secdrift-qadrift-model-mediated-design.md`
 
 These documents define:
 - model-vs-code decision ownership
-- new ecosystem drift modules (`sourcedrift`, `syncdrift`, `stalledrift`, `servicedrift`, `federatedrift`, `factorydrift`)
+- new ecosystem drift modules (`sourcedrift`, `syncdrift`, `stalledrift`, `servicedrift`, `federatedrift`, `secdrift`, `qadrift`, `factorydrift`)
 - policy extensions for autonomy tiers and safety budgets
 - phased rollout toward autonomous dark-factory operation
   with upstream pull-down integration and verifiable guardrails
@@ -606,7 +607,32 @@ Current automated handlers include:
 - run `git fetch --all --prune` for sync signals
 - run driftdriver checks for active tasks
 - run upstream update checks
+- run `secdrift` scans and emit policy-bounded security review tasks
+- run program-level `qadrift` scans and emit policy-bounded quality review tasks
 - delegate risky corrective actions to explicit local follow-up tasks
+
+Optional security/quality policy sections:
+
+```toml
+[secdrift]
+enabled = true
+interval_seconds = 14400
+run_pentest = false
+allow_network_scans = false
+target_urls = []
+emit_review_tasks = true
+max_review_tasks_per_repo = 3
+hard_stop_on_critical = false
+
+[qadrift]
+enabled = true
+interval_seconds = 21600
+emit_review_tasks = true
+max_review_tasks_per_repo = 3
+include_playwright = true
+include_test_health = true
+include_workgraph_health = true
+```
 
 ## Development
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from driftdriver.qadrift import (
     QAFinding,
@@ -12,8 +14,10 @@ from driftdriver.qadrift import (
     check_false_confidence,
     check_integration_coverage,
     check_mock_usage,
+    emit_quality_review_tasks,
     find_untested_modules,
     format_report,
+    run_program_quality_scan,
     run_qa_check,
 )
 
@@ -170,6 +174,75 @@ class QADriftInstallTests(unittest.TestCase):
 
             self.assertTrue(wrote)
             self.assertTrue((wg_dir / "qadrift").exists())
+
+
+class ProgramQADriftTests(unittest.TestCase):
+    def test_run_program_quality_scan_detects_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / "src").mkdir(parents=True, exist_ok=True)
+            (repo / "src" / "app.py").write_text("def run(): return 1\n", encoding="utf-8")
+            report = run_program_quality_scan(
+                repo_name="demo",
+                repo_path=repo,
+                repo_snapshot={
+                    "stalled": True,
+                    "stall_reasons": ["no active executor"],
+                    "missing_dependencies": 1,
+                    "blocked_open": 1,
+                    "workgraph_exists": True,
+                    "service_running": False,
+                    "in_progress": [],
+                    "ready": [{"id": "r1"}],
+                },
+                policy_cfg={"include_playwright": False},
+            )
+            summary = report.get("summary") or {}
+            self.assertTrue(bool(summary.get("at_risk")))
+            self.assertGreater(int(summary.get("findings_total") or 0), 0)
+
+    def test_emit_quality_review_tasks_creates_and_reuses(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir(parents=True, exist_ok=True)
+            report = {
+                "recommended_reviews": [
+                    {
+                        "fingerprint": "abc1234567890def",
+                        "severity": "high",
+                        "category": "work-stalled",
+                        "title": "Stalled repo",
+                        "evidence": "no executor",
+                        "recommendation": "unblock",
+                        "model_prompt": "prompt",
+                    },
+                    {
+                        "fingerprint": "fff1234567890def",
+                        "severity": "medium",
+                        "category": "tests-missing",
+                        "title": "Missing tests",
+                        "evidence": "src only",
+                        "recommendation": "add tests",
+                        "model_prompt": "prompt",
+                    },
+                ]
+            }
+            responses = [
+                subprocess.CompletedProcess(["wg"], 1, "", "not found"),
+                subprocess.CompletedProcess(["wg"], 0, "", ""),
+                subprocess.CompletedProcess(["wg"], 0, "{}", ""),
+            ]
+
+            def _fake_run(_cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                return responses.pop(0)
+
+            with patch("driftdriver.qadrift.subprocess.run", side_effect=_fake_run):
+                out = emit_quality_review_tasks(repo_path=repo, report=report, max_tasks=2)
+
+            self.assertEqual(out["attempted"], 2)
+            self.assertEqual(out["created"], 1)
+            self.assertEqual(out["existing"], 1)
+            self.assertEqual(len(out["errors"]), 0)
 
 
 if __name__ == "__main__":

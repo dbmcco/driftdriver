@@ -95,6 +95,35 @@ def _default_federatedrift_cfg() -> dict[str, Any]:
     }
 
 
+def _default_secdrift_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "interval_seconds": 14400,
+        "max_findings_per_repo": 40,
+        "scan_max_files": 320,
+        "scan_max_file_bytes": 262144,
+        "run_pentest": False,
+        "allow_network_scans": False,
+        "target_urls": [],
+        "emit_review_tasks": True,
+        "max_review_tasks_per_repo": 3,
+        "hard_stop_on_critical": False,
+    }
+
+
+def _default_qadrift_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "interval_seconds": 21600,
+        "max_findings_per_repo": 40,
+        "emit_review_tasks": True,
+        "max_review_tasks_per_repo": 3,
+        "include_playwright": True,
+        "include_test_health": True,
+        "include_workgraph_health": True,
+    }
+
+
 def _default_autonomy_default_cfg() -> dict[str, Any]:
     return {
         "level": "observe",
@@ -131,6 +160,8 @@ class DriftPolicy:
     stalledrift: dict[str, Any]
     servicedrift: dict[str, Any]
     federatedrift: dict[str, Any]
+    secdrift: dict[str, Any]
+    qadrift: dict[str, Any]
     autonomy_default: dict[str, Any]
     autonomy_repos: list[dict[str, Any]]
 
@@ -216,6 +247,29 @@ def _default_policy_text() -> str:
         "allow_auto_merge = false\n"
         "required_checks = [\"drifts\", \"tests\", \"lint\"]\n"
         "\n"
+        "[secdrift]\n"
+        "enabled = true\n"
+        "interval_seconds = 14400\n"
+        "max_findings_per_repo = 40\n"
+        "scan_max_files = 320\n"
+        "scan_max_file_bytes = 262144\n"
+        "run_pentest = false\n"
+        "allow_network_scans = false\n"
+        "target_urls = []\n"
+        "emit_review_tasks = true\n"
+        "max_review_tasks_per_repo = 3\n"
+        "hard_stop_on_critical = false\n"
+        "\n"
+        "[qadrift]\n"
+        "enabled = true\n"
+        "interval_seconds = 21600\n"
+        "max_findings_per_repo = 40\n"
+        "emit_review_tasks = true\n"
+        "max_review_tasks_per_repo = 3\n"
+        "include_playwright = true\n"
+        "include_test_health = true\n"
+        "include_workgraph_health = true\n"
+        "\n"
         "[autonomy.default]\n"
         "level = \"observe\"\n"
         "can_push = false\n"
@@ -267,6 +321,8 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             stalledrift=_default_stalledrift_cfg(),
             servicedrift=_default_servicedrift_cfg(),
             federatedrift=_default_federatedrift_cfg(),
+            secdrift=_default_secdrift_cfg(),
+            qadrift=_default_qadrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
         )
@@ -299,6 +355,8 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             stalledrift=_default_stalledrift_cfg(),
             servicedrift=_default_servicedrift_cfg(),
             federatedrift=_default_federatedrift_cfg(),
+            secdrift=_default_secdrift_cfg(),
+            qadrift=_default_qadrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
         )
@@ -463,6 +521,50 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         checks = [str(x).strip() for x in checks_raw if str(x).strip()]
         federatedrift["required_checks"] = checks or list(_default_federatedrift_cfg()["required_checks"])
 
+    secdrift_raw = data.get("secdrift") if isinstance(data.get("secdrift"), dict) else {}
+    secdrift = _default_secdrift_cfg()
+    secdrift["enabled"] = bool(secdrift_raw.get("enabled", secdrift["enabled"]))
+    secdrift["interval_seconds"] = max(0, int(secdrift_raw.get("interval_seconds", secdrift["interval_seconds"])))
+    secdrift["max_findings_per_repo"] = max(
+        1, int(secdrift_raw.get("max_findings_per_repo", secdrift["max_findings_per_repo"]))
+    )
+    secdrift["scan_max_files"] = max(20, int(secdrift_raw.get("scan_max_files", secdrift["scan_max_files"])))
+    secdrift["scan_max_file_bytes"] = max(
+        2048, int(secdrift_raw.get("scan_max_file_bytes", secdrift["scan_max_file_bytes"]))
+    )
+    secdrift["run_pentest"] = bool(secdrift_raw.get("run_pentest", secdrift["run_pentest"]))
+    secdrift["allow_network_scans"] = bool(
+        secdrift_raw.get("allow_network_scans", secdrift["allow_network_scans"])
+    )
+    target_urls_raw = secdrift_raw.get("target_urls")
+    if isinstance(target_urls_raw, list):
+        target_urls = [str(item).strip() for item in target_urls_raw if str(item).strip()]
+        secdrift["target_urls"] = target_urls[:20]
+    secdrift["emit_review_tasks"] = bool(secdrift_raw.get("emit_review_tasks", secdrift["emit_review_tasks"]))
+    secdrift["max_review_tasks_per_repo"] = max(
+        1, int(secdrift_raw.get("max_review_tasks_per_repo", secdrift["max_review_tasks_per_repo"]))
+    )
+    secdrift["hard_stop_on_critical"] = bool(
+        secdrift_raw.get("hard_stop_on_critical", secdrift["hard_stop_on_critical"])
+    )
+
+    qadrift_raw = data.get("qadrift") if isinstance(data.get("qadrift"), dict) else {}
+    qadrift = _default_qadrift_cfg()
+    qadrift["enabled"] = bool(qadrift_raw.get("enabled", qadrift["enabled"]))
+    qadrift["interval_seconds"] = max(0, int(qadrift_raw.get("interval_seconds", qadrift["interval_seconds"])))
+    qadrift["max_findings_per_repo"] = max(
+        1, int(qadrift_raw.get("max_findings_per_repo", qadrift["max_findings_per_repo"]))
+    )
+    qadrift["emit_review_tasks"] = bool(qadrift_raw.get("emit_review_tasks", qadrift["emit_review_tasks"]))
+    qadrift["max_review_tasks_per_repo"] = max(
+        1, int(qadrift_raw.get("max_review_tasks_per_repo", qadrift["max_review_tasks_per_repo"]))
+    )
+    qadrift["include_playwright"] = bool(qadrift_raw.get("include_playwright", qadrift["include_playwright"]))
+    qadrift["include_test_health"] = bool(qadrift_raw.get("include_test_health", qadrift["include_test_health"]))
+    qadrift["include_workgraph_health"] = bool(
+        qadrift_raw.get("include_workgraph_health", qadrift["include_workgraph_health"])
+    )
+
     autonomy_raw = data.get("autonomy") if isinstance(data.get("autonomy"), dict) else {}
     autonomy_default_raw = autonomy_raw.get("default") if isinstance(autonomy_raw.get("default"), dict) else {}
     autonomy_default = _default_autonomy_default_cfg()
@@ -522,6 +624,8 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         stalledrift=stalledrift,
         servicedrift=servicedrift,
         federatedrift=federatedrift,
+        secdrift=secdrift,
+        qadrift=qadrift,
         autonomy_default=autonomy_default,
         autonomy_repos=autonomy_repos,
     )

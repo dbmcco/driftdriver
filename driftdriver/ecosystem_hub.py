@@ -34,6 +34,8 @@ from driftdriver.factorydrift import (
     write_factory_ledger,
 )
 from driftdriver.policy import load_drift_policy
+from driftdriver.qadrift import run_program_quality_scan
+from driftdriver.secdrift import run_secdrift_scan
 from driftdriver.workgraph import load_workgraph
 
 
@@ -383,6 +385,10 @@ class RepoSnapshot:
     stalled: bool = False
     stall_reasons: list[str] = field(default_factory=list)
     narrative: str = ""
+    security: dict[str, Any] = field(default_factory=dict)
+    security_findings: list[dict[str, Any]] = field(default_factory=list)
+    quality: dict[str, Any] = field(default_factory=dict)
+    quality_findings: list[dict[str, Any]] = field(default_factory=list)
 
     def top_next_work(self, limit: int = 3) -> list[NextWorkItem]:
         out: list[NextWorkItem] = []
@@ -935,6 +941,75 @@ def _finalize_repo_snapshot(snap: RepoSnapshot) -> RepoSnapshot:
     return snap
 
 
+def _attach_sec_qa_signals(
+    snap: RepoSnapshot,
+    *,
+    repo_path: Path,
+    secdrift_policy: dict[str, Any] | None = None,
+    qadrift_policy: dict[str, Any] | None = None,
+) -> RepoSnapshot:
+    sec_cfg = dict(secdrift_policy) if isinstance(secdrift_policy, dict) else {}
+    qa_cfg = dict(qadrift_policy) if isinstance(qadrift_policy, dict) else {}
+
+    try:
+        sec_report = run_secdrift_scan(
+            repo_name=snap.name,
+            repo_path=repo_path,
+            policy_cfg=sec_cfg,
+        )
+        summary = sec_report.get("summary")
+        snap.security = dict(summary) if isinstance(summary, dict) else {}
+        rows = sec_report.get("top_findings")
+        snap.security_findings = [row for row in rows if isinstance(row, dict)][:18] if isinstance(rows, list) else []
+    except Exception as exc:
+        snap.security = {
+            "findings_total": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "at_risk": False,
+            "risk_score": 0,
+            "narrative": f"secdrift scan failed: {exc}",
+        }
+        snap.security_findings = []
+
+    try:
+        qa_report = run_program_quality_scan(
+            repo_name=snap.name,
+            repo_path=repo_path,
+            repo_snapshot={
+                "stalled": snap.stalled,
+                "stall_reasons": list(snap.stall_reasons),
+                "missing_dependencies": snap.missing_dependencies,
+                "blocked_open": snap.blocked_open,
+                "workgraph_exists": snap.workgraph_exists,
+                "service_running": snap.service_running,
+                "in_progress": list(snap.in_progress),
+                "ready": list(snap.ready),
+            },
+            policy_cfg=qa_cfg,
+        )
+        summary = qa_report.get("summary")
+        snap.quality = dict(summary) if isinstance(summary, dict) else {}
+        rows = qa_report.get("top_findings")
+        snap.quality_findings = [row for row in rows if isinstance(row, dict)][:18] if isinstance(rows, list) else []
+    except Exception as exc:
+        snap.quality = {
+            "findings_total": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "at_risk": False,
+            "quality_score": 100,
+            "narrative": f"qadrift scan failed: {exc}",
+        }
+        snap.quality_findings = []
+
+    return snap
+
+
 def _build_repo_task_graph(tasks: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not tasks:
         return [], []
@@ -1019,6 +1094,8 @@ def collect_repo_snapshot(
     *,
     max_next: int = 5,
     known_repo_names: set[str] | None = None,
+    secdrift_policy: dict[str, Any] | None = None,
+    qadrift_policy: dict[str, Any] | None = None,
 ) -> RepoSnapshot:
     snap = RepoSnapshot(name=repo_name, path=str(repo_path), exists=repo_path.exists())
     if not snap.exists:
@@ -1053,7 +1130,13 @@ def collect_repo_snapshot(
 
     wg_dir = repo_path / ".workgraph"
     if not (wg_dir / "graph.jsonl").exists():
-        return _finalize_repo_snapshot(snap)
+        snap = _finalize_repo_snapshot(snap)
+        return _attach_sec_qa_signals(
+            snap,
+            repo_path=repo_path,
+            secdrift_policy=secdrift_policy,
+            qadrift_policy=qadrift_policy,
+        )
 
     snap.workgraph_exists = True
 
@@ -1170,7 +1253,13 @@ def collect_repo_snapshot(
         known_repo_names=known_repo_names or set(),
         policy_order=policy_order,
     )
-    return _finalize_repo_snapshot(snap)
+    snap = _finalize_repo_snapshot(snap)
+    return _attach_sec_qa_signals(
+        snap,
+        repo_path=repo_path,
+        secdrift_policy=secdrift_policy,
+        qadrift_policy=qadrift_policy,
+    )
 
 
 def rank_next_work(repos: list[RepoSnapshot], *, limit: int = 20) -> list[dict[str, Any]]:
@@ -1337,6 +1426,32 @@ def _repo_attention_entry(repo: RepoSnapshot) -> dict[str, Any] | None:
     if repo.git_dirty:
         score += 2
         reasons.append("dirty working tree")
+    sec = repo.security if isinstance(repo.security, dict) else {}
+    sec_critical = max(0, int(sec.get("critical") or 0))
+    sec_high = max(0, int(sec.get("high") or 0))
+    sec_total = max(0, int(sec.get("findings_total") or 0))
+    if sec_critical > 0:
+        score += min(30, sec_critical * 12)
+        reasons.append(f"security critical: {sec_critical}")
+    if sec_high > 0:
+        score += min(16, sec_high * 5)
+        reasons.append(f"security high: {sec_high}")
+    if sec_total > 0 and sec_critical <= 0 and sec_high <= 0:
+        score += min(6, sec_total * 2)
+        reasons.append(f"security findings: {sec_total}")
+    qa = repo.quality if isinstance(repo.quality, dict) else {}
+    qa_critical = max(0, int(qa.get("critical") or 0))
+    qa_high = max(0, int(qa.get("high") or 0))
+    qa_score = max(0, int(qa.get("quality_score") or 100))
+    if qa_critical > 0:
+        score += min(24, qa_critical * 10)
+        reasons.append(f"quality critical: {qa_critical}")
+    if qa_high > 0:
+        score += min(12, qa_high * 4)
+        reasons.append(f"quality high: {qa_high}")
+    if qa_score < 80:
+        score += min(10, max(1, (80 - qa_score) // 4))
+        reasons.append(f"quality score: {qa_score}")
     if score <= 0:
         return None
     return {
@@ -1368,6 +1483,12 @@ def build_ecosystem_overview(
     repos_idle = 0
     repos_untracked = 0
     repos_dirty = 0
+    repos_security_risk = 0
+    repos_quality_risk = 0
+    security_critical = 0
+    security_high = 0
+    quality_critical = 0
+    quality_high = 0
     total_ahead = 0
     total_behind = 0
     attention: list[dict[str, Any]] = []
@@ -1393,6 +1514,16 @@ def build_ecosystem_overview(
             repos_untracked += 1
         if repo.git_dirty:
             repos_dirty += 1
+        sec = repo.security if isinstance(repo.security, dict) else {}
+        qa = repo.quality if isinstance(repo.quality, dict) else {}
+        if bool(sec.get("at_risk")):
+            repos_security_risk += 1
+        if bool(qa.get("at_risk")):
+            repos_quality_risk += 1
+        security_critical += int(sec.get("critical") or 0)
+        security_high += int(sec.get("high") or 0)
+        quality_critical += int(qa.get("critical") or 0)
+        quality_high += int(qa.get("high") or 0)
         total_ahead += repo.ahead
         total_behind += repo.behind
         entry = _repo_attention_entry(repo)
@@ -1408,6 +1539,12 @@ def build_ecosystem_overview(
         "repos_idle": repos_idle,
         "repos_untracked": repos_untracked,
         "repos_dirty": repos_dirty,
+        "repos_security_risk": repos_security_risk,
+        "repos_quality_risk": repos_quality_risk,
+        "security_critical": security_critical,
+        "security_high": security_high,
+        "quality_critical": quality_critical,
+        "quality_high": quality_high,
         "tasks_open": total_open,
         "tasks_ready": total_ready,
         "tasks_in_progress": total_in_progress,
@@ -1436,10 +1573,21 @@ def build_ecosystem_narrative(overview: dict[str, Any]) -> str:
     service_gaps = int(overview.get("repos_with_inactive_service") or 0)
     stalled_repos = int(overview.get("repos_stalled") or 0)
     error_repos = int(overview.get("repos_with_errors") or 0)
+    security_critical = int(overview.get("security_critical") or 0)
+    security_high = int(overview.get("security_high") or 0)
+    quality_critical = int(overview.get("quality_critical") or 0)
+    quality_high = int(overview.get("quality_high") or 0)
     active = int(overview.get("tasks_in_progress") or 0)
     ready = int(overview.get("tasks_ready") or 0)
 
-    if error_repos > 0 or service_gaps > 0 or stalled_repos > 0 or int(overview.get("missing_dependencies") or 0) > 0:
+    if (
+        error_repos > 0
+        or service_gaps > 0
+        or stalled_repos > 0
+        or int(overview.get("missing_dependencies") or 0) > 0
+        or security_critical > 0
+        or quality_critical > 0
+    ):
         tone = "Alert posture"
     elif stale > 0 or blockers > 0:
         tone = "Watch posture"
@@ -1453,6 +1601,10 @@ def build_ecosystem_narrative(overview: dict[str, Any]) -> str:
         f"Pressure points: {blockers} dependency blockers, {stale} aging tasks, {stalled_repos} stalled repos, "
         f"{service_gaps} repos without a running workgraph service."
     )
+    drift = (
+        f"Security/quality signals: security critical={security_critical}, security high={security_high}, "
+        f"quality critical={quality_critical}, quality high={quality_high}."
+    )
     attention = overview.get("attention_repos") or []
     if isinstance(attention, list) and attention:
         top = attention[0] if isinstance(attention[0], dict) else {}
@@ -1462,7 +1614,105 @@ def build_ecosystem_narrative(overview: dict[str, Any]) -> str:
         focus = f"Top follow-up repo: {repo} ({reason_line})."
     else:
         focus = "No concentrated risk repo detected right now."
-    return " ".join((headline, pressure, focus))
+    return " ".join((headline, pressure, drift, focus))
+
+
+def build_secdrift_overview(repos: list[RepoSnapshot]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    critical = 0
+    high = 0
+    medium = 0
+    low = 0
+    at_risk = 0
+    for repo in repos:
+        sec = repo.security if isinstance(repo.security, dict) else {}
+        row = {
+            "repo": repo.name,
+            "findings_total": int(sec.get("findings_total") or 0),
+            "critical": int(sec.get("critical") or 0),
+            "high": int(sec.get("high") or 0),
+            "medium": int(sec.get("medium") or 0),
+            "low": int(sec.get("low") or 0),
+            "risk_score": int(sec.get("risk_score") or 0),
+            "at_risk": bool(sec.get("at_risk")),
+            "narrative": str(sec.get("narrative") or ""),
+        }
+        critical += row["critical"]
+        high += row["high"]
+        medium += row["medium"]
+        low += row["low"]
+        if row["at_risk"]:
+            at_risk += 1
+        if row["findings_total"] > 0:
+            rows.append(row)
+    rows.sort(
+        key=lambda item: (
+            -int(item.get("critical") or 0),
+            -int(item.get("high") or 0),
+            -int(item.get("risk_score") or 0),
+            str(item.get("repo") or ""),
+        )
+    )
+    return {
+        "summary": {
+            "repos_at_risk": at_risk,
+            "critical": critical,
+            "high": high,
+            "medium": medium,
+            "low": low,
+            "findings_total": critical + high + medium + low,
+        },
+        "repos": rows[:24],
+    }
+
+
+def build_qadrift_overview(repos: list[RepoSnapshot]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    critical = 0
+    high = 0
+    medium = 0
+    low = 0
+    at_risk = 0
+    for repo in repos:
+        qa = repo.quality if isinstance(repo.quality, dict) else {}
+        row = {
+            "repo": repo.name,
+            "findings_total": int(qa.get("findings_total") or 0),
+            "critical": int(qa.get("critical") or 0),
+            "high": int(qa.get("high") or 0),
+            "medium": int(qa.get("medium") or 0),
+            "low": int(qa.get("low") or 0),
+            "quality_score": int(qa.get("quality_score") or 100),
+            "at_risk": bool(qa.get("at_risk")),
+            "narrative": str(qa.get("narrative") or ""),
+        }
+        critical += row["critical"]
+        high += row["high"]
+        medium += row["medium"]
+        low += row["low"]
+        if row["at_risk"]:
+            at_risk += 1
+        if row["findings_total"] > 0 or row["at_risk"] or row["quality_score"] < 90:
+            rows.append(row)
+    rows.sort(
+        key=lambda item: (
+            -int(item.get("critical") or 0),
+            -int(item.get("high") or 0),
+            int(item.get("quality_score") or 100),
+            str(item.get("repo") or ""),
+        )
+    )
+    return {
+        "summary": {
+            "repos_at_risk": at_risk,
+            "critical": critical,
+            "high": high,
+            "medium": medium,
+            "low": low,
+            "findings_total": critical + high + medium + low,
+        },
+        "repos": rows[:24],
+    }
 
 
 def _default_update_checker(*, project_dir: Path, repo_map: dict[str, Path]) -> dict[str, Any]:
@@ -1525,10 +1775,31 @@ def collect_ecosystem_snapshot(
         repo_sources[name] = "autodiscovered"
 
     known_repo_names = {str(name).strip() for name in repo_map.keys() if str(name).strip()}
+    try:
+        hub_policy = load_drift_policy(project_dir / ".workgraph")
+    except Exception:
+        hub_policy = None
+    secdrift_policy = (
+        dict(getattr(hub_policy, "secdrift"))
+        if hub_policy is not None and isinstance(getattr(hub_policy, "secdrift", {}), dict)
+        else {}
+    )
+    qadrift_policy = (
+        dict(getattr(hub_policy, "qadrift"))
+        if hub_policy is not None and isinstance(getattr(hub_policy, "qadrift", {}), dict)
+        else {}
+    )
     repos: list[RepoSnapshot] = []
     upstream: list[UpstreamCandidate] = []
     for name, path in sorted(repo_map.items()):
-        repo_snap = collect_repo_snapshot(name, path, max_next=max_next, known_repo_names=known_repo_names)
+        repo_snap = collect_repo_snapshot(
+            name,
+            path,
+            max_next=max_next,
+            known_repo_names=known_repo_names,
+            secdrift_policy=secdrift_policy,
+            qadrift_policy=qadrift_policy,
+        )
         repo_snap.source = repo_sources.get(name, "ecosystem-toml")
         repos.append(repo_snap)
         upstream.extend(generate_upstream_candidates(name, path))
@@ -1571,6 +1842,8 @@ def collect_ecosystem_snapshot(
         "overview": overview,
         "repo_dependency_overview": repo_dependency_overview,
         "narrative": narrative,
+        "secdrift": build_secdrift_overview(repos),
+        "qadrift": build_qadrift_overview(repos),
     }
     return snapshot
 
@@ -1822,6 +2095,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 "repo_sources": {},
                 "overview": {},
                 "repo_dependency_overview": {"nodes": [], "edges": [], "summary": {}},
+                "secdrift": {"summary": {}, "repos": []},
+                "qadrift": {"summary": {}, "repos": []},
                 "supervisor": {},
                 "narrative": "",
             }
@@ -1917,6 +2192,12 @@ class _HubHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/upstream":
             self._send_json(snapshot.get("upstream_candidates") or [])
+            return
+        if route == "/api/security":
+            self._send_json(snapshot.get("secdrift") or {"summary": {}, "repos": []})
+            return
+        if route == "/api/quality":
+            self._send_json(snapshot.get("qadrift") or {"summary": {}, "repos": []})
             return
         if route == "/api/overview":
             self._send_json(
@@ -2628,6 +2909,20 @@ def render_dashboard_html() -> str:
           </div>
           <ul class="action-list" id="next"></ul>
         </article>
+        <article class="action-panel">
+          <div class="action-head">
+            <h3>Security Reviews</h3>
+            <span class="action-count" id="security-count">0</span>
+          </div>
+          <ul class="action-list" id="security"></ul>
+        </article>
+        <article class="action-panel">
+          <div class="action-head">
+            <h3>Quality Reviews</h3>
+            <span class="action-count" id="quality-count">0</span>
+          </div>
+          <ul class="action-list" id="quality"></ul>
+        </article>
       </div>
     </section>
 
@@ -2697,9 +2992,16 @@ def render_dashboard_html() -> str:
     }
 
     function qualityPill(repo) {
+      const sec = repo.security || {};
+      const qa = repo.quality || {};
+      const secCritical = n(sec.critical);
+      const secHigh = n(sec.high);
+      const qaCritical = n(qa.critical);
+      const qaHigh = n(qa.high);
+      const qaScore = n(qa.quality_score || 100);
       const score = n(repo.blocked_open) + n(repo.missing_dependencies) + n((repo.stale_open || []).length) + n((repo.stale_in_progress || []).length);
-      if ((repo.errors || []).length || score >= 5 || (repo.stalled && score >= 2)) return ['risk', 'bad'];
-      if (score >= 2 || repo.stalled || (repo.workgraph_exists && !repo.service_running)) return ['watch', 'warn'];
+      if ((repo.errors || []).length || secCritical > 0 || qaCritical > 0 || secHigh >= 2 || qaHigh >= 2 || qaScore < 72 || score >= 5 || (repo.stalled && score >= 2)) return ['risk', 'bad'];
+      if (score >= 2 || repo.stalled || (repo.workgraph_exists && !repo.service_running) || secHigh > 0 || qaHigh > 0 || qaScore < 88) return ['watch', 'warn'];
       return ['healthy', 'good'];
     }
 
@@ -2712,7 +3014,11 @@ def render_dashboard_html() -> str:
       const stalledWeight = repo.stalled ? 10 : 0;
       const behindWeight = Math.min(10, n(repo.behind));
       const dirtyWeight = repo.git_dirty ? 2 : 0;
-      return errorWeight + missingWeight + blockedWeight + staleWeight + serviceWeight + stalledWeight + behindWeight + dirtyWeight;
+      const sec = repo.security || {};
+      const qa = repo.quality || {};
+      const securityWeight = (n(sec.critical) * 14) + (n(sec.high) * 7) + (n(sec.medium) * 3);
+      const qualityWeight = (n(qa.critical) * 10) + (n(qa.high) * 6) + Math.max(0, Math.floor((80 - n(qa.quality_score || 100)) / 2));
+      return errorWeight + missingWeight + blockedWeight + staleWeight + serviceWeight + stalledWeight + behindWeight + dirtyWeight + securityWeight + qualityWeight;
     }
 
     function riskWatchSentence(repo, label) {
@@ -2730,6 +3036,13 @@ def render_dashboard_html() -> str:
       if (repo.workgraph_exists && !repo.service_running) reasons.push('workgraph service stopped');
       if (n(repo.behind) > 0) reasons.push(`behind upstream by ${n(repo.behind)}`);
       if (repo.git_dirty) reasons.push('dirty working tree');
+      const sec = repo.security || {};
+      const qa = repo.quality || {};
+      if (n(sec.critical) > 0) reasons.push(`security critical=${n(sec.critical)}`);
+      if (n(sec.high) > 0) reasons.push(`security high=${n(sec.high)}`);
+      if (n(qa.critical) > 0) reasons.push(`quality critical=${n(qa.critical)}`);
+      if (n(qa.high) > 0) reasons.push(`quality high=${n(qa.high)}`);
+      if (n(qa.quality_score || 100) < 90) reasons.push(`quality score=${n(qa.quality_score || 100)}`);
       if (!reasons.length) return '';
       const intro = label === 'risk' ? 'At risk because' : 'Watch because';
       return `${intro} ${reasons.slice(0, 3).join('; ')}.`;
@@ -2877,6 +3190,18 @@ def render_dashboard_html() -> str:
         const files = Number(payload.file_count || 0);
         return `In repo ${repoName}, prepare an upstream contribution plan for ${category} changes (${files} files, ahead ${ahead}). Propose smallest safe PR scope, draft title/body, and call out splits or risks before opening a PR.`;
       }
+      if (kind === 'security') {
+        const category = String(payload.category || 'security-finding');
+        const severity = String(payload.severity || 'medium');
+        const evidence = String(payload.evidence || '');
+        return `In repo ${repoName}, triage security finding (${severity}/${category}). Evidence: ${evidence}. Identify root cause, pick smallest safe remediation, define verification, and update Workgraph with exact review tasks/dependencies.`;
+      }
+      if (kind === 'quality') {
+        const category = String(payload.category || 'quality-finding');
+        const severity = String(payload.severity || 'medium');
+        const evidence = String(payload.evidence || '');
+        return `In repo ${repoName}, triage quality finding (${severity}/${category}). Evidence: ${evidence}. Preserve active work, define minimal corrective scope, verification plan, and exact Workgraph updates.`;
+      }
       return `In repo ${repoName}, determine the highest-priority next action, update Workgraph state, and provide a concise execution plan.`;
     }
 
@@ -2912,11 +3237,11 @@ def render_dashboard_html() -> str:
     }
 
     function renderActionSummary(counts) {
-      const total = n(counts.attention) + n(counts.aging) + n(counts.upstream) + n(counts.next);
+      const total = n(counts.attention) + n(counts.aging) + n(counts.upstream) + n(counts.next) + n(counts.security) + n(counts.quality);
       const repoText = actionRepoFilter === '__all__' ? 'all repos' : actionRepoFilter;
       const text =
         `Showing ${total} actionable items for ${repoText} (sort=${actionSortMode}, priority=${actionPriorityFilter}, dirty=${actionDirtyFilter}). ` +
-        `Attention=${n(counts.attention)}, Aging/Gaps=${n(counts.aging)}, Upstream=${n(counts.upstream)}, Next Work=${n(counts.next)}.`;
+        `Attention=${n(counts.attention)}, Aging/Gaps=${n(counts.aging)}, Upstream=${n(counts.upstream)}, Next Work=${n(counts.next)}, Security=${n(counts.security)}, Quality=${n(counts.quality)}.`;
       el('action-summary').textContent = text;
     }
 
@@ -3151,6 +3476,12 @@ def render_dashboard_html() -> str:
         ['Missing Deps', ov.missing_dependencies],
         ['Orch Gaps', ov.repos_with_inactive_service],
         ['Dirty Repos', ov.repos_dirty],
+        ['Sec Risk Repos', ov.repos_security_risk],
+        ['Sec Critical', ov.security_critical],
+        ['Sec High', ov.security_high],
+        ['QA Risk Repos', ov.repos_quality_risk],
+        ['QA Critical', ov.quality_critical],
+        ['QA High', ov.quality_high],
         ['Svc Restarts', supervisor.started],
         ['Svc Restart Fail', supervisor.failed],
         ['Upstream PRs', ov.upstream_candidates],
@@ -3326,6 +3657,8 @@ def render_dashboard_html() -> str:
             <span>service=${repo.service_running ? 'running' : (repo.workgraph_exists ? 'stopped' : 'n/a')}</span>
             <span>in-progress=${esc((repo.in_progress || []).length)} ready=${esc((repo.ready || []).length)}</span>
             <span>blocked=${esc(repo.blocked_open || 0)} missing-deps=${esc(repo.missing_dependencies || 0)}</span>
+            <span>sec c/h=${esc((repo.security || {}).critical || 0)}/${esc((repo.security || {}).high || 0)}</span>
+            <span>qa score=${esc((repo.quality || {}).quality_score || 100)} high=${esc((repo.quality || {}).high || 0)}</span>
             <span>source=${esc(repo.source || 'n/a')}</span>
           </div>
           ${errs}
@@ -3932,6 +4265,83 @@ def render_dashboard_html() -> str:
       return shown.length;
     }
 
+    function renderSecurity(data) {
+      const list = el('security');
+      list.innerHTML = '';
+      const rows = [];
+      (data.repos || []).forEach((repo) => {
+        const repoName = String(repo.name || '');
+        (repo.security_findings || []).forEach((finding) => {
+          const severityRaw = String(finding.severity || 'medium').toLowerCase();
+          const severity = severityRaw === 'critical' ? 3 : (severityRaw === 'high' ? 3 : (severityRaw === 'medium' ? 2 : 1));
+          const priority = (severityRaw === 'critical' ? 30 : (severityRaw === 'high' ? 18 : (severityRaw === 'medium' ? 10 : 4))) + n((repo.security || {}).risk_score || 0);
+          const prompt = String(finding.model_prompt || '') || buildAgentPrompt('security', {
+            repo: repoName,
+            category: String(finding.category || ''),
+            severity: severityRaw,
+            evidence: String(finding.evidence || ''),
+          });
+          rows.push({
+            repo: repoName,
+            severity,
+            priority,
+            age_days: 0,
+            title: `<code>${esc(repoName)}</code> security ${esc(severityRaw)} <code>${esc(String(finding.category || 'finding'))}</code>`,
+            why: esc(String(finding.evidence || finding.title || '')),
+            prompt,
+          });
+        });
+      });
+      const shown = rows.filter(actionRowAllowed).sort(compareActionRows).slice(0, 20);
+      if (!shown.length) {
+        list.innerHTML = '<li class="action-item action-empty">No security review items for current filters.</li>';
+        setActionCount('security-count', 0);
+        return 0;
+      }
+      list.innerHTML = shown.map((item) => renderActionItemHtml(item)).join('');
+      setActionCount('security-count', shown.length);
+      return shown.length;
+    }
+
+    function renderQuality(data) {
+      const list = el('quality');
+      list.innerHTML = '';
+      const rows = [];
+      (data.repos || []).forEach((repo) => {
+        const repoName = String(repo.name || '');
+        (repo.quality_findings || []).forEach((finding) => {
+          const severityRaw = String(finding.severity || 'medium').toLowerCase();
+          const severity = severityRaw === 'critical' ? 3 : (severityRaw === 'high' ? 3 : (severityRaw === 'medium' ? 2 : 1));
+          const qualityScore = n((repo.quality || {}).quality_score || 100);
+          const priority = (severityRaw === 'critical' ? 24 : (severityRaw === 'high' ? 16 : (severityRaw === 'medium' ? 10 : 4))) + Math.max(0, Math.floor((95 - qualityScore) / 2));
+          const prompt = String(finding.model_prompt || '') || buildAgentPrompt('quality', {
+            repo: repoName,
+            category: String(finding.category || ''),
+            severity: severityRaw,
+            evidence: String(finding.evidence || ''),
+          });
+          rows.push({
+            repo: repoName,
+            severity,
+            priority,
+            age_days: 0,
+            title: `<code>${esc(repoName)}</code> quality ${esc(severityRaw)} <code>${esc(String(finding.category || 'finding'))}</code>`,
+            why: esc(String(finding.evidence || finding.title || '')),
+            prompt,
+          });
+        });
+      });
+      const shown = rows.filter(actionRowAllowed).sort(compareActionRows).slice(0, 20);
+      if (!shown.length) {
+        list.innerHTML = '<li class="action-item action-empty">No quality review items for current filters.</li>';
+        setActionCount('quality-count', 0);
+        return 0;
+      }
+      list.innerHTML = shown.map((item) => renderActionItemHtml(item)).join('');
+      setActionCount('quality-count', shown.length);
+      return shown.length;
+    }
+
     function render(data, source) {
       currentData = data;
       window.currentData = data;
@@ -3946,11 +4356,15 @@ def render_dashboard_html() -> str:
       renderRepoCards(data);
       const nextCount = renderNext(data);
       const upstreamCount = renderUpstream(data);
+      const securityCount = renderSecurity(data);
+      const qualityCount = renderQuality(data);
       renderActionSummary({
         attention: attentionCount,
         aging: agingCount,
         upstream: upstreamCount,
         next: nextCount,
+        security: securityCount,
+        quality: qualityCount,
       });
       refreshGraphSelector(data);
       drawGraph(data);
