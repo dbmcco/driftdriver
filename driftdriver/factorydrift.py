@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from driftdriver.plandrift import emit_plan_review_tasks, run_workgraph_plan_review
 from driftdriver.qadrift import emit_quality_review_tasks, run_program_quality_scan
 from driftdriver.secdrift import emit_security_review_tasks, run_secdrift_scan
 
@@ -527,6 +528,36 @@ def _plan_repo_actions(
                 gate=True,
             )
 
+    plandrift_cfg = getattr(policy, "plandrift", {})
+    in_progress_count = len(in_progress) if isinstance(in_progress, list) else 0
+    ready_count = len(ready) if isinstance(ready, list) else 0
+    missing_dependencies = max(0, int(repo.get("missing_dependencies") or 0))
+    blocked_open = max(0, int(repo.get("blocked_open") or 0))
+    if (
+        isinstance(plandrift_cfg, dict)
+        and bool(plandrift_cfg.get("enabled", True))
+        and bool(repo.get("workgraph_exists"))
+        and (in_progress_count > 0 or ready_count > 0 or missing_dependencies > 0 or blocked_open > 0)
+    ):
+        plan_priority = 88 if (missing_dependencies > 0 or blocked_open > 0) else (76 if in_progress_count > 0 else 62)
+        add(
+            module="plandrift",
+            kind="review_workgraph_plan",
+            priority=plan_priority,
+            reason=(
+                "workgraph planning integrity review needed "
+                f"(in_progress={in_progress_count}, ready={ready_count}, "
+                f"missing_dependencies={missing_dependencies}, blocked_open={blocked_open})"
+            ),
+            prompt=_make_prompt(
+                repo_name,
+                "Review workgraph for intervening integration/e2e tests, explicit failure loopbacks, and "
+                "continuation edges so active work does not stall at context boundaries. Emit exact task/dependency "
+                "updates aligned to double-shot-latte + session-driver/tmux orchestration policies.",
+            ),
+            gate=True,
+        )
+
     actions.sort(key=lambda row: (-int(row.get("priority") or 0), str(row.get("id") or "")))
     return actions
 
@@ -699,6 +730,11 @@ def build_factory_cycle(
             "qadrift": (
                 dict(getattr(policy, "qadrift"))
                 if isinstance(getattr(policy, "qadrift", {}), dict)
+                else {}
+            ),
+            "plandrift": (
+                dict(getattr(policy, "plandrift"))
+                if isinstance(getattr(policy, "plandrift", {}), dict)
                 else {}
             ),
         },
@@ -1071,6 +1107,59 @@ def execute_factory_cycle(
                     "model_contract": report.get("model_contract") if isinstance(report.get("model_contract"), dict) else {},
                 },
             )
+            continue
+
+        if kind == "review_workgraph_plan":
+            plan_cfg = getattr(policy, "plandrift", {})
+            plan_cfg = dict(plan_cfg) if isinstance(plan_cfg, dict) else {}
+            repo_row = repo_rows.get(repo, {})
+            report = run_workgraph_plan_review(
+                repo_name=repo,
+                repo_path=repo_path,
+                repo_snapshot=repo_row if isinstance(repo_row, dict) else {},
+                policy_cfg=plan_cfg,
+            )
+            emit_cfg = bool(plan_cfg.get("emit_review_tasks", True))
+            max_tasks = max(1, int(plan_cfg.get("max_review_tasks_per_repo", 3)))
+            task_emit = {
+                "enabled": False,
+                "attempted": 0,
+                "created": 0,
+                "existing": 0,
+                "skipped": 0,
+                "errors": [],
+                "tasks": [],
+            }
+            if emit_cfg:
+                task_emit = emit_plan_review_tasks(
+                    repo_path=repo_path,
+                    report=report,
+                    max_tasks=max_tasks,
+                )
+            summary_row = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+            critical = int(summary_row.get("critical") or 0)
+            high = int(summary_row.get("high") or 0)
+            total = int(summary_row.get("findings_total") or 0)
+            hard_stop_plan = bool(plan_cfg.get("hard_stop_on_critical", False))
+            details = {
+                "summary": summary_row,
+                "recommended_reviews": list(report.get("recommended_reviews") or [])[:8],
+                "task_emission": task_emit,
+                "model_contract": report.get("model_contract") if isinstance(report.get("model_contract"), dict) else {},
+            }
+            if hard_stop_plan and critical > 0:
+                _done(
+                    "failed",
+                    reason=f"plandrift critical findings={critical}",
+                    exit_code=1,
+                    details=details,
+                )
+            else:
+                _done(
+                    "succeeded",
+                    reason=f"plandrift findings={total} critical={critical} high={high}",
+                    details=details,
+                )
             continue
 
         if kind == "prepare_upstream_draft_prs":

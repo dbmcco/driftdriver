@@ -558,10 +558,11 @@ Design docs for the next-stage ecosystem control plane:
 - `docs/plans/drift-policy-factory-extensions.md`
 - `docs/plans/dark-factory-operating-model.md`
 - `docs/plans/secdrift-qadrift-model-mediated-design.md`
+- `docs/plans/plandrift-workgraph-qc-design.md`
 
 These documents define:
 - model-vs-code decision ownership
-- new ecosystem drift modules (`sourcedrift`, `syncdrift`, `stalledrift`, `servicedrift`, `federatedrift`, `secdrift`, `qadrift`, `factorydrift`)
+- new ecosystem drift modules (`sourcedrift`, `syncdrift`, `stalledrift`, `servicedrift`, `federatedrift`, `secdrift`, `qadrift`, `plandrift`, `factorydrift`)
 - policy extensions for autonomy tiers and safety budgets
 - phased rollout toward autonomous dark-factory operation
   with upstream pull-down integration and verifiable guardrails
@@ -609,6 +610,7 @@ Current automated handlers include:
 - run upstream update checks
 - run `secdrift` scans and emit policy-bounded security review tasks
 - run program-level `qadrift` scans and emit policy-bounded quality review tasks
+- run `plandrift` workgraph plan reviews and emit model-mediated tasks for test gates/loopbacks/continuation edges
 - delegate risky corrective actions to explicit local follow-up tasks
 
 Optional security/quality policy sections:
@@ -632,6 +634,20 @@ max_review_tasks_per_repo = 3
 include_playwright = true
 include_test_health = true
 include_workgraph_health = true
+
+[plandrift]
+enabled = true
+interval_seconds = 14400
+emit_review_tasks = true
+max_review_tasks_per_repo = 3
+require_integration_tests = true
+require_e2e_tests = true
+require_failure_loopbacks = true
+require_continuation_edges = true
+continuation_runtime = "double-shot-latte"
+orchestration_runtime = "claude-session-driver"
+allow_tmux_fallback = true
+hard_stop_on_critical = false
 ```
 
 ## Development

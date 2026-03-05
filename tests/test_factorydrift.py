@@ -51,6 +51,12 @@ def _policy() -> SimpleNamespace:
             "emit_review_tasks": True,
             "max_review_tasks_per_repo": 2,
         },
+        plandrift={
+            "enabled": True,
+            "emit_review_tasks": True,
+            "max_review_tasks_per_repo": 2,
+            "hard_stop_on_critical": False,
+        },
         autonomy_default={
             "level": "safe-fix",
             "can_push": False,
@@ -170,6 +176,7 @@ class FactoryDriftTests(unittest.TestCase):
         kinds = {str(row.get("kind") or "") for row in actions}
         self.assertIn("run_security_scan", kinds)
         self.assertIn("run_quality_audit", kinds)
+        self.assertIn("review_workgraph_plan", kinds)
 
     def test_build_factory_cycle_respects_repo_and_global_budgets(self) -> None:
         policy = _policy()
@@ -456,8 +463,15 @@ class FactoryDriftTests(unittest.TestCase):
                     "kind": "run_quality_audit",
                     "automation_allowed": True,
                 },
+                {
+                    "id": "repo-a:review_workgraph_plan:3",
+                    "repo": "repo-a",
+                    "module": "plandrift",
+                    "kind": "review_workgraph_plan",
+                    "automation_allowed": True,
+                },
             ],
-            "outcomes": {"planned_actions": 2, "executed_actions": 0},
+            "outcomes": {"planned_actions": 3, "executed_actions": 0},
         }
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -489,6 +503,11 @@ class FactoryDriftTests(unittest.TestCase):
                 "recommended_reviews": [{"fingerprint": "def", "severity": "medium"}],
                 "model_contract": {"decision_owner": "model"},
             }
+            plan_report = {
+                "summary": {"findings_total": 2, "critical": 0, "high": 1},
+                "recommended_reviews": [{"fingerprint": "ghi", "severity": "high"}],
+                "model_contract": {"decision_owner": "model"},
+            }
             with patch("driftdriver.factorydrift.run_secdrift_scan", return_value=sec_report), patch(
                 "driftdriver.factorydrift.emit_security_review_tasks",
                 return_value={"enabled": True, "attempted": 1, "created": 1, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
@@ -497,6 +516,12 @@ class FactoryDriftTests(unittest.TestCase):
                 return_value=qa_report,
             ), patch(
                 "driftdriver.factorydrift.emit_quality_review_tasks",
+                return_value={"enabled": True, "attempted": 1, "created": 1, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
+            ), patch(
+                "driftdriver.factorydrift.run_workgraph_plan_review",
+                return_value=plan_report,
+            ), patch(
+                "driftdriver.factorydrift.emit_plan_review_tasks",
                 return_value={"enabled": True, "attempted": 1, "created": 1, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
             ):
                 execution = execute_factory_cycle(
@@ -509,11 +534,12 @@ class FactoryDriftTests(unittest.TestCase):
                     allow_execute_draft_prs=False,
                 )
 
-            self.assertEqual(execution["executed"], 2)
+            self.assertEqual(execution["executed"], 3)
             self.assertEqual(execution["failed"], 0)
             attempts = execution.get("attempts") or []
             self.assertEqual(str(attempts[0]["status"]), "succeeded")
             self.assertEqual(str(attempts[1]["status"]), "succeeded")
+            self.assertEqual(str(attempts[2]["status"]), "succeeded")
 
 
 if __name__ == "__main__":

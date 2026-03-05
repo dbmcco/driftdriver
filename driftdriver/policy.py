@@ -124,6 +124,24 @@ def _default_qadrift_cfg() -> dict[str, Any]:
     }
 
 
+def _default_plandrift_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "interval_seconds": 14400,
+        "max_findings_per_repo": 40,
+        "emit_review_tasks": True,
+        "max_review_tasks_per_repo": 3,
+        "require_integration_tests": True,
+        "require_e2e_tests": True,
+        "require_failure_loopbacks": True,
+        "require_continuation_edges": True,
+        "continuation_runtime": "double-shot-latte",
+        "orchestration_runtime": "claude-session-driver",
+        "allow_tmux_fallback": True,
+        "hard_stop_on_critical": False,
+    }
+
+
 def _default_autonomy_default_cfg() -> dict[str, Any]:
     return {
         "level": "observe",
@@ -162,6 +180,7 @@ class DriftPolicy:
     federatedrift: dict[str, Any]
     secdrift: dict[str, Any]
     qadrift: dict[str, Any]
+    plandrift: dict[str, Any]
     autonomy_default: dict[str, Any]
     autonomy_repos: list[dict[str, Any]]
 
@@ -270,6 +289,21 @@ def _default_policy_text() -> str:
         "include_test_health = true\n"
         "include_workgraph_health = true\n"
         "\n"
+        "[plandrift]\n"
+        "enabled = true\n"
+        "interval_seconds = 14400\n"
+        "max_findings_per_repo = 40\n"
+        "emit_review_tasks = true\n"
+        "max_review_tasks_per_repo = 3\n"
+        "require_integration_tests = true\n"
+        "require_e2e_tests = true\n"
+        "require_failure_loopbacks = true\n"
+        "require_continuation_edges = true\n"
+        "continuation_runtime = \"double-shot-latte\"\n"
+        "orchestration_runtime = \"claude-session-driver\"\n"
+        "allow_tmux_fallback = true\n"
+        "hard_stop_on_critical = false\n"
+        "\n"
         "[autonomy.default]\n"
         "level = \"observe\"\n"
         "can_push = false\n"
@@ -323,6 +357,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             federatedrift=_default_federatedrift_cfg(),
             secdrift=_default_secdrift_cfg(),
             qadrift=_default_qadrift_cfg(),
+            plandrift=_default_plandrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
         )
@@ -357,6 +392,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             federatedrift=_default_federatedrift_cfg(),
             secdrift=_default_secdrift_cfg(),
             qadrift=_default_qadrift_cfg(),
+            plandrift=_default_plandrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
         )
@@ -565,6 +601,42 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         qadrift_raw.get("include_workgraph_health", qadrift["include_workgraph_health"])
     )
 
+    plandrift_raw = data.get("plandrift") if isinstance(data.get("plandrift"), dict) else {}
+    plandrift = _default_plandrift_cfg()
+    plandrift["enabled"] = bool(plandrift_raw.get("enabled", plandrift["enabled"]))
+    plandrift["interval_seconds"] = max(0, int(plandrift_raw.get("interval_seconds", plandrift["interval_seconds"])))
+    plandrift["max_findings_per_repo"] = max(
+        1, int(plandrift_raw.get("max_findings_per_repo", plandrift["max_findings_per_repo"]))
+    )
+    plandrift["emit_review_tasks"] = bool(plandrift_raw.get("emit_review_tasks", plandrift["emit_review_tasks"]))
+    plandrift["max_review_tasks_per_repo"] = max(
+        1, int(plandrift_raw.get("max_review_tasks_per_repo", plandrift["max_review_tasks_per_repo"]))
+    )
+    plandrift["require_integration_tests"] = bool(
+        plandrift_raw.get("require_integration_tests", plandrift["require_integration_tests"])
+    )
+    plandrift["require_e2e_tests"] = bool(
+        plandrift_raw.get("require_e2e_tests", plandrift["require_e2e_tests"])
+    )
+    plandrift["require_failure_loopbacks"] = bool(
+        plandrift_raw.get("require_failure_loopbacks", plandrift["require_failure_loopbacks"])
+    )
+    plandrift["require_continuation_edges"] = bool(
+        plandrift_raw.get("require_continuation_edges", plandrift["require_continuation_edges"])
+    )
+    plandrift["continuation_runtime"] = str(
+        plandrift_raw.get("continuation_runtime", plandrift["continuation_runtime"]) or plandrift["continuation_runtime"]
+    )
+    plandrift["orchestration_runtime"] = str(
+        plandrift_raw.get("orchestration_runtime", plandrift["orchestration_runtime"]) or plandrift["orchestration_runtime"]
+    )
+    plandrift["allow_tmux_fallback"] = bool(
+        plandrift_raw.get("allow_tmux_fallback", plandrift["allow_tmux_fallback"])
+    )
+    plandrift["hard_stop_on_critical"] = bool(
+        plandrift_raw.get("hard_stop_on_critical", plandrift["hard_stop_on_critical"])
+    )
+
     autonomy_raw = data.get("autonomy") if isinstance(data.get("autonomy"), dict) else {}
     autonomy_default_raw = autonomy_raw.get("default") if isinstance(autonomy_raw.get("default"), dict) else {}
     autonomy_default = _default_autonomy_default_cfg()
@@ -626,6 +698,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         federatedrift=federatedrift,
         secdrift=secdrift,
         qadrift=qadrift,
+        plandrift=plandrift,
         autonomy_default=autonomy_default,
         autonomy_repos=autonomy_repos,
     )

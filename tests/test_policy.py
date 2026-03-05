@@ -49,6 +49,9 @@ class PolicyTests(unittest.TestCase):
             self.assertFalse(p.secdrift["run_pentest"])
             self.assertTrue(p.qadrift["include_playwright"])
             self.assertEqual(p.qadrift["interval_seconds"], 21600)
+            self.assertTrue(p.plandrift["enabled"])
+            self.assertEqual(p.plandrift["continuation_runtime"], "double-shot-latte")
+            self.assertEqual(p.plandrift["orchestration_runtime"], "claude-session-driver")
             self.assertEqual(p.autonomy_default["level"], "observe")
             self.assertFalse(p.autonomy_default["can_push"])
             self.assertEqual(p.autonomy_repos, [])
@@ -154,6 +157,21 @@ class PolicyTests(unittest.TestCase):
                         "include_test_health = false",
                         "include_workgraph_health = false",
                         "",
+                        "[plandrift]",
+                        "enabled = false",
+                        "interval_seconds = -99",
+                        "max_findings_per_repo = 0",
+                        "emit_review_tasks = false",
+                        "max_review_tasks_per_repo = -2",
+                        "require_integration_tests = false",
+                        "require_e2e_tests = false",
+                        "require_failure_loopbacks = false",
+                        "require_continuation_edges = false",
+                        "continuation_runtime = \"\"",
+                        "orchestration_runtime = \"\"",
+                        "allow_tmux_fallback = false",
+                        "hard_stop_on_critical = true",
+                        "",
                         "[autonomy.default]",
                         "level = \"invalid-tier\"",
                         "can_push = true",
@@ -236,6 +254,19 @@ class PolicyTests(unittest.TestCase):
             self.assertFalse(p.qadrift["include_playwright"])
             self.assertFalse(p.qadrift["include_test_health"])
             self.assertFalse(p.qadrift["include_workgraph_health"])
+            self.assertFalse(p.plandrift["enabled"])
+            self.assertEqual(p.plandrift["interval_seconds"], 0)
+            self.assertEqual(p.plandrift["max_findings_per_repo"], 1)
+            self.assertFalse(p.plandrift["emit_review_tasks"])
+            self.assertEqual(p.plandrift["max_review_tasks_per_repo"], 1)
+            self.assertFalse(p.plandrift["require_integration_tests"])
+            self.assertFalse(p.plandrift["require_e2e_tests"])
+            self.assertFalse(p.plandrift["require_failure_loopbacks"])
+            self.assertFalse(p.plandrift["require_continuation_edges"])
+            self.assertEqual(p.plandrift["continuation_runtime"], "double-shot-latte")
+            self.assertEqual(p.plandrift["orchestration_runtime"], "claude-session-driver")
+            self.assertFalse(p.plandrift["allow_tmux_fallback"])
+            self.assertTrue(p.plandrift["hard_stop_on_critical"])
             self.assertEqual(p.autonomy_default["level"], "observe")
             self.assertTrue(p.autonomy_default["can_push"])
             self.assertTrue(p.autonomy_default["can_open_pr"])
