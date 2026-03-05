@@ -13,6 +13,11 @@ driftdriver install 2>/dev/null || true
 # Start workgraph service if not already running
 wg service start 2>/dev/null || true
 
+# Ensure ecosystem hub daemon is persistent (when daemon script exists)
+if [[ -x "$PROJECT_DIR/scripts/ecosystem_hub_daemon.sh" ]]; then
+  "$PROJECT_DIR/scripts/ecosystem_hub_daemon.sh" ensure-running >/dev/null 2>&1 || true
+fi
+
 # Query Lessons MCP for project context and print to stdout
 CONTEXT_JSON=$(jq -n --arg path "$PROJECT_DIR" '{project_path: $path}')
 CONTEXT=$(lessons_mcp "get_project_context" "$CONTEXT_JSON")

@@ -37,7 +37,8 @@ Driftdriver is intentionally reliant on external projects rather than reimplemen
 | [Amplifier](https://github.com/microsoft/amplifier) | Agent runtime — session management, executor dispatch, hook-based auto-bootstrap |
 | [claude-session-driver](https://github.com/obra/claude-session-driver) | Multi-agent orchestration — fan-out workers, supervised pipelines |
 | [superpowers](https://github.com/obra/superpowers) | Skills/workflow plugin — brainstorming, planning, TDD, code review patterns |
-| [mira-OSS](https://github.com/taylorsatula/mira-OSS) | Memory decay patterns for long-running agent sessions |
+| [mira-OSS](https://github.com/taylorsatula/mira-OSS) | Memory decay patterns — activity-weighted scoring ported into ecosystem findings |
+| [lessons-mcp](https://github.com/dbmcco/lessons-mcp) | Cross-session knowledge with evolutionary signal classification |
 | [beads](https://github.com/steveyegge/beads) | Git-backed task tracking via `bd` CLI |
 
 ### Automated Ecosystem Monitoring
@@ -53,6 +54,28 @@ The daily ecosystem scanner (`scripts/daily_ecosystem_eval.sh`) runs on a config
 Configure monitoring via `.workgraph/.driftdriver/ecosystem-review.json` (template: `docs/ecosystem-review.example.json`).
 
 Findings are advisory — humans decide via the generated eval tasks whether to update, defer, or investigate.
+
+### Activity-Weighted Decay
+
+Ecosystem findings are scored using MIRA-style activity-weighted decay:
+
+```
+importance = 0.95^(days_since_last_reference) * newness_boost
+```
+
+- **Newness boost (1.3x)** applies to findings less than 7 days old
+- **Reference resets decay** — when a finding is acted on (eval task created, review mention), `mark_finding_referenced()` resets the timer
+- `score_all_findings()` returns all state entries sorted by importance
+
+This prevents stale findings from cluttering reviews while keeping recently-acted-on findings prominent.
+
+### Workgraph Evaluation Scores
+
+When Workgraph's agency layer provides evaluation scores (individual quality, org impact), `build_review_prompt()` incorporates them as additional evidence for milestone review. Scores are read from:
+- `.workgraph/output/{task_id}` files (avg_score, evaluation lines)
+- `wg show {task_id}` output (evaluation score/grade entries)
+
+This is a read-only integration — autopilot does not control Workgraph's evaluation cascade.
 
 ## Ecosystem Map
 
@@ -322,7 +345,7 @@ The autopilot:
 2. **Dispatches** workers for each ready task, respecting dependencies
 3. **Drift-checks** after each task completes; creates follow-up tasks on findings
 4. **Escalates** to human only when drift failures exceed threshold (default: 3)
-5. **Reviews** the milestone with an evidence-based verification worker
+5. **Reviews** the milestone with an evidence-based verification worker, incorporating Workgraph agency evaluation scores when available
 6. **Reports** results to `.workgraph/.autopilot/latest-report.md`
 
 State is persisted to `.workgraph/.autopilot/` (run-state.json, workers.jsonl).
@@ -394,9 +417,144 @@ If you want drift telemetry running continuously while work happens:
 ./.workgraph/drifts orchestrate --write-log --create-followups
 ```
 
+## Ecosystem Hub Daemon + Web Report
+
+Driftdriver now includes an ecosystem hub service that centralizes status across suite repos and serves a local web report.
+
+Start unattended automation (daemon + web report + upstream dry-run actions):
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . automate --host 127.0.0.1 --port 8777 --interval-seconds 60
+```
+
+Equivalent explicit daemon start command:
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . start --host 127.0.0.1 --port 8777 --interval-seconds 60
+```
+
+Check status:
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . status
+```
+
+Stop service:
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . stop
+```
+
+Web report:
+- Dashboard: `http://127.0.0.1:8777/`
+- APIs: `/api/status`, `/api/repos`, `/api/next-work`, `/api/updates`, `/api/upstream`, `/api/overview`, `/api/graph`, `/api/repo-dependencies`
+- Live stream (WebSocket): `/ws/status` (dashboard auto-switches to live mode when connected)
+- Tailscale access (when daemon is bound to `0.0.0.0`): `http://<tailscale-ip>:8777/`
+
+Dashboard includes:
+- Narrated operations summary (model-style status text)
+- Operational overview cards
+- By-repo health cards with sortable/filterable controls (priority, dirtiness, blocked/behind, service, health)
+- Repo dependency overview map (cross-repo signals, top inbound/outbound dependency pressure, click-to-focus repo graph)
+- Task dependency graph visualization (`all repos` / per-repo, focus chain / active+blocked / full modes, zoom/pan, node path inspector, cycle edge highlighting)
+- Action center with repo/sort/priority/dirtiness filters, per-queue counts, and structured `what/why/prompt` rows (attention queue + aging/dependencies + upstream candidates + planned next work)
+- Queue items include Claude/Codex-ready prompts (copy button) and repo graph focus links
+- Central supervisor metrics (service restarts/failures) in overview cards
+- Auto-discovery of additional active speedrift repos in workspace (recent `.workgraph/graph.jsonl` + speedrift drift-policy), beyond `ecosystem.toml`
+
+Central register integration:
+- If `reporting.central_repo` is set in `.workgraph/drift-policy.toml`, each snapshot is mirrored to:
+  - `<central_repo>/ecosystem-hub/register/<project>.json` (latest)
+  - `<central_repo>/ecosystem-hub/history/<project>/<timestamp>.json` (history)
+- Hub snapshot also includes `central_reports` summary from `<central_repo>/reports/*`.
+
+One-shot snapshot (non-daemon):
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . once --skip-updates
+```
+
+Generate upstream contribution packets:
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . upstream-report --output .workgraph/service/ecosystem-hub/upstream-candidates.md
+```
+
+Prepare draft PR commands (dry-run):
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . open-draft-pr
+```
+
+Execute draft PR creation (explicit opt-in):
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . open-draft-pr --repo driftdriver --execute
+```
+
+Execute draft PR creation continuously during automation loop (use with care):
+
+```bash
+scripts/ecosystem_hub.sh --project-dir . automate --execute-draft-prs
+```
+
+Codified daemon runner (stable host/port + optional launchd persistence):
+
+```bash
+# start daemon with defaults host=0.0.0.0 port=8777
+scripts/ecosystem_hub_daemon.sh start
+
+# print current local/tailscale URLs
+scripts/ecosystem_hub_daemon.sh url
+
+# show daemon status plus URLs
+scripts/ecosystem_hub_daemon.sh status
+
+# install persistent launchd service (auto-start + keepalive)
+scripts/ecosystem_hub_daemon.sh install-launchd
+
+# install launchd with an explicit shared central register path
+ECOSYSTEM_HUB_CENTRAL_REPO=/Users/braydon/projects/experiments/speedrift-ecosystem/.workgraph/service/ecosystem-central \
+  scripts/ecosystem_hub_daemon.sh install-launchd
+
+# ensure daemon is persistent and healthy (safe to run repeatedly)
+scripts/ecosystem_hub_daemon.sh ensure-running
+```
+
+Daemon configuration knobs (environment variables):
+- `ECOSYSTEM_HUB_HOST` (default `0.0.0.0`)
+- `ECOSYSTEM_HUB_PORT` (default `8777`)
+- `ECOSYSTEM_HUB_INTERVAL_SECONDS` (default `60`)
+- `ECOSYSTEM_HUB_MAX_NEXT` (default `5`)
+- `ECOSYSTEM_HUB_CENTRAL_REPO` (default empty: auto-resolve from drift-policy)
+- `ECOSYSTEM_HUB_EXECUTE_DRAFT_PRS` (`0`/`1`, default `0`)
+- `ECOSYSTEM_HUB_SKIP_UPDATES` (`0`/`1`, default `1`)
+- `ECOSYSTEM_HUB_SUPERVISE_SERVICES` (`0`/`1`, default `1`)
+- `ECOSYSTEM_HUB_SUPERVISE_COOLDOWN_SECONDS` (default `180`)
+- `ECOSYSTEM_HUB_SUPERVISE_MAX_STARTS` (default `4` per cycle)
+- `ECOSYSTEM_HUB_PYTHON` (default `python3` on PATH; set explicitly for launchd if needed)
+
+When `ECOSYSTEM_HUB_SUPERVISE_SERVICES=1`, the central daemon supervises repos in the registry/discovery set:
+- if repo has work underway (`in-progress` or `ready`) and workgraph service is stopped, it attempts restart
+- restart attempts are cooldown-limited per repo and max-limited per cycle
+
+Each candidate packet includes:
+- repo and branch context
+- ahead/behind vs upstream base
+- changed files
+- suggested PR category (`bugfix`, `docs`, `tooling`, `feature`)
+
+Smoke test:
+
+```bash
+scripts/ecosystem_hub_smoke.sh .
+```
+
 ## Development
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py'
 scripts/e2e_smoke.sh
+python3 -m unittest tests.test_ecosystem_hub
+scripts/ecosystem_hub_smoke.sh .
 ```
