@@ -153,6 +153,21 @@ def _default_plandrift_cfg() -> dict[str, Any]:
     }
 
 
+def _default_northstardrift_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "emit_review_tasks": True,
+        "emit_operator_prompts": True,
+        "daily_rollup": True,
+        "weekly_trends": True,
+        "score_window": "1d",
+        "comparison_window": "7d",
+        "dirty_repo_blocks_auto_mutation": True,
+        "max_auto_interventions_per_cycle": 3,
+        "require_metric_evidence": True,
+    }
+
+
 def _default_autonomy_default_cfg() -> dict[str, Any]:
     return {
         "level": "observe",
@@ -193,6 +208,7 @@ class DriftPolicy:
     qadrift: dict[str, Any]
     sessiondriver: dict[str, Any]
     plandrift: dict[str, Any]
+    northstardrift: dict[str, Any]
     autonomy_default: dict[str, Any]
     autonomy_repos: list[dict[str, Any]]
 
@@ -324,6 +340,18 @@ def _default_policy_text() -> str:
         "allow_tmux_fallback = true\n"
         "hard_stop_on_critical = false\n"
         "\n"
+        "[northstardrift]\n"
+        "enabled = true\n"
+        "emit_review_tasks = true\n"
+        "emit_operator_prompts = true\n"
+        "daily_rollup = true\n"
+        "weekly_trends = true\n"
+        "score_window = \"1d\"\n"
+        "comparison_window = \"7d\"\n"
+        "dirty_repo_blocks_auto_mutation = true\n"
+        "max_auto_interventions_per_cycle = 3\n"
+        "require_metric_evidence = true\n"
+        "\n"
         "[autonomy.default]\n"
         "level = \"observe\"\n"
         "can_push = false\n"
@@ -379,6 +407,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             qadrift=_default_qadrift_cfg(),
             sessiondriver=_default_sessiondriver_cfg(),
             plandrift=_default_plandrift_cfg(),
+            northstardrift=_default_northstardrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
         )
@@ -415,6 +444,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             qadrift=_default_qadrift_cfg(),
             sessiondriver=_default_sessiondriver_cfg(),
             plandrift=_default_plandrift_cfg(),
+            northstardrift=_default_northstardrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
         )
@@ -678,6 +708,45 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         plandrift_raw.get("hard_stop_on_critical", plandrift["hard_stop_on_critical"])
     )
 
+    northstardrift_raw = data.get("northstardrift") if isinstance(data.get("northstardrift"), dict) else {}
+    northstardrift = _default_northstardrift_cfg()
+    northstardrift["enabled"] = bool(northstardrift_raw.get("enabled", northstardrift["enabled"]))
+    northstardrift["emit_review_tasks"] = bool(
+        northstardrift_raw.get("emit_review_tasks", northstardrift["emit_review_tasks"])
+    )
+    northstardrift["emit_operator_prompts"] = bool(
+        northstardrift_raw.get("emit_operator_prompts", northstardrift["emit_operator_prompts"])
+    )
+    northstardrift["daily_rollup"] = bool(northstardrift_raw.get("daily_rollup", northstardrift["daily_rollup"]))
+    northstardrift["weekly_trends"] = bool(
+        northstardrift_raw.get("weekly_trends", northstardrift["weekly_trends"])
+    )
+    northstardrift["score_window"] = str(
+        northstardrift_raw.get("score_window", northstardrift["score_window"]) or northstardrift["score_window"]
+    )
+    northstardrift["comparison_window"] = str(
+        northstardrift_raw.get("comparison_window", northstardrift["comparison_window"])
+        or northstardrift["comparison_window"]
+    )
+    northstardrift["dirty_repo_blocks_auto_mutation"] = bool(
+        northstardrift_raw.get(
+            "dirty_repo_blocks_auto_mutation",
+            northstardrift["dirty_repo_blocks_auto_mutation"],
+        )
+    )
+    northstardrift["max_auto_interventions_per_cycle"] = max(
+        1,
+        int(
+            northstardrift_raw.get(
+                "max_auto_interventions_per_cycle",
+                northstardrift["max_auto_interventions_per_cycle"],
+            )
+        ),
+    )
+    northstardrift["require_metric_evidence"] = bool(
+        northstardrift_raw.get("require_metric_evidence", northstardrift["require_metric_evidence"])
+    )
+
     autonomy_raw = data.get("autonomy") if isinstance(data.get("autonomy"), dict) else {}
     autonomy_default_raw = autonomy_raw.get("default") if isinstance(autonomy_raw.get("default"), dict) else {}
     autonomy_default = _default_autonomy_default_cfg()
@@ -741,6 +810,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         qadrift=qadrift,
         sessiondriver=sessiondriver,
         plandrift=plandrift,
+        northstardrift=northstardrift,
         autonomy_default=autonomy_default,
         autonomy_repos=autonomy_repos,
     )

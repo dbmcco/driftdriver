@@ -33,6 +33,11 @@ from driftdriver.factorydrift import (
     summarize_factory_cycle,
     write_factory_ledger,
 )
+from driftdriver.northstardrift import (
+    apply_northstardrift,
+    load_previous_northstardrift,
+    write_northstardrift_artifacts,
+)
 from driftdriver.policy import load_drift_policy
 from driftdriver.qadrift import run_program_quality_scan
 from driftdriver.secdrift import run_secdrift_scan
@@ -213,6 +218,14 @@ def _safe_ts_for_file(iso_ts: str) -> str:
     return iso_ts.replace(":", "-").replace("+00:00", "Z")
 
 
+def _path_age_seconds(path: Path) -> int | None:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    return max(0, int(time.time() - mtime))
+
+
 def resolve_central_repo_path(project_dir: Path, explicit_path: str = "") -> Path | None:
     if explicit_path:
         return Path(explicit_path).expanduser().resolve()
@@ -375,9 +388,13 @@ class RepoSnapshot:
     errors: list[str] = field(default_factory=list)
     git_branch: str = ""
     git_dirty: bool = False
+    dirty_file_count: int = 0
+    untracked_file_count: int = 0
     ahead: int = 0
     behind: int = 0
     workgraph_exists: bool = False
+    reporting: bool = False
+    heartbeat_age_seconds: int | None = None
     service_running: bool = False
     task_counts: dict[str, int] = field(default_factory=dict)
     in_progress: list[dict[str, str]] = field(default_factory=list)
@@ -398,6 +415,7 @@ class RepoSnapshot:
     security_findings: list[dict[str, Any]] = field(default_factory=list)
     quality: dict[str, Any] = field(default_factory=dict)
     quality_findings: list[dict[str, Any]] = field(default_factory=list)
+    northstar: dict[str, Any] = field(default_factory=dict)
 
     def top_next_work(self, limit: int = 3) -> list[NextWorkItem]:
         out: list[NextWorkItem] = []
@@ -1124,7 +1142,10 @@ def collect_repo_snapshot(
     if rc != 0:
         snap.errors.append(f"git_status_error:{err or 'unknown'}")
     else:
-        snap.git_dirty = bool(porcelain)
+        lines = [line for line in porcelain.splitlines() if line.strip()]
+        snap.git_dirty = bool(lines)
+        snap.dirty_file_count = len(lines)
+        snap.untracked_file_count = sum(1 for line in lines if line.startswith("??"))
 
     base_ref = _git_default_ref(repo_path)
     rc, counts, _ = _run(["git", "rev-list", "--left-right", "--count", f"{base_ref}...HEAD"], cwd=repo_path)
@@ -1148,6 +1169,8 @@ def collect_repo_snapshot(
         )
 
     snap.workgraph_exists = True
+    snap.reporting = True
+    snap.heartbeat_age_seconds = _path_age_seconds(wg_dir / "graph.jsonl")
 
     # Service status is best-effort; missing wg is non-fatal.
     rc, status_json, _ = _run(["wg", "--dir", str(wg_dir), "service", "status", "--json"], cwd=repo_path)
@@ -1873,6 +1896,57 @@ def service_paths(project_dir: Path) -> dict[str, Path]:
     }
 
 
+def _northstardrift_config(project_dir: Path) -> dict[str, Any]:
+    try:
+        policy = load_drift_policy(project_dir / ".workgraph")
+    except Exception:
+        return {}
+    return dict(policy.northstardrift) if isinstance(getattr(policy, "northstardrift", {}), dict) else {}
+
+
+def _decorate_snapshot_with_northstardrift(
+    *,
+    project_dir: Path,
+    snapshot: dict[str, Any],
+    central_repo: Path | None,
+) -> dict[str, Any]:
+    cfg = _northstardrift_config(project_dir)
+    enabled = bool(cfg.get("enabled", True))
+    if not enabled:
+        snapshot["northstardrift"] = {
+            "schema": 1,
+            "generated_at": str(snapshot.get("generated_at") or ""),
+            "enabled": False,
+            "summary": {
+                "overall_score": 0.0,
+                "overall_tier": "watch",
+                "overall_trend": "flat",
+                "overall_delta": 0.0,
+                "narrative": "northstardrift disabled by policy",
+            },
+            "axes": {},
+            "repo_scores": [],
+            "counts": {},
+            "regressions": [],
+            "improvements": [],
+            "operator_prompts": [],
+        }
+        return snapshot["northstardrift"]
+
+    paths = service_paths(project_dir)
+    previous = load_previous_northstardrift(service_dir=paths["dir"], central_repo=central_repo)
+    northstar = apply_northstardrift(snapshot, previous=previous or None, config=cfg)
+    artifacts = write_northstardrift_artifacts(
+        service_dir=paths["dir"],
+        central_repo=central_repo,
+        northstardrift=northstar,
+        config=cfg,
+    )
+    if isinstance(snapshot.get("northstardrift"), dict):
+        snapshot["northstardrift"]["artifacts"] = artifacts
+    return snapshot.get("northstardrift") if isinstance(snapshot.get("northstardrift"), dict) else {}
+
+
 def write_snapshot_once(
     *,
     project_dir: Path,
@@ -1890,6 +1964,11 @@ def write_snapshot_once(
         ecosystem_toml=ecosystem_toml,
         include_updates=include_updates,
         max_next=max_next,
+        central_repo=central_repo,
+    )
+    _decorate_snapshot_with_northstardrift(
+        project_dir=project_dir,
+        snapshot=snapshot,
         central_repo=central_repo,
     )
     _write_json(paths["snapshot"], snapshot)
@@ -2008,6 +2087,8 @@ def read_service_status(project_dir: Path) -> dict[str, Any]:
     snapshot_exists = paths["snapshot"].exists()
     central = _read_json(paths["dir"] / "central-register.json")
     upstream_actions = _read_json(paths["dir"] / "upstream-actions.json")
+    northstar = _read_json(paths["dir"] / "northstardrift" / "current.json")
+    northstar_summary = northstar.get("summary") if isinstance(northstar.get("summary"), dict) else {}
     return {
         "running": running,
         "pid": pid if running else None,
@@ -2025,6 +2106,9 @@ def read_service_status(project_dir: Path) -> dict[str, Any]:
         "central_register_latest": str(central.get("latest_path") or ""),
         "upstream_action_count": int(upstream_actions.get("request_count") or 0),
         "upstream_execute_mode": bool(upstream_actions.get("execute_draft_prs", False)),
+        "northstardrift_score": float(northstar_summary.get("overall_score") or 0.0),
+        "northstardrift_tier": str(northstar_summary.get("overall_tier") or ""),
+        "northstardrift_path": str(paths["dir"] / "northstardrift" / "current.json"),
         "log_path": str(paths["log"]),
     }
 
@@ -2106,6 +2190,21 @@ class _HubHandler(BaseHTTPRequestHandler):
                 "repo_dependency_overview": {"nodes": [], "edges": [], "summary": {}},
                 "secdrift": {"summary": {}, "repos": []},
                 "qadrift": {"summary": {}, "repos": []},
+                "northstardrift": {
+                    "summary": {
+                        "overall_score": 0,
+                        "overall_tier": "watch",
+                        "overall_trend": "flat",
+                        "overall_delta": 0,
+                        "narrative": "",
+                    },
+                    "axes": {},
+                    "repo_scores": [],
+                    "counts": {},
+                    "regressions": [],
+                    "improvements": [],
+                    "operator_prompts": [],
+                },
                 "supervisor": {},
                 "narrative": "",
             }
@@ -2207,6 +2306,26 @@ class _HubHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/quality":
             self._send_json(snapshot.get("qadrift") or {"summary": {}, "repos": []})
+            return
+        if route == "/api/effectiveness":
+            self._send_json(
+                snapshot.get("northstardrift")
+                or {
+                    "summary": {
+                        "overall_score": 0,
+                        "overall_tier": "watch",
+                        "overall_trend": "flat",
+                        "overall_delta": 0,
+                        "narrative": "",
+                    },
+                    "axes": {},
+                    "repo_scores": [],
+                    "counts": {},
+                    "regressions": [],
+                    "improvements": [],
+                    "operator_prompts": [],
+                }
+            )
             return
         if route == "/api/overview":
             self._send_json(
@@ -2354,6 +2473,12 @@ def render_dashboard_html() -> str:
       font-size: 1.05rem;
       font-weight: 650;
       font-family: var(--mono);
+    }
+    .card .sub {
+      margin-top: 0.24rem;
+      font-size: 0.74rem;
+      color: var(--muted);
+      line-height: 1.25;
     }
     .attention-list, ul {
       margin: 0;
@@ -2786,6 +2911,12 @@ def render_dashboard_html() -> str:
     </section>
 
     <section class="span-all">
+      <h2>North Star Scorecard</h2>
+      <p class="narrative" id="northstar-summary">Loading north-star effectiveness…</p>
+      <div class="cards" id="northstar-cards"></div>
+    </section>
+
+    <section class="span-all">
       <h2>Operational Overview</h2>
       <div class="cards" id="overview-cards"></div>
     </section>
@@ -3001,6 +3132,10 @@ def render_dashboard_html() -> str:
     }
 
     function qualityPill(repo) {
+      const north = repo.northstar || {};
+      const northTier = String(north.tier || '').toLowerCase();
+      if (northTier === 'at-risk') return ['risk', 'bad'];
+      if (northTier === 'watch') return ['watch', 'warn'];
       const sec = repo.security || {};
       const qa = repo.quality || {};
       const secCritical = n(sec.critical);
@@ -3015,6 +3150,8 @@ def render_dashboard_html() -> str:
     }
 
     function repoPriorityScore(repo) {
+      const north = repo.northstar || {};
+      const northPriority = Number(north.priority_score || 0);
       const errorWeight = n((repo.errors || []).length) * 10;
       const missingWeight = n(repo.missing_dependencies) * 6;
       const blockedWeight = n(repo.blocked_open) * 4;
@@ -3027,11 +3164,19 @@ def render_dashboard_html() -> str:
       const qa = repo.quality || {};
       const securityWeight = (n(sec.critical) * 14) + (n(sec.high) * 7) + (n(sec.medium) * 3);
       const qualityWeight = (n(qa.critical) * 10) + (n(qa.high) * 6) + Math.max(0, Math.floor((80 - n(qa.quality_score || 100)) / 2));
-      return errorWeight + missingWeight + blockedWeight + staleWeight + serviceWeight + stalledWeight + behindWeight + dirtyWeight + securityWeight + qualityWeight;
+      return Math.max(
+        northPriority,
+        errorWeight + missingWeight + blockedWeight + staleWeight + serviceWeight + stalledWeight + behindWeight + dirtyWeight + securityWeight + qualityWeight,
+      );
     }
 
     function riskWatchSentence(repo, label) {
       if (label !== 'risk' && label !== 'watch') return '';
+      const north = repo.northstar || {};
+      if (north.reason) {
+        const intro = label === 'risk' ? 'At risk because' : 'Watch because';
+        return `${intro} ${String(north.reason)}.`;
+      }
       const reasons = [];
       if ((repo.errors || []).length) reasons.push(`errors=${(repo.errors || []).slice(0, 2).join(',')}`);
       if (repo.stalled) {
@@ -3471,6 +3616,29 @@ def render_dashboard_html() -> str:
         `Edge A -> B means repo A has dependency signals pointing to repo B. Pulsing repo nodes have in-progress tasks. Top outbound: <code>${esc(outText)}</code>. Top inbound: <code>${esc(inText)}</code>.`;
     }
 
+    function renderNorthstar(data) {
+      const ns = data.northstardrift || {};
+      const summary = ns.summary || {};
+      const axes = ns.axes || {};
+      const scoreText = (value) => {
+        if (value == null || value === '') return 'n/a';
+        const num = Number(value);
+        return Number.isFinite(num) ? num.toFixed(1) : String(value);
+      };
+      const cards = [
+        ['Dark Factory', summary.overall_score, `${summary.overall_tier || 'n/a'} | ${summary.overall_trend || 'flat'}`],
+        ['Continuity', (axes.continuity || {}).score, `${(axes.continuity || {}).tier || 'n/a'} | ${(axes.continuity || {}).trend || 'flat'}`],
+        ['Autonomy', (axes.autonomy || {}).score, `${(axes.autonomy || {}).tier || 'n/a'} | ${(axes.autonomy || {}).trend || 'flat'}`],
+        ['Quality', (axes.quality || {}).score, `${(axes.quality || {}).tier || 'n/a'} | ${(axes.quality || {}).trend || 'flat'}`],
+        ['Coordination', (axes.coordination || {}).score, `${(axes.coordination || {}).tier || 'n/a'} | ${(axes.coordination || {}).trend || 'flat'}`],
+        ['Self Improve', (axes.self_improvement || {}).score, `${(axes.self_improvement || {}).tier || 'n/a'} | ${(axes.self_improvement || {}).trend || 'flat'}`],
+      ];
+      el('northstar-summary').textContent = summary.narrative || 'No north-star narrative generated yet.';
+      el('northstar-cards').innerHTML = cards
+        .map(([k, v, sub]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(scoreText(v))}</div><div class="sub">${esc(sub || '')}</div></div>`)
+        .join('');
+    }
+
     function renderOverviewCards(data) {
       const ov = data.overview || {};
       const supervisor = data.supervisor || {};
@@ -3515,7 +3683,8 @@ def render_dashboard_html() -> str:
         const score = n(row.score);
         const reasons = Array.isArray(row.reasons) ? row.reasons.join('; ') : '';
         const severity = score >= 22 ? 3 : (score >= 10 ? 2 : 1);
-        const prompt = buildAgentPrompt('attention', { repo: repoName, reasons });
+        const repo = repoByName(repoName) || {};
+        const prompt = String((((repo.northstar || {}).prompts) || {}).claude || '') || buildAgentPrompt('attention', { repo: repoName, reasons });
         return {
           repo: repoName,
           severity,
@@ -3641,6 +3810,7 @@ def render_dashboard_html() -> str:
         const activeCount = Array.isArray(repo.in_progress) ? repo.in_progress.length : 0;
         const isActiveRunning = activeCount > 0;
         const isStalled = !!repo.stalled;
+        const north = repo.northstar || {};
         card.className = `repo-card${isActiveRunning ? ' active-running' : ''}${isStalled ? ' stalled' : ''}`;
         card.setAttribute('data-repo-name', repoName);
         const [pillLabel, pillKind] = qualityPill(repo);
@@ -3658,12 +3828,15 @@ def render_dashboard_html() -> str:
             <span class="pill ${pillKind}">${esc(pillLabel)}</span>
           </div>
           <div class="repo-meta">
+            <span>northstar=<code>${esc(north.score != null ? Number(north.score).toFixed(1) : 'n/a')}</code> ${esc(north.tier || 'n/a')}</span>
+            <span>trend=${esc(north.trend || 'flat')} delta=${esc(north.delta != null ? north.delta : 0)}</span>
             <span>priority=<code>${esc(priorityScore)}</code></span>
             <span>activity=${esc(repo.activity_state || 'unknown')}</span>
             <span>branch=<code>${esc(repo.git_branch || 'n/a')}</code></span>
             <span>dirty=${repo.git_dirty ? 'yes' : 'no'}</span>
             <span>ahead=${esc(repo.ahead || 0)} behind=${esc(repo.behind || 0)}</span>
             <span>service=${repo.service_running ? 'running' : (repo.workgraph_exists ? 'stopped' : 'n/a')}</span>
+            <span>reporting=${repo.reporting ? 'yes' : 'no'} heartbeat=${esc(repo.heartbeat_age_seconds != null ? repo.heartbeat_age_seconds : 'n/a')}</span>
             <span>in-progress=${esc((repo.in_progress || []).length)} ready=${esc((repo.ready || []).length)}</span>
             <span>blocked=${esc(repo.blocked_open || 0)} missing-deps=${esc(repo.missing_dependencies || 0)}</span>
             <span>sec c/h=${esc((repo.security || {}).critical || 0)}/${esc((repo.security || {}).high || 0)}</span>
@@ -4357,6 +4530,7 @@ def render_dashboard_html() -> str:
       el('meta').textContent =
         `Generated: ${data.generated_at || 'n/a'} | repos: ${data.repo_count || 0} | transport: ${source}`;
       el('narrative').textContent = data.narrative || 'No narrative generated yet.';
+      renderNorthstar(data);
       el('updates').textContent = (data.updates && data.updates.summary) ? data.updates.summary : 'No update summary';
       renderOverviewCards(data);
       refreshActionRepoFilter(data);
@@ -4698,6 +4872,11 @@ def run_service_foreground(
                         "reason": "factory disabled in drift-policy",
                     }
 
+                _decorate_snapshot_with_northstardrift(
+                    project_dir=project_dir,
+                    snapshot=snapshot,
+                    central_repo=central_repo,
+                )
                 _write_json(paths["snapshot"], snapshot)
                 _write_json(paths["heartbeat"], {"last_tick_at": _iso_now(), "supervisor": supervisor})
                 candidates = [

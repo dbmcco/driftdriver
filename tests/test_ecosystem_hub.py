@@ -493,6 +493,7 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("Speedrift Ecosystem Hub", html)
         self.assertIn("/api/status", html)
         self.assertIn("Narrated Overview", html)
+        self.assertIn("North Star Scorecard", html)
         self.assertIn("Action Center", html)
         self.assertIn("Security Reviews", html)
         self.assertIn("Quality Reviews", html)
@@ -604,7 +605,11 @@ class EcosystemHubTests(unittest.TestCase):
                 central_repo=central,
             )
             self.assertIn("generated_at", snapshot)
+            self.assertIn("northstardrift", snapshot)
+            self.assertIn("summary", snapshot["northstardrift"])
+            self.assertIn("northstar", snapshot["repos"][0])
             self.assertTrue((central / "ecosystem-hub" / "register" / "driftdriver.json").exists())
+            self.assertTrue((central / "northstardrift" / "current.json").exists())
 
     def test_service_serves_status_api(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -644,6 +649,7 @@ class EcosystemHubTests(unittest.TestCase):
                 self.assertIn("repos", payload)
                 self.assertIn("overview", payload)
                 self.assertIn("narrative", payload)
+                self.assertIn("northstardrift", payload)
                 with urlopen(f"http://127.0.0.1:{port}/api/graph", timeout=1.0) as resp:  # noqa: S310
                     graph_payload = json.loads(resp.read().decode("utf-8"))
                 self.assertIsInstance(graph_payload, list)
@@ -651,6 +657,9 @@ class EcosystemHubTests(unittest.TestCase):
                     dep_payload = json.loads(resp.read().decode("utf-8"))
                 self.assertIn("nodes", dep_payload)
                 self.assertIn("edges", dep_payload)
+                with urlopen(f"http://127.0.0.1:{port}/api/effectiveness", timeout=1.0) as resp:  # noqa: S310
+                    effectiveness_payload = json.loads(resp.read().decode("utf-8"))
+                self.assertIn("summary", effectiveness_payload)
                 with urlopen(f"http://127.0.0.1:{port}/api/security", timeout=1.0) as resp:  # noqa: S310
                     security_payload = json.loads(resp.read().decode("utf-8"))
                 self.assertIn("summary", security_payload)
