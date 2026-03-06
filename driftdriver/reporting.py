@@ -362,7 +362,10 @@ def generate_session_report(
     # Step 3: Ingest coordinator chat history
     chat_result = ingest_chat_history(wg_dir, session_id, project, db_path)
 
-    # Step 4: Export knowledge from DB to knowledge.jsonl
+    # Step 4: Distill drift findings into knowledge entries
+    distill_drift_knowledge(db_path, project)
+
+    # Step 5: Export knowledge from DB to knowledge.jsonl
     knowledge_exported = 0
     if config.include_knowledge:
         knowledge_exported = export_knowledge(db_path, project, wg_dir)
@@ -378,7 +381,7 @@ def generate_session_report(
         pushed_to_central=False,
     )
 
-    # Step 5: Push to central if configured
+    # Step 6: Push to central if configured
     if config.central_repo:
         pushed = push_to_central(report, wg_dir, config)
         report.pushed_to_central = pushed
@@ -422,3 +425,142 @@ def format_report_markdown(report: SessionReport) -> str:
         f"- Pushed to central: {'yes' if report.pushed_to_central else 'no'}",
     ]
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Drift knowledge distillation
+# ---------------------------------------------------------------------------
+
+_TAG_RE = __import__("re").compile(r"\(([^)]+)\)")
+
+
+def _parse_drift_tags(message: str) -> list[str]:
+    """Extract drift tags from a finding message like 'Coredrift: yellow (hardening_in_core, scope_violation)'."""
+    m = _TAG_RE.search(message)
+    if not m:
+        return []
+    return [t.strip() for t in m.group(1).split(",") if t.strip()]
+
+
+def _parse_drift_lane(message: str) -> str:
+    """Extract lane name from a finding message like 'Coredrift: yellow ...'."""
+    colon = message.find(":")
+    if colon > 0:
+        return message[:colon].strip().lower()
+    return "unknown"
+
+
+def _parse_drift_color(message: str) -> str:
+    """Extract severity color (yellow/red) from a finding message."""
+    lower = message.lower()
+    if "red" in lower.split("(")[0]:
+        return "red"
+    if "yellow" in lower.split("(")[0]:
+        return "yellow"
+    return "unknown"
+
+
+def distill_drift_knowledge(db_path: Path, project: str) -> int:
+    """Aggregate drift findings into knowledge entries.
+
+    Groups findings by tag, computes frequency and confidence, then writes
+    (or updates) knowledge_entries in lessons.db. Returns count of entries created/updated.
+    """
+    if not db_path.exists():
+        return 0
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT payload FROM session_events WHERE project = ? AND event_type = 'drift_finding'",
+            (project,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return 0
+
+    # Aggregate: tag -> {count, tasks, lanes, colors, sample_messages}
+    tag_stats: dict[str, dict] = {}
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        message = payload.get("message", "")
+        task = payload.get("task", "")
+        tags = _parse_drift_tags(message)
+        lane = _parse_drift_lane(message)
+        color = _parse_drift_color(message)
+
+        for tag in tags:
+            if tag not in tag_stats:
+                tag_stats[tag] = {"count": 0, "tasks": set(), "lanes": set(), "colors": set(), "samples": []}
+            stats = tag_stats[tag]
+            stats["count"] += 1
+            if task:
+                stats["tasks"].add(task)
+            stats["lanes"].add(lane)
+            stats["colors"].add(color)
+            if len(stats["samples"]) < 3:
+                stats["samples"].append(message)
+
+    if not tag_stats:
+        return 0
+
+    # Write knowledge entries
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn = sqlite3.connect(str(db_path))
+    created = 0
+    try:
+        for tag, stats in tag_stats.items():
+            # Confidence: based on occurrence count and spread across tasks
+            count = stats["count"]
+            task_count = len(stats["tasks"])
+            if count >= 5 or task_count >= 3:
+                confidence = 0.9
+            elif count >= 3 or task_count >= 2:
+                confidence = 0.7
+            elif count >= 2:
+                confidence = 0.5
+            else:
+                confidence = 0.3
+
+            # Boost for red findings
+            if "red" in stats["colors"]:
+                confidence = min(1.0, confidence + 0.1)
+
+            lanes_str = ", ".join(sorted(stats["lanes"]))
+            tasks_str = ", ".join(sorted(stats["tasks"]))
+            content = (
+                f"Recurring drift signal: {tag} (seen {count}x across {task_count} tasks). "
+                f"Lanes: {lanes_str}. Tasks: {tasks_str}. "
+                f"Sample: {stats['samples'][0][:200]}"
+            )
+
+            # Upsert: use tag+project as dedupe key
+            entry_id = hashlib.md5(f"{project}:{tag}".encode()).hexdigest()
+            existing = conn.execute(
+                "SELECT id FROM knowledge_entries WHERE id = ?", (entry_id,)
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    "UPDATE knowledge_entries SET content = ?, confidence = ?, updated_at = ? WHERE id = ?",
+                    (content, confidence, now_iso, entry_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO knowledge_entries (id, category, project, content, confidence, source_session_ids, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (entry_id, "drift_pattern", project, content, confidence, "[]", now_iso, now_iso),
+                )
+            created += 1
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return created

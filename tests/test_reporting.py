@@ -574,5 +574,133 @@ class TestFormatReportMarkdown(unittest.TestCase):
         self.assertIn("Session Report", md)
 
 
+class TestDistillDriftKnowledge(unittest.TestCase):
+    def _seed_drift_events(self, db_path: Path, project: str, events: list[dict]) -> None:
+        conn = sqlite3.connect(str(db_path))
+        for i, ev in enumerate(events):
+            conn.execute(
+                "INSERT INTO session_events (id, session_id, cli_tool, project, event_type, payload, dedupe_key, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"ev-{i}", "sess-distill", "driftdriver", project, "drift_finding",
+                 json.dumps(ev), f"dk-{i}", "2025-01-01T00:00:00Z"),
+            )
+        conn.commit()
+        conn.close()
+
+    def test_distill_aggregates_recurring_tags(self) -> None:
+        """Tags appearing across multiple tasks should produce knowledge entries."""
+        from driftdriver.reporting import distill_drift_knowledge
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            self._seed_drift_events(db_path, "myproject", [
+                {"task": "t1", "message": "Coredrift: yellow (hardening_in_core) | next: Split hardening"},
+                {"task": "t2", "message": "Coredrift: yellow (hardening_in_core) | next: Split hardening"},
+                {"task": "t3", "message": "Coredrift: yellow (hardening_in_core, scope_violation) | next: Reduce scope"},
+                {"task": "t4", "message": "Therapydrift: yellow (repeated_drift_signals) | next: Run self-healing"},
+            ])
+
+            created = distill_drift_knowledge(db_path, "myproject")
+            self.assertGreaterEqual(created, 1)
+
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute("SELECT category, content, confidence FROM knowledge_entries WHERE project=?", ("myproject",)).fetchall()
+            conn.close()
+
+            self.assertTrue(len(rows) >= 1)
+            # hardening_in_core appeared 3 times → should be high confidence
+            hardening_rows = [r for r in rows if "hardening_in_core" in r[1]]
+            self.assertTrue(len(hardening_rows) >= 1)
+            self.assertGreaterEqual(hardening_rows[0][2], 0.7)
+
+    def test_distill_no_events_returns_zero(self) -> None:
+        """No drift events → zero knowledge created."""
+        from driftdriver.reporting import distill_drift_knowledge
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+            created = distill_drift_knowledge(db_path, "myproject")
+            self.assertEqual(created, 0)
+
+    def test_distill_deduplicates_on_rerun(self) -> None:
+        """Running distill twice with same data doesn't double entries."""
+        from driftdriver.reporting import distill_drift_knowledge
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            self._seed_drift_events(db_path, "myproject", [
+                {"task": "t1", "message": "Coredrift: yellow (hardening_in_core) | next: Split"},
+                {"task": "t2", "message": "Coredrift: yellow (hardening_in_core) | next: Split"},
+            ])
+
+            first = distill_drift_knowledge(db_path, "myproject")
+            second = distill_drift_knowledge(db_path, "myproject")
+
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute("SELECT COUNT(*) FROM knowledge_entries WHERE project=?", ("myproject",)).fetchone()
+            conn.close()
+
+            # Second run should update, not duplicate
+            self.assertEqual(rows[0], first)
+
+    def test_distill_single_occurrence_low_confidence(self) -> None:
+        """A tag seen only once should get low confidence."""
+        from driftdriver.reporting import distill_drift_knowledge
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            self._seed_drift_events(db_path, "myproject", [
+                {"task": "t1", "message": "Coredrift: red (scope_violation) | next: Revert changes"},
+            ])
+
+            created = distill_drift_knowledge(db_path, "myproject")
+            self.assertGreaterEqual(created, 1)
+
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute("SELECT confidence FROM knowledge_entries WHERE project=?", ("myproject",)).fetchall()
+            conn.close()
+            self.assertTrue(all(r[0] < 0.7 for r in rows))
+
+
+class TestDistillAndExportIntegration(unittest.TestCase):
+    def test_generate_report_with_distill_produces_knowledge(self) -> None:
+        """Full pipeline: seed drift events → generate report → knowledge.jsonl exists."""
+        from driftdriver.reporting import (
+            ReportingConfig,
+            generate_session_report,
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td)
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            # Seed some drift events directly in DB (simulating prior ingestion)
+            conn = sqlite3.connect(str(db_path))
+            for i in range(4):
+                conn.execute(
+                    "INSERT INTO session_events (id, session_id, cli_tool, project, event_type, payload, dedupe_key, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (f"de-{i}", "sess-int", "driftdriver", "myproject", "drift_finding",
+                     json.dumps({"task": f"t{i}", "message": "Coredrift: yellow (hardening_in_core) | next: Split"}),
+                     f"dk-int-{i}", "2025-01-01T00:00:00Z"),
+                )
+            conn.commit()
+            conn.close()
+
+            config = ReportingConfig(central_repo="", auto_report=True, include_knowledge=True, db_path=db_path)
+            report = generate_session_report(wg_dir, "sess-int", "myproject", config)
+
+            self.assertGreater(report.knowledge_exported, 0)
+            self.assertTrue((wg_dir / "knowledge.jsonl").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
