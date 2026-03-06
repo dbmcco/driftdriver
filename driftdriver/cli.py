@@ -31,6 +31,7 @@ from driftdriver.install import (
     ensure_amplifier_autostart_hook,
     ensure_amplifier_executor,
     install_amplifier_adapter,
+    install_claude_adapter,
     install_claude_code_hooks,
     install_codex_adapter,
     install_handler_scripts,
@@ -1373,11 +1374,13 @@ def cmd_install(args: argparse.Namespace) -> int:
     wrote_claude_code_hooks = False
     if bool(getattr(args, "with_claude_code_hooks", False)):
         wrote_claude_code_hooks = install_claude_code_hooks(project_dir)
+        install_claude_adapter(project_dir)
 
     wrote_session_driver_executor = False
     wrote_session_driver_runner = False
     if bool(getattr(args, "all_clis", False)):
         wrote_claude_code_hooks = install_claude_code_hooks(project_dir) or wrote_claude_code_hooks
+        install_claude_adapter(project_dir)
         install_codex_adapter(project_dir)
         install_opencode_hooks(project_dir)
         install_amplifier_adapter(project_dir)

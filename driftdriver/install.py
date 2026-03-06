@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CODEX_ADAPTER_MARKER = "## Driftdriver Integration Protocol"
+CODEX_ADAPTER_START = "<!-- driftdriver-codex:start -->"
+CODEX_ADAPTER_END = "<!-- driftdriver-codex:end -->"
+CLAUDE_ADAPTER_MARKER = "## Speedrift Ecosystem Protocol"
+CLAUDE_ADAPTER_START = "<!-- driftdriver-claude:start -->"
+CLAUDE_ADAPTER_END = "<!-- driftdriver-claude:end -->"
 COREDRIFT_MARKER = "## Coredrift Protocol"
 ARCHDRIFT_MARKER = "## archdrift Protocol"
 UXDRIFT_MARKER = "## uxdrift Protocol"
@@ -1056,6 +1061,27 @@ class CodexAdapterResult:
     wrote_agents_md: bool
 
 
+@dataclass(frozen=True)
+class ClaudeAdapterResult:
+    wrote_claude_md: bool
+
+
+def _replace_marked_block(existing: str, partial: str, start: str, end: str) -> str | None:
+    pattern = re.compile(rf"{re.escape(start)}.*?{re.escape(end)}\n?", re.DOTALL)
+    if not pattern.search(existing):
+        return None
+    return pattern.sub(partial, existing, count=1)
+
+
+def _replace_legacy_section(existing: str, marker: str, partial: str) -> str | None:
+    pattern = re.compile(
+        rf"(?ms)^({re.escape(marker)}\n.*?)(?=^\#\#\s|\Z)"
+    )
+    if not pattern.search(existing):
+        return None
+    return pattern.sub(partial + "\n", existing, count=1)
+
+
 def install_codex_adapter(project_dir: Path) -> CodexAdapterResult:
     """
     Inject the Driftdriver Integration Protocol into the project's AGENTS.md.
@@ -1078,14 +1104,56 @@ def install_codex_adapter(project_dir: Path) -> CodexAdapterResult:
 
     if agents_md.exists():
         existing = agents_md.read_text(encoding="utf-8")
-        if CODEX_ADAPTER_MARKER in existing:
-            return CodexAdapterResult(wrote_agents_md=False)
+        replaced = _replace_marked_block(existing, partial, CODEX_ADAPTER_START, CODEX_ADAPTER_END)
+        if replaced is None and CODEX_ADAPTER_MARKER in existing:
+            replaced = _replace_legacy_section(existing, CODEX_ADAPTER_MARKER, partial)
+        if replaced is not None:
+            if replaced == existing:
+                return CodexAdapterResult(wrote_agents_md=False)
+            agents_md.write_text(replaced, encoding="utf-8")
+            return CodexAdapterResult(wrote_agents_md=True)
         new_content = existing.rstrip("\n") + "\n\n" + partial
     else:
         new_content = partial
 
     agents_md.write_text(new_content, encoding="utf-8")
     return CodexAdapterResult(wrote_agents_md=True)
+
+
+def install_claude_adapter(project_dir: Path) -> ClaudeAdapterResult:
+    """
+    Inject shared Speedrift ecosystem guidance into the project's CLAUDE.md.
+
+    Creates CLAUDE.md when absent and keeps the managed block updated on
+    subsequent installs.
+    """
+    template_path = (
+        Path(__file__).parent
+        / "templates"
+        / "adapters"
+        / "claude-code"
+        / "CLAUDE.md.partial"
+    )
+    partial = template_path.read_text(encoding="utf-8")
+
+    claude_md = project_dir / "CLAUDE.md"
+
+    if claude_md.exists():
+        existing = claude_md.read_text(encoding="utf-8")
+        replaced = _replace_marked_block(existing, partial, CLAUDE_ADAPTER_START, CLAUDE_ADAPTER_END)
+        if replaced is None and CLAUDE_ADAPTER_MARKER in existing:
+            replaced = _replace_legacy_section(existing, CLAUDE_ADAPTER_MARKER, partial)
+        if replaced is not None:
+            if replaced == existing:
+                return ClaudeAdapterResult(wrote_claude_md=False)
+            claude_md.write_text(replaced, encoding="utf-8")
+            return ClaudeAdapterResult(wrote_claude_md=True)
+        new_content = existing.rstrip("\n") + "\n\n" + partial
+    else:
+        new_content = "# CLAUDE.md\n\n" + partial
+
+    claude_md.write_text(new_content, encoding="utf-8")
+    return ClaudeAdapterResult(wrote_claude_md=True)
 
 
 def install_opencode_hooks(project_dir: Path) -> bool:

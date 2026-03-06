@@ -1,17 +1,5 @@
 {
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${AMPLIFIER_HOOKS_DIR}/speedrift-autostart/session-start.sh",
-            "timeout": 120
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "matcher": ".*",

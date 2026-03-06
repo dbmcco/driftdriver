@@ -33,3 +33,4 @@ Run: `./.workgraph/handlers/agent-error.sh --cli codex`
 - To see the broader ecosystem hub and current port 8777 URLs:
   - `cd /Users/braydon/projects/experiments/driftdriver && scripts/ecosystem_hub_daemon.sh url`
 <!-- driftdriver-codex:end -->
+

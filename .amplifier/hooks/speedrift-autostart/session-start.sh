@@ -32,40 +32,18 @@ if [[ -x ".workgraph/coredrift" ]]; then
   ./.workgraph/coredrift --dir "$PROJECT_DIR" ensure-contracts --apply >/dev/null 2>&1 || true
 fi
 
-AUTOPILOT_DIR=".workgraph/service"
-AUTOPILOT_PID="$AUTOPILOT_DIR/speedrift-autopilot.pid"
-AUTOPILOT_LOG="$AUTOPILOT_DIR/speedrift-autopilot.log"
-mkdir -p "$AUTOPILOT_DIR" >/dev/null 2>&1 || true
-
-is_pid_running() {
-  local pid="$1"
-  [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1
-}
-
-if [[ -f "$AUTOPILOT_PID" ]]; then
-  EXISTING_PID="$(cat "$AUTOPILOT_PID" 2>/dev/null || true)"
-  if is_pid_running "$EXISTING_PID"; then
-    exit 0
-  fi
+if command -v driftdriver >/dev/null 2>&1; then
+  SPEEDRIFT_STATUS="$(driftdriver --dir "$PROJECT_DIR" --json speedriftd status --refresh 2>/dev/null || echo '{}')"
+  CONTROL_MODE="$(printf '%s\n' "$SPEEDRIFT_STATUS" | jq -r '.control.mode // "observe"' 2>/dev/null || echo 'observe')"
+else
+  CONTROL_MODE="observe"
 fi
 
-export PROJECT_DIR
-nohup bash -lc '
-  set -euo pipefail
-  cd "$PROJECT_DIR" >/dev/null 2>&1 || exit 0
-  while true; do
-    if command -v wg >/dev/null 2>&1; then
-      if ! wg --dir "$PROJECT_DIR/.workgraph" service status 2>/dev/null | grep -Eq "^Service:[[:space:]]+running"; then
-        wg --dir "$PROJECT_DIR/.workgraph" service start --executor amplifier >/dev/null 2>&1 || \
-          wg --dir "$PROJECT_DIR/.workgraph" service start >/dev/null 2>&1 || true
-      fi
-    fi
-    if [[ -x "$PROJECT_DIR/.workgraph/drifts" ]]; then
-      "$PROJECT_DIR/.workgraph/drifts" orchestrate --write-log --create-followups >/dev/null 2>&1 || true
-    fi
-    sleep 90
-  done
-' >>"$AUTOPILOT_LOG" 2>&1 &
-echo "$!" > "$AUTOPILOT_PID" 2>/dev/null || true
+if [[ "$CONTROL_MODE" == "supervise" || "$CONTROL_MODE" == "autonomous" ]]; then
+  if command -v wg >/dev/null 2>&1; then
+    wg --dir "$PROJECT_DIR/.workgraph" service start --executor amplifier >/dev/null 2>&1 || \
+      wg --dir "$PROJECT_DIR/.workgraph" service start >/dev/null 2>&1 || true
+  fi
+fi
 
 exit 0

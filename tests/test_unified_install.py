@@ -9,6 +9,7 @@ from pathlib import Path
 
 from driftdriver.install import (
     install_amplifier_adapter,
+    install_claude_adapter,
     install_claude_code_hooks,
     install_codex_adapter,
     install_lessons_mcp_config,
@@ -26,12 +27,14 @@ class UnifiedInstallAdapterTests(unittest.TestCase):
             wg_dir.mkdir(parents=True, exist_ok=True)
 
             install_claude_code_hooks(project_dir)
+            install_claude_adapter(project_dir)
             install_codex_adapter(project_dir)
             install_opencode_hooks(project_dir)
             install_amplifier_adapter(project_dir)
             install_session_driver_executor(wg_dir)
 
             self.assertTrue((project_dir / ".claude" / "hooks.json").exists())
+            self.assertTrue((project_dir / "CLAUDE.md").exists())
             self.assertTrue((project_dir / "AGENTS.md").exists())
             self.assertTrue((project_dir / ".opencode" / "hooks.json").exists())
             self.assertTrue(

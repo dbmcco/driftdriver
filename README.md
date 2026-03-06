@@ -175,6 +175,21 @@ The generated autostart hook is now observe-first:
 - it starts `wg service` only when repo control mode is `supervise` or `autonomous`
 - it no longer starts a competing background `drifts orchestrate` loop from the hook itself
 
+### Agent Instruction Surfaces
+
+`driftdriver install --all-clis` now writes the repo-local agent instruction surfaces as well as the runtime adapters:
+
+- `AGENTS.md` gets the Codex lifecycle and ecosystem-control block
+- `CLAUDE.md` gets the Claude Code lifecycle and ecosystem-control block
+
+Those managed blocks tell agents to:
+
+- run the repo lifecycle hooks instead of bypassing them
+- refresh `speedriftd` state before acting
+- arm repos explicitly with `supervise` or `autonomous`
+- return repos to `observe` when active supervision is finished
+- check the ecosystem hub via `scripts/ecosystem_hub_daemon.sh url`
+
 ## Package Any App (Self-Serve)
 
 If you're working from this mono-workspace and want one command to package an app with local drift tool bins:
