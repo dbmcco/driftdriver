@@ -13,6 +13,7 @@ from unittest.mock import patch
 from urllib.request import urlopen
 from pathlib import Path
 
+import driftdriver.ecosystem_hub as ecosystem_hub_module
 from driftdriver.ecosystem_hub import (
     _SUPERVISOR_LAST_ATTEMPT,
     _compute_ready_tasks,
@@ -148,6 +149,21 @@ class EcosystemHubTests(unittest.TestCase):
             repos = _load_ecosystem_repos(toml_path, root)
             self.assertEqual(repos["atlas_product"], outside.resolve())
 
+    def test_discover_active_workspace_repos_includes_all_matching_repos_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            expected: set[str] = set()
+            for idx in range(18):
+                repo = root / f"repo-{idx:02d}"
+                repo.mkdir(parents=True)
+                _init_repo(repo)
+                _write_graph(repo, [{"id": "t1", "title": "ready", "status": "open"}])
+                _write_policy(repo)
+                expected.add(repo.name)
+
+            discovered = ecosystem_hub_module._discover_active_workspace_repos(root, existing=set())
+            self.assertEqual(set(discovered.keys()), expected)
+
     def test_compute_ready_tasks_respects_dependencies(self) -> None:
         tasks = {
             "root": {"id": "root", "status": "done", "title": "Root"},
@@ -220,6 +236,66 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertEqual(snap.runtime["daemon_state"], "running")
             self.assertEqual(len(snap.runtime["active_workers"]), 1)
             self.assertEqual(snap.activity_state, "active")
+
+    def test_collect_repo_snapshot_marks_in_progress_without_live_workers_stalled(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            _write_graph(
+                repo,
+                [
+                    {
+                        "id": "t1",
+                        "title": "active",
+                        "status": "in-progress",
+                        "created_at": "2026-03-01T00:00:00+00:00",
+                    }
+                ],
+            )
+
+            real_run = ecosystem_hub_module._run
+
+            def fake_run(cmd, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
+                cmd_list = [str(part) for part in cmd]
+                if cmd_list[:6] == [
+                    "wg",
+                    "--dir",
+                    str(repo / ".workgraph"),
+                    "service",
+                    "status",
+                    "--json",
+                ]:
+                    return (
+                        0,
+                        json.dumps(
+                            {
+                                "status": "running",
+                                "pid": 12345,
+                                "agents": {
+                                    "agents_defined": False,
+                                    "alive": 0,
+                                    "idle": 0,
+                                    "total": 8,
+                                },
+                                "coordinator": {
+                                    "enabled": True,
+                                    "tasks_ready": 0,
+                                },
+                                "warning": "No agents defined — run 'wg agency init' or 'wg agent create'",
+                            }
+                        ),
+                        "",
+                    )
+                return real_run(cmd, cwd=cwd, timeout=timeout)
+
+            with patch("driftdriver.ecosystem_hub._run", side_effect=fake_run):
+                snap = collect_repo_snapshot("repo", repo)
+
+            self.assertEqual(snap.activity_state, "stalled")
+            self.assertTrue(snap.stalled)
+            self.assertIn("workgraph service running but no live agents", snap.stall_reasons)
+            self.assertEqual(snap.service_status.get("agents", {}).get("alive"), 0)
 
     def test_collect_repo_snapshot_marks_missing_repo_north_star(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -52,7 +52,7 @@ _STALE_OPEN_DAYS = 14.0
 _STALE_IN_PROGRESS_DAYS = 3.0
 _MAX_TASK_GRAPH_NODES = 140
 _DISCOVERY_ACTIVE_DAYS = 30.0
-_DISCOVERY_MAX_REPOS = 16
+_DISCOVERY_MAX_REPOS = 0
 _SUPERVISOR_DEFAULT_COOLDOWN_SECONDS = 180
 _SUPERVISOR_DEFAULT_MAX_STARTS = 4
 _SUPERVISOR_LAST_ATTEMPT: dict[str, float] = {}
@@ -421,6 +421,7 @@ class RepoSnapshot:
     repo_north_star: dict[str, Any] = field(default_factory=dict)
     northstar: dict[str, Any] = field(default_factory=dict)
     runtime: dict[str, Any] = field(default_factory=dict)
+    service_status: dict[str, Any] = field(default_factory=dict)
 
     def top_next_work(self, limit: int = 3) -> list[NextWorkItem]:
         out: list[NextWorkItem] = []
@@ -780,7 +781,9 @@ def _discover_active_workspace_repos(
 
     discovered.sort(key=lambda row: (row[0], row[1]))
     out: dict[str, Path] = {}
-    for _age_days, name, path in discovered[:max(0, max_extra)]:
+    limit = max(0, max_extra)
+    selected = discovered if limit == 0 else discovered[:limit]
+    for _age_days, name, path in selected:
         out[name] = path
     return out
 
@@ -1050,14 +1053,20 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
     in_progress = len(snap.in_progress)
     ready = len(snap.ready)
     open_count = int(snap.task_counts.get("open", 0)) + int(snap.task_counts.get("ready", 0))
-    if in_progress > 0:
+    if in_progress > 0 and snap.activity_state == "active":
         parts.append(f"{in_progress} in progress")
+    elif in_progress > 0:
+        parts.append(f"{in_progress} marked in progress")
     runtime = snap.runtime if isinstance(snap.runtime, dict) else {}
     active_workers = runtime.get("active_workers") if isinstance(runtime.get("active_workers"), list) else []
     control = runtime.get("control") if isinstance(runtime.get("control"), dict) else {}
     control_mode = str(control.get("mode") or "").strip().lower()
+    service_agents_alive = _service_agents_alive(snap.service_status)
+    service_warning = _service_warning(snap.service_status)
     if active_workers:
         parts.append(f"{len(active_workers)} runtime workers active")
+    elif in_progress > 0 and snap.service_running and service_agents_alive == 0:
+        parts.append("workgraph service has no live agents")
     elif control_mode in {"manual", "observe"} and open_count > 0:
         parts.append(f"control mode {control_mode}")
     if ready > 0:
@@ -1080,6 +1089,8 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
         parts.append(f"{len(snap.stale_in_progress)} long-running in-progress tasks")
     if snap.workgraph_exists and not snap.service_running:
         parts.append("workgraph service not running")
+    elif service_warning and in_progress > 0 and not active_workers:
+        parts.append(service_warning)
     repo_ns = snap.repo_north_star if isinstance(snap.repo_north_star, dict) else {}
     if not bool(repo_ns.get("present")):
         parts.append("repo north star not defined")
@@ -1092,6 +1103,27 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
     if not parts:
         return f"{snap.name}: healthy, no immediate blockers."
     return f"{snap.name}: " + "; ".join(parts[:6]) + "."
+
+
+def _service_agents_alive(service_status: dict[str, Any] | None) -> int | None:
+    if not isinstance(service_status, dict):
+        return None
+    agents = service_status.get("agents")
+    if not isinstance(agents, dict):
+        return None
+    raw = agents.get("alive")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _service_warning(service_status: dict[str, Any] | None) -> str:
+    if not isinstance(service_status, dict):
+        return ""
+    return str(service_status.get("warning") or "").strip()
 
 
 def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
@@ -1112,6 +1144,8 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
     next_action = str(runtime.get("next_action") or "").strip()
     control = runtime.get("control") if isinstance(runtime.get("control"), dict) else {}
     control_mode = str(control.get("mode") or "").strip().lower()
+    service_agents_alive = _service_agents_alive(snap.service_status)
+    service_warning = _service_warning(snap.service_status)
 
     if active_workers:
         stalled_workers = [
@@ -1125,7 +1159,23 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
             return "stalled", reasons[:6]
         return "active", []
     if in_progress > 0:
-        return "active", []
+        if service_agents_alive and service_agents_alive > 0:
+            return "active", []
+        reasons: list[str] = []
+        if snap.service_running:
+            reasons.append("workgraph service running but no live agents")
+        else:
+            reasons.append("workgraph service not running")
+        reasons.append(f"{in_progress} tasks marked in-progress without live execution")
+        if snap.stale_in_progress:
+            reasons.append(f"{len(snap.stale_in_progress)} in-progress tasks are aging")
+        if stalled_task_ids:
+            reasons.append(f"{len(stalled_task_ids)} tasks marked stalled by runtime supervisor")
+        if next_action:
+            reasons.append(next_action)
+        if service_warning:
+            reasons.append(service_warning)
+        return "stalled", reasons[:6]
     if open_count <= 0:
         return "idle", ["no open or ready tasks in graph"]
 
@@ -1381,6 +1431,7 @@ def collect_repo_snapshot(
         except Exception:
             status = {}
         if isinstance(status, dict):
+            snap.service_status = status
             state = str(status.get("status") or "")
             running = bool(status.get("running")) or state == "running"
             snap.service_running = running
@@ -3910,7 +3961,7 @@ def render_dashboard_html() -> str:
           const row = repoByName(id) || {};
           const [_pill, kind] = qualityPill(row);
           const activeCount = Array.isArray(row.in_progress) ? row.in_progress.length : 0;
-          const isRepoActive = activeCount > 0;
+          const isRepoActive = String(row.activity_state || '').toLowerCase() === 'active';
           const connected = !selectedRepo || selectedRepo === "__all__" || !related.size || related.has(id);
           const isSelected = selectedRepo === id;
           const fill = kind === 'bad' ? '#f7dfdf' : (kind === 'warn' ? '#f9ead7' : '#e2f0e4');
@@ -4225,7 +4276,7 @@ def render_dashboard_html() -> str:
         const repoName = String(repo.name || '');
         const card = document.createElement('article');
         const activeCount = Array.isArray(repo.in_progress) ? repo.in_progress.length : 0;
-        const isActiveRunning = activeCount > 0;
+        const isActiveRunning = String(repo.activity_state || '').toLowerCase() === 'active';
         const isStalled = !!repo.stalled;
         const north = repo.northstar || {};
         const repoNorthStar = repo.repo_north_star || {};
@@ -4750,11 +4801,18 @@ def render_dashboard_html() -> str:
         })
         .join('');
 
+      const selectedRuntime = selectedRepo && selectedRepo.runtime && typeof selectedRepo.runtime === 'object' ? selectedRepo.runtime : {};
+      const selectedActiveTaskIds = Array.isArray(selectedRuntime.active_task_ids) && selectedRuntime.active_task_ids.length
+        ? new Set(selectedRuntime.active_task_ids.map((value) => String(value)))
+        : null;
+      const selectedRepoActive = String((selectedRepo && selectedRepo.activity_state) || '').toLowerCase() === 'active';
       const nodeSvg = Object.values(model.pos).map((entry) => {
         const label = String(entry.node.label || entry.node.id || '').slice(0, 28);
         const status = String(entry.node.status || '').toLowerCase();
         const statusClass = status.replace(/[^a-z0-9]+/g, '-');
         const isInProgress = status === 'in-progress';
+        const isRuntimeActive = selectedActiveTaskIds ? selectedActiveTaskIds.has(String(entry.node.id || '')) : false;
+        const shouldPulse = selectedActiveTaskIds ? isRuntimeActive : (isInProgress && selectedRepoActive);
         const age = Number.isFinite(Number(entry.node.age_days)) ? `${entry.node.age_days}d` : '';
         const isSelected = activeNodeId && String(entry.node.id) === String(activeNodeId);
         const inPath = traversal ? traversal.pathNodes.has(String(entry.node.id)) : false;
@@ -4763,7 +4821,7 @@ def render_dashboard_html() -> str:
         const opacity = traversal ? (inPath ? 1 : 0.34) : 1;
         return `
           <g class="graph-node status-${statusClass}" data-node-id="${esc(entry.node.id)}" style="opacity:${opacity}; cursor:pointer;">
-            ${isInProgress ? `<circle class="pulse-halo" cx="${entry.x}" cy="${entry.y}" r="14" fill="none" stroke="#0f6f7c" stroke-width="2.3" />` : ''}
+            ${shouldPulse ? `<circle class="pulse-halo" cx="${entry.x}" cy="${entry.y}" r="14" fill="none" stroke="#0f6f7c" stroke-width="2.3" />` : ''}
             <circle class="base-node" cx="${entry.x}" cy="${entry.y}" r="10" fill="${colorFor(entry.node)}" stroke="${stroke}" stroke-width="${strokeW}" />
             <text x="${entry.x + 16}" y="${entry.y + 5}" fill="#2b3932" font-size="12">${esc(entry.node.id)}</text>
             <text x="${entry.x + 16}" y="${entry.y + 20}" fill="#6b776f" font-size="10">${esc(label)} ${esc(age)}</text>
