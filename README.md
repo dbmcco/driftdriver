@@ -350,6 +350,16 @@ The autopilot:
 
 State is persisted to `.workgraph/.autopilot/` (run-state.json, workers.jsonl).
 
+Repo-local runtime supervision is separate from autopilot planning:
+
+```bash
+driftdriver speedriftd once
+driftdriver speedriftd status --refresh
+driftdriver speedriftd loop --interval-seconds 30
+```
+
+This writes runtime ledgers under `.workgraph/service/runtime/` so the ecosystem hub can distinguish active work, quiet workers, and stalled execution.
+
 Shell wrapper with SIGTERM handling and PID tracking:
 
 ```bash

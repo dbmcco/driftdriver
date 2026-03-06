@@ -420,6 +420,7 @@ class RepoSnapshot:
     quality_findings: list[dict[str, Any]] = field(default_factory=list)
     repo_north_star: dict[str, Any] = field(default_factory=dict)
     northstar: dict[str, Any] = field(default_factory=dict)
+    runtime: dict[str, Any] = field(default_factory=dict)
 
     def top_next_work(self, limit: int = 3) -> list[NextWorkItem]:
         out: list[NextWorkItem] = []
@@ -1051,6 +1052,10 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
     open_count = int(snap.task_counts.get("open", 0)) + int(snap.task_counts.get("ready", 0))
     if in_progress > 0:
         parts.append(f"{in_progress} in progress")
+    runtime = snap.runtime if isinstance(snap.runtime, dict) else {}
+    active_workers = runtime.get("active_workers") if isinstance(runtime.get("active_workers"), list) else []
+    if active_workers:
+        parts.append(f"{len(active_workers)} runtime workers active")
     if ready > 0:
         parts.append(f"{ready} ready to start")
     if open_count > 0 and in_progress == 0:
@@ -1097,13 +1102,30 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
     in_progress = len(snap.in_progress)
     ready = len(snap.ready)
     open_count = int(snap.task_counts.get("open", 0)) + int(snap.task_counts.get("ready", 0))
+    runtime = snap.runtime if isinstance(snap.runtime, dict) else {}
+    active_workers = runtime.get("active_workers") if isinstance(runtime.get("active_workers"), list) else []
+    stalled_task_ids = runtime.get("stalled_task_ids") if isinstance(runtime.get("stalled_task_ids"), list) else []
+    next_action = str(runtime.get("next_action") or "").strip()
 
+    if active_workers:
+        stalled_workers = [
+            row for row in active_workers
+            if isinstance(row, dict) and str(row.get("state") or "").strip().lower() == "stalled"
+        ]
+        if stalled_workers and len(stalled_workers) == len(active_workers):
+            reasons = [f"{len(stalled_workers)} runtime workers stalled"]
+            if next_action:
+                reasons.append(next_action)
+            return "stalled", reasons[:6]
+        return "active", []
     if in_progress > 0:
         return "active", []
     if open_count <= 0:
         return "idle", ["no open or ready tasks in graph"]
 
     reasons: list[str] = [f"{open_count} open/ready tasks but none in-progress"]
+    if stalled_task_ids:
+        reasons.insert(0, f"{len(stalled_task_ids)} tasks marked stalled by runtime supervisor")
     if ready > 0:
         reasons.append(f"{ready} ready tasks not started")
     if snap.blocked_open >= open_count and open_count > 0:
@@ -1334,6 +1356,7 @@ def collect_repo_snapshot(
     snap.workgraph_exists = True
     snap.reporting = True
     snap.heartbeat_age_seconds = _path_age_seconds(wg_dir / "graph.jsonl")
+    snap.runtime = _read_json(wg_dir / "service" / "runtime" / "current.json")
 
     # Service status is best-effort; missing wg is non-fatal.
     rc, status_json, _ = _run(["wg", "--dir", str(wg_dir), "service", "status", "--json"], cwd=repo_path)

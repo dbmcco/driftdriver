@@ -188,6 +188,39 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertTrue(snap.repo_north_star["present"])
             self.assertEqual(snap.repo_north_star["status"], "present")
 
+    def test_collect_repo_snapshot_reads_runtime_supervisor_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            _write_graph(repo, [{"id": "t1", "title": "active", "status": "in-progress"}])
+            runtime_dir = repo / ".workgraph" / "service" / "runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            (runtime_dir / "current.json").write_text(
+                json.dumps(
+                    {
+                        "repo": "repo",
+                        "daemon_state": "running",
+                        "active_workers": [
+                            {
+                                "worker_id": "repo-t1-worker",
+                                "task_id": "t1",
+                                "runtime": "claude",
+                                "state": "running",
+                            }
+                        ],
+                        "stalled_task_ids": [],
+                        "next_action": "continue supervision",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            snap = collect_repo_snapshot("repo", repo)
+            self.assertEqual(snap.runtime["daemon_state"], "running")
+            self.assertEqual(len(snap.runtime["active_workers"]), 1)
+            self.assertEqual(snap.activity_state, "active")
+
     def test_collect_repo_snapshot_marks_missing_repo_north_star(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"

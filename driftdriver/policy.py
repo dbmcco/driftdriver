@@ -135,6 +135,19 @@ def _default_sessiondriver_cfg() -> dict[str, Any]:
     }
 
 
+def _default_speedriftd_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "interval_seconds": 30,
+        "max_concurrent_workers": 2,
+        "heartbeat_stale_after_seconds": 300,
+        "output_stale_after_seconds": 600,
+        "worker_timeout_seconds": 1800,
+        "retry_cooldown_seconds": 180,
+        "max_retries_per_task": 2,
+    }
+
+
 def _default_plandrift_cfg() -> dict[str, Any]:
     return {
         "enabled": True,
@@ -224,6 +237,7 @@ class DriftPolicy:
     secdrift: dict[str, Any]
     qadrift: dict[str, Any]
     sessiondriver: dict[str, Any]
+    speedriftd: dict[str, Any]
     plandrift: dict[str, Any]
     northstardrift: dict[str, Any]
     autonomy_default: dict[str, Any]
@@ -342,6 +356,16 @@ def _default_policy_text() -> str:
         "worker_timeout_seconds = 1800\n"
         "drift_failure_threshold = 3\n"
         "\n"
+        "[speedriftd]\n"
+        "enabled = true\n"
+        "interval_seconds = 30\n"
+        "max_concurrent_workers = 2\n"
+        "heartbeat_stale_after_seconds = 300\n"
+        "output_stale_after_seconds = 600\n"
+        "worker_timeout_seconds = 1800\n"
+        "retry_cooldown_seconds = 180\n"
+        "max_retries_per_task = 2\n"
+        "\n"
         "[plandrift]\n"
         "enabled = true\n"
         "interval_seconds = 14400\n"
@@ -438,6 +462,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             secdrift=_default_secdrift_cfg(),
             qadrift=_default_qadrift_cfg(),
             sessiondriver=_default_sessiondriver_cfg(),
+            speedriftd=_default_speedriftd_cfg(),
             plandrift=_default_plandrift_cfg(),
             northstardrift=_default_northstardrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
@@ -475,6 +500,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             secdrift=_default_secdrift_cfg(),
             qadrift=_default_qadrift_cfg(),
             sessiondriver=_default_sessiondriver_cfg(),
+            speedriftd=_default_speedriftd_cfg(),
             plandrift=_default_plandrift_cfg(),
             northstardrift=_default_northstardrift_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
@@ -704,6 +730,44 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         1, int(sessiondriver_raw.get("drift_failure_threshold", sessiondriver["drift_failure_threshold"]))
     )
 
+    speedriftd_raw = data.get("speedriftd") if isinstance(data.get("speedriftd"), dict) else {}
+    speedriftd = _default_speedriftd_cfg()
+    speedriftd["enabled"] = bool(speedriftd_raw.get("enabled", speedriftd["enabled"]))
+    speedriftd["interval_seconds"] = max(
+        5, int(speedriftd_raw.get("interval_seconds", speedriftd["interval_seconds"]))
+    )
+    speedriftd["max_concurrent_workers"] = max(
+        1, int(speedriftd_raw.get("max_concurrent_workers", speedriftd["max_concurrent_workers"]))
+    )
+    speedriftd["heartbeat_stale_after_seconds"] = max(
+        30,
+        int(
+            speedriftd_raw.get(
+                "heartbeat_stale_after_seconds",
+                speedriftd["heartbeat_stale_after_seconds"],
+            )
+        ),
+    )
+    speedriftd["output_stale_after_seconds"] = max(
+        speedriftd["heartbeat_stale_after_seconds"],
+        int(
+            speedriftd_raw.get(
+                "output_stale_after_seconds",
+                speedriftd["output_stale_after_seconds"],
+            )
+        ),
+    )
+    speedriftd["worker_timeout_seconds"] = max(
+        speedriftd["output_stale_after_seconds"],
+        int(speedriftd_raw.get("worker_timeout_seconds", speedriftd["worker_timeout_seconds"])),
+    )
+    speedriftd["retry_cooldown_seconds"] = max(
+        0, int(speedriftd_raw.get("retry_cooldown_seconds", speedriftd["retry_cooldown_seconds"]))
+    )
+    speedriftd["max_retries_per_task"] = max(
+        0, int(speedriftd_raw.get("max_retries_per_task", speedriftd["max_retries_per_task"]))
+    )
+
     plandrift_raw = data.get("plandrift") if isinstance(data.get("plandrift"), dict) else {}
     plandrift = _default_plandrift_cfg()
     plandrift["enabled"] = bool(plandrift_raw.get("enabled", plandrift["enabled"]))
@@ -903,6 +967,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         secdrift=secdrift,
         qadrift=qadrift,
         sessiondriver=sessiondriver,
+        speedriftd=speedriftd,
         plandrift=plandrift,
         northstardrift=northstardrift,
         autonomy_default=autonomy_default,

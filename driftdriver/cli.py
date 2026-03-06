@@ -69,6 +69,7 @@ from driftdriver.install import (
 from driftdriver.policy import ensure_drift_policy, load_drift_policy
 from driftdriver.routing_models import parse_routing_response
 from driftdriver.smart_routing import gather_evidence
+from driftdriver.speedriftd import load_runtime_snapshot, run_runtime_cycle, run_runtime_loop
 from driftdriver.updates import (
     ECOSYSTEM_REPOS,
     check_ecosystem_updates,
@@ -2335,6 +2336,43 @@ def cmd_ecosystem_hub_proxy(args: argparse.Namespace) -> int:
     return int(ecosystem_hub_main(forwarded))
 
 
+def cmd_speedriftd(args: argparse.Namespace) -> int:
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    project_dir = wg_dir.parent
+    policy = load_drift_policy(wg_dir)
+    cfg = dict(getattr(policy, "speedriftd", {}) or {})
+
+    action = str(getattr(args, "action", "status") or "status")
+    if action == "status":
+        snapshot = load_runtime_snapshot(project_dir)
+        if not snapshot or bool(getattr(args, "refresh", False)):
+            snapshot = run_runtime_cycle(project_dir, policy=policy)
+    elif action == "once":
+        snapshot = run_runtime_cycle(project_dir, policy=policy)
+    else:
+        snapshot = run_runtime_loop(
+            project_dir,
+            interval_seconds=max(1, int(getattr(args, "interval_seconds", cfg.get("interval_seconds", 30)))),
+            max_cycles=max(0, int(getattr(args, "max_cycles", 0))),
+            policy=policy,
+        )
+
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(snapshot, indent=2, sort_keys=False))
+        return ExitCode.ok
+
+    print(f"speedriftd repo: {snapshot.get('repo', project_dir.name)}")
+    print(f"Daemon state: {snapshot.get('daemon_state', 'unknown')}")
+    print(f"Active workers: {len(snapshot.get('active_workers') or [])}")
+    print(f"Ready tasks: {len(snapshot.get('ready_tasks') or [])}")
+    stalled = snapshot.get("stalled_task_ids") or []
+    print(f"Stalled tasks: {len(stalled)}")
+    if stalled:
+        print(f"- {', '.join(str(item) for item in stalled[:6])}")
+    print(f"Next action: {snapshot.get('next_action', '')}")
+    return ExitCode.ok
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="driftdriver")
     p.add_argument("--dir", help="Project directory (or .workgraph dir). Defaults to cwd search.")
@@ -2590,6 +2628,33 @@ def _build_parser() -> argparse.ArgumentParser:
     autopilot_p.add_argument("--skip-review", action="store_true", help="Skip milestone review after completion")
     autopilot_p.add_argument("--no-peer-dispatch", action="store_true", help="Disable cross-repo peer dispatch")
     autopilot_p.set_defaults(func=cmd_autopilot)
+
+    speedriftd_p = sub.add_parser("speedriftd", help="Run the repo-local runtime supervisor shell")
+    speedriftd_p.add_argument(
+        "action",
+        nargs="?",
+        choices=["status", "once", "loop"],
+        default="status",
+        help="status (default), once, or loop",
+    )
+    speedriftd_p.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Refresh runtime snapshot before returning status",
+    )
+    speedriftd_p.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=30,
+        help="Loop interval seconds for `speedriftd loop` (default: 30)",
+    )
+    speedriftd_p.add_argument(
+        "--max-cycles",
+        type=int,
+        default=0,
+        help="Stop after this many cycles when looping (default: 0 = forever)",
+    )
+    speedriftd_p.set_defaults(func=cmd_speedriftd)
 
     # -- Peer federation commands --
     peer_list_p = sub.add_parser("peer-list", help="Discover and list workgraph peers")

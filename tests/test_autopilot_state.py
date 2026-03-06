@@ -75,6 +75,23 @@ class TestWorkerEvents(unittest.TestCase):
             self.assertEqual(events[0]["drift_fail_count"], 2)
             self.assertIn("finding: spec mismatch", events[0]["drift_findings"])
 
+    def test_event_persists_session_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp)
+            ctx = WorkerContext(
+                task_id="t1",
+                task_title="Test",
+                worker_name="w1",
+                session_id="sess-123",
+                started_at=42.0,
+                status="running",
+            )
+            save_worker_event(p, ctx, "dispatched")
+
+            events = load_worker_events(p)
+            self.assertEqual(events[0]["session_id"], "sess-123")
+            self.assertEqual(events[0]["started_at"], 42.0)
+
 
 class TestRunState(unittest.TestCase):
     def test_save_and_load_run_state(self):
@@ -110,6 +127,7 @@ class TestRunState(unittest.TestCase):
             config = AutopilotConfig(project_dir=p, goal="Test")
             ctx = WorkerContext(
                 task_id="t1", task_title="Task 1", worker_name="w1",
+                session_id="sess-321", started_at=12.0,
                 status="completed", drift_fail_count=1,
             )
             run = AutopilotRun(
@@ -123,6 +141,8 @@ class TestRunState(unittest.TestCase):
             state = load_run_state(p)
             self.assertIn("t1", state["workers"])
             self.assertEqual(state["workers"]["t1"]["status"], "completed")
+            self.assertEqual(state["workers"]["t1"]["session_id"], "sess-321")
+            self.assertEqual(state["workers"]["t1"]["started_at"], 12.0)
 
     def test_clear_run_state(self):
         with tempfile.TemporaryDirectory() as tmp:

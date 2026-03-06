@@ -52,6 +52,9 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue(p.sessiondriver["enabled"])
             self.assertTrue(p.sessiondriver["require_session_driver"])
             self.assertFalse(p.sessiondriver["allow_cli_fallback"])
+            self.assertTrue(p.speedriftd["enabled"])
+            self.assertEqual(p.speedriftd["interval_seconds"], 30)
+            self.assertEqual(p.speedriftd["heartbeat_stale_after_seconds"], 300)
             self.assertTrue(p.plandrift["enabled"])
             self.assertEqual(p.plandrift["continuation_runtime"], "double-shot-latte")
             self.assertEqual(p.plandrift["orchestration_runtime"], "claude-session-driver")
@@ -171,6 +174,16 @@ class PolicyTests(unittest.TestCase):
                         "max_dispatch_per_repo = -1",
                         "worker_timeout_seconds = -5",
                         "drift_failure_threshold = 0",
+                        "",
+                        "[speedriftd]",
+                        "enabled = false",
+                        "interval_seconds = 0",
+                        "max_concurrent_workers = -2",
+                        "heartbeat_stale_after_seconds = 0",
+                        "output_stale_after_seconds = -30",
+                        "worker_timeout_seconds = -60",
+                        "retry_cooldown_seconds = -90",
+                        "max_retries_per_task = -1",
                         "",
                         "[plandrift]",
                         "enabled = false",
@@ -302,6 +315,14 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.sessiondriver["max_dispatch_per_repo"], 1)
             self.assertEqual(p.sessiondriver["worker_timeout_seconds"], 60)
             self.assertEqual(p.sessiondriver["drift_failure_threshold"], 1)
+            self.assertFalse(p.speedriftd["enabled"])
+            self.assertEqual(p.speedriftd["interval_seconds"], 5)
+            self.assertEqual(p.speedriftd["max_concurrent_workers"], 1)
+            self.assertEqual(p.speedriftd["heartbeat_stale_after_seconds"], 30)
+            self.assertEqual(p.speedriftd["output_stale_after_seconds"], 30)
+            self.assertEqual(p.speedriftd["worker_timeout_seconds"], 30)
+            self.assertEqual(p.speedriftd["retry_cooldown_seconds"], 0)
+            self.assertEqual(p.speedriftd["max_retries_per_task"], 0)
             self.assertFalse(p.plandrift["enabled"])
             self.assertEqual(p.plandrift["interval_seconds"], 0)
             self.assertEqual(p.plandrift["max_findings_per_repo"], 1)
