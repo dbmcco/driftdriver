@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timezone
+from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
@@ -34,11 +36,14 @@ def default_northstardrift_cfg() -> dict[str, Any]:
         "comparison_window": "7d",
         "dirty_repo_blocks_auto_mutation": True,
         "max_auto_interventions_per_cycle": 3,
+        "max_review_tasks_per_repo": 2,
         "require_metric_evidence": True,
         "effectiveness_ledger_min_interval_seconds": 3600,
         "regression_ledger_min_interval_seconds": 3600,
         "intervention_ledger_min_interval_seconds": 1800,
         "fresh_heartbeat_seconds": 21600,
+        "history_points": 18,
+        "latent_repo_floor_score": 68.0,
     }
 
 
@@ -139,6 +144,88 @@ def _should_append(path: Path, ts: str, *, min_interval_seconds: int) -> bool:
     return (current_dt - previous_dt).total_seconds() >= max(0, int(min_interval_seconds))
 
 
+def _read_recent_jsonl(path: Path, *, limit: int) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines[-max(1, int(limit)) :]:
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
+
+
+def _fingerprint(parts: list[str]) -> str:
+    key = "|".join(str(part or "").strip().lower() for part in parts)
+    return sha1(key.encode("utf-8")).hexdigest()  # noqa: S324 - non-crypto identity hash
+
+
+def _run_cmd(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float = 40.0,
+) -> tuple[int, str, str]:
+    def _invoke(actual_cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            actual_cmd,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    try:
+        proc = _invoke(cmd)
+    except FileNotFoundError as exc:
+        if cmd and str(cmd[0]) == "wg":
+            candidates = [
+                str(Path.home() / ".cargo" / "bin" / "wg"),
+                "/opt/homebrew/bin/wg",
+                "/usr/local/bin/wg",
+            ]
+            seen: set[str] = set()
+            for candidate in candidates:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                if not Path(candidate).exists():
+                    continue
+                try:
+                    proc = _invoke([candidate, *cmd[1:]])
+                    return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
+                except FileNotFoundError:
+                    continue
+        return 127, "", str(exc)
+    except Exception as exc:
+        return 1, "", str(exc)
+    return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
+
+
+def _is_participating_repo(repo: dict[str, Any]) -> bool:
+    return bool(repo.get("workgraph_exists")) or bool(repo.get("reporting"))
+
+
+def _is_latent_repo(repo: dict[str, Any]) -> bool:
+    if not bool(repo.get("exists")):
+        return False
+    if _is_participating_repo(repo):
+        return False
+    if bool(repo.get("git_dirty")) or int(repo.get("behind") or 0) > 0:
+        return False
+    errors = repo.get("errors")
+    if isinstance(errors, list) and errors:
+        return False
+    return True
+
+
 def _repo_reasons(repo: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     errors = repo.get("errors")
@@ -214,13 +301,14 @@ def _repo_prompt(repo_name: str, reasons: list[str], *, tool: str) -> str:
     )
 
 
-def _score_repo(repo: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
+def _score_repo(repo: dict[str, Any], previous: dict[str, Any] | None, *, config: dict[str, Any]) -> dict[str, Any]:
     penalty = 0.0
     reasons = _repo_reasons(repo)
+    latent_repo = _is_latent_repo(repo)
     if not bool(repo.get("exists")):
         penalty += 85
-    if bool(repo.get("exists")) and not bool(repo.get("workgraph_exists")):
-        penalty += 40
+    elif not bool(repo.get("workgraph_exists")):
+        penalty += 18 if latent_repo else 28
     penalty += min(28.0, len(reasons) * 4.0)
     penalty += min(24.0, int(repo.get("missing_dependencies") or 0) * 6.0)
     penalty += min(18.0, int(repo.get("blocked_open") or 0) * 3.0)
@@ -250,6 +338,8 @@ def _score_repo(repo: dict[str, Any], previous: dict[str, Any] | None) -> dict[s
     if isinstance(repo.get("in_progress"), list) and repo.get("in_progress"):
         penalty = max(0.0, penalty - 4.0)
     score = _clamp_score(100.0 - penalty)
+    if latent_repo:
+        score = max(score, float(config.get("latent_repo_floor_score") or 68.0))
     previous_score = None
     if isinstance(previous, dict):
         try:
@@ -351,13 +441,19 @@ def compute_northstardrift(
                     previous_repo_scores[name] = row
 
     repo_scores = [
-        _score_repo(repo, previous_repo_scores.get(str(repo.get("name") or "").strip()))
+        _score_repo(
+            repo,
+            previous_repo_scores.get(str(repo.get("name") or "").strip()),
+            config=cfg,
+        )
         for repo in repos
         if isinstance(repo, dict)
     ]
     repo_scores.sort(key=lambda row: (float(row.get("score") or 0.0), str(row.get("repo") or "")))
 
     total_repos = len(repos)
+    participating_repos = sum(1 for repo in repos if isinstance(repo, dict) and _is_participating_repo(repo))
+    latent_repos = sum(1 for repo in repos if isinstance(repo, dict) and _is_latent_repo(repo))
     reporting_repos = sum(1 for repo in repos if isinstance(repo, dict) and bool(repo.get("reporting")))
     open_work_repos = 0
     service_healthy_repos = 0
@@ -391,7 +487,7 @@ def compute_northstardrift(
         if isinstance(heartbeat_age, int) and heartbeat_age <= int(cfg.get("fresh_heartbeat_seconds") or 21600):
             fresh_repos += 1
 
-    reporting_coverage = _ratio_score(reporting_repos, total_repos, default=0.0)
+    reporting_coverage = _ratio_score(reporting_repos, max(participating_repos, total_repos), default=0.0)
     daemon_uptime_score = _ratio_score(service_healthy_repos, total_repos, default=0.0)
     active_progress_coverage = _ratio_score(active_repos, open_work_repos, default=100.0)
     freshness_score = _ratio_score(fresh_repos, reporting_repos, default=0.0 if reporting_repos <= 0 else 100.0)
@@ -426,29 +522,52 @@ def compute_northstardrift(
         + (0.20 * loop_penalty_inverse)
     )
 
-    average_quality = _average_quality_score(repos)
-    qadrift_pressure_inverse = _penalty_inverse(
-        (int(overview.get("quality_critical") or 0) * 18.0) + (int(overview.get("quality_high") or 0) * 7.0)
+    quality_population = max(1, participating_repos)
+    average_quality = _average_quality_score(
+        [repo for repo in repos if isinstance(repo, dict) and _is_participating_repo(repo)]
+        or [repo for repo in repos if isinstance(repo, dict)]
     )
-    secdrift_pressure_inverse = _penalty_inverse(
-        (int(overview.get("security_critical") or 0) * 20.0) + (int(overview.get("security_high") or 0) * 8.0)
+    quality_risk_repos = int(overview.get("repos_quality_risk") or 0)
+    security_risk_repos = int(overview.get("repos_security_risk") or 0)
+    quality_critical = int(overview.get("quality_critical") or 0)
+    quality_high = int(overview.get("quality_high") or 0)
+    security_critical = int(overview.get("security_critical") or 0)
+    security_high = int(overview.get("security_high") or 0)
+    qadrift_pressure_inverse = _clamp_score(
+        (0.55 * _ratio_score(quality_population - quality_risk_repos, quality_population, default=100.0))
+        + (0.25 * _ratio_score(quality_population - min(quality_population, quality_high), quality_population, default=100.0))
+        + (0.20 * _ratio_score(quality_population - min(quality_population, quality_critical), quality_population, default=100.0))
+    )
+    secdrift_pressure_inverse = _clamp_score(
+        (0.55 * _ratio_score(quality_population - security_risk_repos, quality_population, default=100.0))
+        + (0.25 * _ratio_score(quality_population - min(quality_population, security_high), quality_population, default=100.0))
+        + (0.20 * _ratio_score(quality_population - min(quality_population, security_critical), quality_population, default=100.0))
     )
     regression_penalty_inverse = _penalty_inverse((stalled_repos * 8.0) + (blocked_total * 2.5) + (stale_active_total * 5.0))
     dirtiness_penalty_inverse = _ratio_score(total_repos - dirty_repos, total_repos, default=100.0)
-    divergence_penalty_inverse = _penalty_inverse(total_behind * 2.0)
+    divergence_penalty_inverse = _penalty_inverse((total_behind / max(1, total_repos)) * 6.0)
     quality = _clamp_score(
-        (0.30 * average_quality)
-        + (0.20 * qadrift_pressure_inverse)
-        + (0.20 * secdrift_pressure_inverse)
+        (0.35 * average_quality)
+        + (0.18 * qadrift_pressure_inverse)
+        + (0.17 * secdrift_pressure_inverse)
         + (0.15 * regression_penalty_inverse)
         + (0.10 * dirtiness_penalty_inverse)
         + (0.05 * divergence_penalty_inverse)
     )
 
-    interrepo_reporting = _ratio_score(reporting_repos, total_repos, default=0.0)
-    handoff_success_rate = _penalty_inverse((missing_dependencies * 10.0) + (blocked_total * 2.0))
-    dependency_age_inverse = _penalty_inverse((blocked_total * 4.0) + (stale_open_total * 3.0))
-    dependency_metadata_score = _penalty_inverse(missing_dependencies * 12.0)
+    coordination_population = max(1, participating_repos)
+    interrepo_reporting = _ratio_score(reporting_repos, coordination_population, default=0.0)
+    handoff_success_rate = _ratio_score(
+        coordination_population - min(coordination_population, max(missing_dependencies, blocked_total)),
+        coordination_population,
+        default=100.0,
+    )
+    dependency_age_inverse = _penalty_inverse(((blocked_total + stale_open_total) / coordination_population) * 18.0)
+    dependency_metadata_score = _ratio_score(
+        coordination_population - min(coordination_population, missing_dependencies),
+        coordination_population,
+        default=100.0,
+    )
     blocked_repo_penalty_inverse = _penalty_inverse(stalled_repos * 10.0)
     linked_repo_ratio = _ratio_score(linked_repos, total_repos, default=100.0 if total_repos <= 1 else 0.0)
     coordination = _clamp_score(
@@ -571,6 +690,30 @@ def compute_northstardrift(
                 }
             )
 
+    recommended_reviews: list[dict[str, Any]] = []
+    for row in operator_prompts:
+        repo_name = str(row.get("repo") or "").strip()
+        if not repo_name:
+            continue
+        priority = str(row.get("priority") or "medium").lower()
+        severity = "high" if priority == "high" else "medium"
+        reason = str(row.get("reason") or "").strip() or "north-star pressure elevated"
+        fingerprint = _fingerprint([repo_name, severity, reason])
+        recommended_reviews.append(
+            {
+                "fingerprint": fingerprint,
+                "repo": repo_name,
+                "severity": severity,
+                "category": "repo-attention",
+                "title": f"North-star attention review for {repo_name}",
+                "evidence": reason,
+                "recommendation": "Review the local graph, preserve active work, and emit the smallest corrective tasks needed to reduce the north-star pressure.",
+                "model_prompt": str(row.get("claude_prompt") or ""),
+                "codex_prompt": str(row.get("codex_prompt") or ""),
+                "score": row.get("score"),
+            }
+        )
+
     weakest_axis = min(axes.items(), key=lambda item: float(item[1].get("score") or 0.0)) if axes else ("continuity", {"score": 0})
     strongest_axis = max(axes.items(), key=lambda item: float(item[1].get("score") or 0.0)) if axes else ("continuity", {"score": 0})
     narrative = _build_narrative(
@@ -601,7 +744,9 @@ def compute_northstardrift(
         "repo_scores": repo_scores,
         "counts": {
             "tracked_repos": total_repos,
+            "participating_repos": participating_repos,
             "reporting_repos": reporting_repos,
+            "latent_repos": latent_repos,
             "active_repos": active_repos,
             "stalled_repos": stalled_repos,
             "blocked_repos": sum(1 for repo in repos if isinstance(repo, dict) and int(repo.get("blocked_open") or 0) > 0),
@@ -612,6 +757,16 @@ def compute_northstardrift(
         "regressions": regressions,
         "improvements": improvements,
         "operator_prompts": operator_prompts,
+        "recommended_reviews": recommended_reviews,
+        "calibration": {
+            "quality_population": quality_population,
+            "coordination_population": coordination_population,
+            "latent_repo_floor_score": float(cfg.get("latent_repo_floor_score") or 68.0),
+            "notes": [
+                "quality/security pressure is normalized by participating repos rather than raw finding totals",
+                "repos with no workgraph are capped at watch unless stronger risk signals are present",
+            ],
+        },
         "config": {
             "dirty_repo_blocks_auto_mutation": bool(cfg.get("dirty_repo_blocks_auto_mutation", True)),
             "require_metric_evidence": bool(cfg.get("require_metric_evidence", True)),
@@ -655,6 +810,172 @@ def load_previous_northstardrift(*, service_dir: Path, central_repo: Path | None
     if not current.exists():
         return {}
     return _read_json(current)
+
+
+def read_northstardrift_history(
+    *,
+    service_dir: Path,
+    central_repo: Path | None,
+    current: dict[str, Any] | None = None,
+    limit: int = 18,
+) -> dict[str, Any]:
+    root = artifacts_root(service_dir=service_dir, central_repo=central_repo)
+    ledger = root / "ledgers" / "effectiveness.jsonl"
+    rows = _read_recent_jsonl(ledger, limit=max(1, int(limit)))
+    points: list[dict[str, Any]] = []
+    for row in rows:
+        summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+        axes = row.get("axes") if isinstance(row.get("axes"), dict) else {}
+        points.append(
+            {
+                "generated_at": str(row.get("generated_at") or ""),
+                "overall_score": float(summary.get("overall_score") or 0.0),
+                "axes": {
+                    name: {"score": float((axes.get(name) or {}).get("score") or 0.0)}
+                    for name in AXIS_NAMES
+                },
+            }
+        )
+
+    current_row = current if isinstance(current, dict) else None
+    current_ts = str((current_row or {}).get("generated_at") or "")
+    if current_row and current_ts and (not points or str(points[-1].get("generated_at") or "") != current_ts):
+        summary = current_row.get("summary") if isinstance(current_row.get("summary"), dict) else {}
+        axes = current_row.get("axes") if isinstance(current_row.get("axes"), dict) else {}
+        points.append(
+            {
+                "generated_at": current_ts,
+                "overall_score": float(summary.get("overall_score") or 0.0),
+                "axes": {
+                    name: {"score": float((axes.get(name) or {}).get("score") or 0.0)}
+                    for name in AXIS_NAMES
+                },
+            }
+        )
+    points = points[-max(1, int(limit)) :]
+    return {
+        "points": points,
+        "summary": {
+            "count": len(points),
+            "window": "recent",
+        },
+    }
+
+
+def emit_northstar_review_tasks(
+    *,
+    snapshot: dict[str, Any],
+    report: dict[str, Any],
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cfg = default_northstardrift_cfg()
+    if isinstance(config, dict):
+        cfg.update({key: value for key, value in config.items()})
+
+    out: dict[str, Any] = {
+        "enabled": True,
+        "attempted": 0,
+        "created": 0,
+        "existing": 0,
+        "skipped": 0,
+        "errors": [],
+        "tasks": [],
+    }
+    repos = snapshot.get("repos") if isinstance(snapshot.get("repos"), list) else []
+    repo_map = {
+        str(repo.get("name") or ""): repo
+        for repo in repos
+        if isinstance(repo, dict) and str(repo.get("name") or "").strip()
+    }
+    review_rows = report.get("recommended_reviews") if isinstance(report.get("recommended_reviews"), list) else []
+    per_repo_counts: dict[str, int] = {}
+    per_repo_limit = max(1, int(cfg.get("max_review_tasks_per_repo") or 2))
+
+    for row in review_rows:
+        if not isinstance(row, dict):
+            continue
+        repo_name = str(row.get("repo") or "").strip()
+        if not repo_name:
+            out["skipped"] = int(out["skipped"]) + 1
+            continue
+        if per_repo_counts.get(repo_name, 0) >= per_repo_limit:
+            out["skipped"] = int(out["skipped"]) + 1
+            continue
+        repo = repo_map.get(repo_name)
+        if not isinstance(repo, dict):
+            out["errors"].append(f"{repo_name}: repo missing from snapshot")
+            continue
+        if bool(cfg.get("dirty_repo_blocks_auto_mutation", True)) and bool(repo.get("git_dirty")):
+            out["skipped"] = int(out["skipped"]) + 1
+            out["tasks"].append({"repo": repo_name, "task_id": "", "status": "skipped-dirty"})
+            continue
+        repo_path = Path(str(repo.get("path") or "")).expanduser()
+        wg_dir = repo_path / ".workgraph"
+        if not wg_dir.exists():
+            out["errors"].append(f"{repo_name}: .workgraph missing")
+            continue
+        fingerprint = str(row.get("fingerprint") or "").strip()
+        if not fingerprint:
+            out["skipped"] = int(out["skipped"]) + 1
+            continue
+        task_id = f"northstardrift-{fingerprint[:14]}"
+        title = f"northstardrift: {str(row.get('severity') or 'medium')} {str(row.get('category') or 'repo-attention')}"
+        prompt = str(row.get("model_prompt") or "")
+        codex_prompt = str(row.get("codex_prompt") or "")
+        desc = (
+            "North-star effectiveness review task.\n\n"
+            f"Finding: {row.get('title')}\n"
+            f"Severity: {row.get('severity')}\n"
+            f"Evidence: {row.get('evidence')}\n"
+            f"Recommendation: {row.get('recommendation')}\n"
+            f"North-star score: {row.get('score')}\n\n"
+            f"Suggested Claude prompt:\n{prompt}\n\n"
+            f"Suggested Codex prompt:\n{codex_prompt}\n"
+        )
+        out["attempted"] = int(out["attempted"]) + 1
+        show_rc, _, show_err = _run_cmd(
+            ["wg", "--dir", str(wg_dir), "show", task_id, "--json"],
+            cwd=repo_path,
+            timeout=20.0,
+        )
+        if show_rc == 0:
+            out["existing"] = int(out["existing"]) + 1
+            per_repo_counts[repo_name] = per_repo_counts.get(repo_name, 0) + 1
+            out["tasks"].append({"repo": repo_name, "task_id": task_id, "status": "existing"})
+            continue
+
+        add_rc, add_out, add_err = _run_cmd(
+            [
+                "wg",
+                "--dir",
+                str(wg_dir),
+                "add",
+                title,
+                "--id",
+                task_id,
+                "-d",
+                desc,
+                "-t",
+                "drift",
+                "-t",
+                "northstardrift",
+                "-t",
+                "review",
+            ],
+            cwd=repo_path,
+            timeout=30.0,
+        )
+        if add_rc == 0:
+            out["created"] = int(out["created"]) + 1
+            per_repo_counts[repo_name] = per_repo_counts.get(repo_name, 0) + 1
+            out["tasks"].append({"repo": repo_name, "task_id": task_id, "status": "created"})
+        else:
+            err = (add_err or add_out or show_err or "").strip()
+            out["errors"].append(f"{repo_name}: could not create {task_id}: {err[:220]}")
+
+    out["tasks"] = list(out.get("tasks") or [])[:80]
+    out["errors"] = list(out.get("errors") or [])[:80]
+    return out
 
 
 def write_northstardrift_artifacts(

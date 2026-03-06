@@ -35,7 +35,9 @@ from driftdriver.factorydrift import (
 )
 from driftdriver.northstardrift import (
     apply_northstardrift,
+    emit_northstar_review_tasks,
     load_previous_northstardrift,
+    read_northstardrift_history,
     write_northstardrift_artifacts,
 )
 from driftdriver.policy import load_drift_policy
@@ -1943,6 +1945,12 @@ def _decorate_snapshot_with_northstardrift(
         config=cfg,
     )
     if isinstance(snapshot.get("northstardrift"), dict):
+        snapshot["northstardrift"]["history"] = read_northstardrift_history(
+            service_dir=paths["dir"],
+            central_repo=central_repo,
+            current=snapshot["northstardrift"],
+            limit=max(6, int(cfg.get("history_points") or 18)),
+        )
         snapshot["northstardrift"]["artifacts"] = artifacts
     return snapshot.get("northstardrift") if isinstance(snapshot.get("northstardrift"), dict) else {}
 
@@ -2204,6 +2212,9 @@ class _HubHandler(BaseHTTPRequestHandler):
                     "regressions": [],
                     "improvements": [],
                     "operator_prompts": [],
+                    "recommended_reviews": [],
+                    "history": {"points": [], "summary": {"count": 0, "window": "recent"}},
+                    "task_emit": {"enabled": False, "attempted": 0, "created": 0, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
                 },
                 "supervisor": {},
                 "narrative": "",
@@ -2324,7 +2335,18 @@ class _HubHandler(BaseHTTPRequestHandler):
                     "regressions": [],
                     "improvements": [],
                     "operator_prompts": [],
+                    "recommended_reviews": [],
+                    "history": {"points": [], "summary": {"count": 0, "window": "recent"}},
+                    "task_emit": {"enabled": False, "attempted": 0, "created": 0, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
                 }
+            )
+            return
+        if route == "/api/effectiveness-history":
+            northstar = snapshot.get("northstardrift") if isinstance(snapshot.get("northstardrift"), dict) else {}
+            self._send_json(
+                northstar.get("history")
+                if isinstance(northstar.get("history"), dict)
+                else {"points": [], "summary": {"count": 0, "window": "recent"}}
             )
             return
         if route == "/api/overview":
@@ -2479,6 +2501,41 @@ def render_dashboard_html() -> str:
       font-size: 0.74rem;
       color: var(--muted);
       line-height: 1.25;
+    }
+    .spark {
+      display: block;
+      width: 100%;
+      height: 34px;
+      margin-top: 0.34rem;
+    }
+    .trend-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 0.7rem;
+      margin-top: 0.8rem;
+    }
+    .trend-panel {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.65rem 0.75rem;
+      background: linear-gradient(180deg, rgba(255,255,255,0.74), rgba(247,243,235,0.92));
+    }
+    .trend-panel h3 {
+      margin: 0 0 0.45rem;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #30443b;
+    }
+    .trend-panel ul {
+      margin: 0;
+      padding-left: 1rem;
+    }
+    .trend-panel li {
+      margin: 0.32rem 0;
+      line-height: 1.35;
+      color: #30443b;
+      font-size: 0.83rem;
     }
     .attention-list, ul {
       margin: 0;
@@ -2914,6 +2971,20 @@ def render_dashboard_html() -> str:
       <h2>North Star Scorecard</h2>
       <p class="narrative" id="northstar-summary">Loading north-star effectiveness…</p>
       <div class="cards" id="northstar-cards"></div>
+      <div class="trend-grid">
+        <article class="trend-panel">
+          <h3>Trend Review</h3>
+          <p class="narrative" id="northstar-trend-summary">Loading effectiveness history…</p>
+        </article>
+        <article class="trend-panel">
+          <h3>Top Regressions</h3>
+          <ul id="northstar-regressions"></ul>
+        </article>
+        <article class="trend-panel">
+          <h3>Top Improvements</h3>
+          <ul id="northstar-improvements"></ul>
+        </article>
+      </div>
     </section>
 
     <section class="span-all">
@@ -3620,23 +3691,57 @@ def render_dashboard_html() -> str:
       const ns = data.northstardrift || {};
       const summary = ns.summary || {};
       const axes = ns.axes || {};
+      const history = (ns.history && Array.isArray(ns.history.points)) ? ns.history.points : [];
       const scoreText = (value) => {
         if (value == null || value === '') return 'n/a';
         const num = Number(value);
         return Number.isFinite(num) ? num.toFixed(1) : String(value);
       };
+      const seriesFor = (key) => history
+        .map((point) => {
+          if (key === 'overall') return Number(point.overall_score || 0);
+          return Number((((point.axes || {})[key]) || {}).score || 0);
+        })
+        .filter((value) => Number.isFinite(value));
+      const sparkline = (values, color) => {
+        if (!values.length) return '';
+        const width = 120;
+        const height = 30;
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const span = Math.max(1, max - min);
+        const pts = values.map((value, idx) => {
+          const x = values.length <= 1 ? 0 : (idx / (values.length - 1)) * width;
+          const y = height - (((value - min) / span) * (height - 4)) - 2;
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        return `<svg class="spark" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><polyline fill="none" stroke="${color}" stroke-width="2.2" points="${pts}" /></svg>`;
+      };
       const cards = [
-        ['Dark Factory', summary.overall_score, `${summary.overall_tier || 'n/a'} | ${summary.overall_trend || 'flat'}`],
-        ['Continuity', (axes.continuity || {}).score, `${(axes.continuity || {}).tier || 'n/a'} | ${(axes.continuity || {}).trend || 'flat'}`],
-        ['Autonomy', (axes.autonomy || {}).score, `${(axes.autonomy || {}).tier || 'n/a'} | ${(axes.autonomy || {}).trend || 'flat'}`],
-        ['Quality', (axes.quality || {}).score, `${(axes.quality || {}).tier || 'n/a'} | ${(axes.quality || {}).trend || 'flat'}`],
-        ['Coordination', (axes.coordination || {}).score, `${(axes.coordination || {}).tier || 'n/a'} | ${(axes.coordination || {}).trend || 'flat'}`],
-        ['Self Improve', (axes.self_improvement || {}).score, `${(axes.self_improvement || {}).tier || 'n/a'} | ${(axes.self_improvement || {}).trend || 'flat'}`],
+        ['Dark Factory', summary.overall_score, `${summary.overall_tier || 'n/a'} | ${summary.overall_trend || 'flat'}`, sparkline(seriesFor('overall'), '#0f6f7c')],
+        ['Continuity', (axes.continuity || {}).score, `${(axes.continuity || {}).tier || 'n/a'} | ${(axes.continuity || {}).trend || 'flat'}`, sparkline(seriesFor('continuity'), '#2f6e39')],
+        ['Autonomy', (axes.autonomy || {}).score, `${(axes.autonomy || {}).tier || 'n/a'} | ${(axes.autonomy || {}).trend || 'flat'}`, sparkline(seriesFor('autonomy'), '#0f6f7c')],
+        ['Quality', (axes.quality || {}).score, `${(axes.quality || {}).tier || 'n/a'} | ${(axes.quality || {}).trend || 'flat'}`, sparkline(seriesFor('quality'), '#934e1c')],
+        ['Coordination', (axes.coordination || {}).score, `${(axes.coordination || {}).tier || 'n/a'} | ${(axes.coordination || {}).trend || 'flat'}`, sparkline(seriesFor('coordination'), '#7b5a1c')],
+        ['Self Improve', (axes.self_improvement || {}).score, `${(axes.self_improvement || {}).tier || 'n/a'} | ${(axes.self_improvement || {}).trend || 'flat'}`, sparkline(seriesFor('self_improvement'), '#6e4d8f')],
       ];
       el('northstar-summary').textContent = summary.narrative || 'No north-star narrative generated yet.';
       el('northstar-cards').innerHTML = cards
-        .map(([k, v, sub]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(scoreText(v))}</div><div class="sub">${esc(sub || '')}</div></div>`)
+        .map(([k, v, sub, svg]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(scoreText(v))}</div><div class="sub">${esc(sub || '')}</div>${svg || ''}</div>`)
         .join('');
+      const pointsCount = Number((((ns.history || {}).summary) || {}).count || history.length || 0);
+      const taskEmit = ns.task_emit || {};
+      const calibration = ns.calibration || {};
+      el('northstar-trend-summary').textContent =
+        `History points=${pointsCount}. Participating repos=${n((ns.counts || {}).participating_repos)}. Latent repos=${n((ns.counts || {}).latent_repos)}. Review tasks created=${n(taskEmit.created)} existing=${n(taskEmit.existing)} skipped=${n(taskEmit.skipped)}. Calibration=${Array.isArray(calibration.notes) ? calibration.notes.join(' | ') : 'n/a'}.`;
+      const regressions = Array.isArray(ns.regressions) ? ns.regressions : [];
+      const improvements = Array.isArray(ns.improvements) ? ns.improvements : [];
+      el('northstar-regressions').innerHTML = regressions.length
+        ? regressions.slice(0, 5).map((row) => `<li>${esc(String(row.summary || ''))}</li>`).join('')
+        : '<li>No regression trend recorded.</li>';
+      el('northstar-improvements').innerHTML = improvements.length
+        ? improvements.slice(0, 5).map((row) => `<li>${esc(String(row.summary || ''))}</li>`).join('')
+        : '<li>No improvement trend recorded.</li>';
     }
 
     function renderOverviewCards(data) {
@@ -4877,6 +4982,25 @@ def run_service_foreground(
                     snapshot=snapshot,
                     central_repo=central_repo,
                 )
+                northstar_cfg = _northstardrift_config(project_dir)
+                if bool(northstar_cfg.get("enabled", True)) and bool(northstar_cfg.get("emit_review_tasks", True)):
+                    task_emit = emit_northstar_review_tasks(
+                        snapshot=snapshot,
+                        report=snapshot.get("northstardrift") if isinstance(snapshot.get("northstardrift"), dict) else {},
+                        config=northstar_cfg,
+                    )
+                else:
+                    task_emit = {
+                        "enabled": False,
+                        "attempted": 0,
+                        "created": 0,
+                        "existing": 0,
+                        "skipped": 0,
+                        "errors": [],
+                        "tasks": [],
+                    }
+                if isinstance(snapshot.get("northstardrift"), dict):
+                    snapshot["northstardrift"]["task_emit"] = task_emit
                 _write_json(paths["snapshot"], snapshot)
                 _write_json(paths["heartbeat"], {"last_tick_at": _iso_now(), "supervisor": supervisor})
                 candidates = [

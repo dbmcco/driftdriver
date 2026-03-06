@@ -494,6 +494,7 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("/api/status", html)
         self.assertIn("Narrated Overview", html)
         self.assertIn("North Star Scorecard", html)
+        self.assertIn("Trend Review", html)
         self.assertIn("Action Center", html)
         self.assertIn("Security Reviews", html)
         self.assertIn("Quality Reviews", html)
@@ -608,6 +609,7 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertIn("northstardrift", snapshot)
             self.assertIn("summary", snapshot["northstardrift"])
             self.assertIn("northstar", snapshot["repos"][0])
+            self.assertIn("history", snapshot["northstardrift"])
             self.assertTrue((central / "ecosystem-hub" / "register" / "driftdriver.json").exists())
             self.assertTrue((central / "northstardrift" / "current.json").exists())
 
@@ -660,6 +662,9 @@ class EcosystemHubTests(unittest.TestCase):
                 with urlopen(f"http://127.0.0.1:{port}/api/effectiveness", timeout=1.0) as resp:  # noqa: S310
                     effectiveness_payload = json.loads(resp.read().decode("utf-8"))
                 self.assertIn("summary", effectiveness_payload)
+                with urlopen(f"http://127.0.0.1:{port}/api/effectiveness-history", timeout=1.0) as resp:  # noqa: S310
+                    history_payload = json.loads(resp.read().decode("utf-8"))
+                self.assertIn("points", history_payload)
                 with urlopen(f"http://127.0.0.1:{port}/api/security", timeout=1.0) as resp:  # noqa: S310
                     security_payload = json.loads(resp.read().decode("utf-8"))
                 self.assertIn("summary", security_payload)

@@ -164,7 +164,10 @@ def _default_northstardrift_cfg() -> dict[str, Any]:
         "comparison_window": "7d",
         "dirty_repo_blocks_auto_mutation": True,
         "max_auto_interventions_per_cycle": 3,
+        "max_review_tasks_per_repo": 2,
         "require_metric_evidence": True,
+        "history_points": 18,
+        "latent_repo_floor_score": 68.0,
     }
 
 
@@ -350,7 +353,10 @@ def _default_policy_text() -> str:
         "comparison_window = \"7d\"\n"
         "dirty_repo_blocks_auto_mutation = true\n"
         "max_auto_interventions_per_cycle = 3\n"
+        "max_review_tasks_per_repo = 2\n"
         "require_metric_evidence = true\n"
+        "history_points = 18\n"
+        "latent_repo_floor_score = 68.0\n"
         "\n"
         "[autonomy.default]\n"
         "level = \"observe\"\n"
@@ -743,9 +749,27 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             )
         ),
     )
+    northstardrift["max_review_tasks_per_repo"] = max(
+        1,
+        int(
+            northstardrift_raw.get(
+                "max_review_tasks_per_repo",
+                northstardrift["max_review_tasks_per_repo"],
+            )
+        ),
+    )
     northstardrift["require_metric_evidence"] = bool(
         northstardrift_raw.get("require_metric_evidence", northstardrift["require_metric_evidence"])
     )
+    northstardrift["history_points"] = max(
+        6, int(northstardrift_raw.get("history_points", northstardrift["history_points"]))
+    )
+    try:
+        northstardrift["latent_repo_floor_score"] = float(
+            northstardrift_raw.get("latent_repo_floor_score", northstardrift["latent_repo_floor_score"])
+        )
+    except Exception:
+        northstardrift["latent_repo_floor_score"] = _default_northstardrift_cfg()["latent_repo_floor_score"]
 
     autonomy_raw = data.get("autonomy") if isinstance(data.get("autonomy"), dict) else {}
     autonomy_default_raw = autonomy_raw.get("default") if isinstance(autonomy_raw.get("default"), dict) else {}
