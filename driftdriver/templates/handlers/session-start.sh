@@ -8,13 +8,19 @@ HANDLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HANDLER_DIR/common.sh" "$@"
 
 # Ensure driftdriver install wrappers exist (idempotent)
-driftdriver install 2>/dev/null || true
+driftdriver --dir "$PROJECT_DIR" install 2>/dev/null || true
 
 # Provide repo-local shims needed by Workgraph-generated agent wrappers.
 export PATH="$PROJECT_DIR/.workgraph/bin:$PATH"
 
-# Start workgraph service if not already running
-wg service start 2>/dev/null || true
+# Refresh runtime control/status before deciding whether this session may start services.
+SPEEDRIFT_STATUS="$(driftdriver --dir "$PROJECT_DIR" --json speedriftd status --refresh 2>/dev/null || echo '{}')"
+CONTROL_MODE="$(printf '%s\n' "$SPEEDRIFT_STATUS" | jq -r '.control.mode // "observe"' 2>/dev/null || echo "observe")"
+
+# Interactive sessions only auto-start services when repo control mode explicitly allows it.
+if [[ "$CONTROL_MODE" == "supervise" || "$CONTROL_MODE" == "autonomous" ]]; then
+  wg service start 2>/dev/null || true
+fi
 
 # Ensure ecosystem hub automation runs through the shared driftdriver CLI.
 if command -v driftdriver >/dev/null 2>&1; then

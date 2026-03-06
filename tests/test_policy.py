@@ -53,11 +53,16 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue(p.sessiondriver["require_session_driver"])
             self.assertFalse(p.sessiondriver["allow_cli_fallback"])
             self.assertTrue(p.speedriftd["enabled"])
+            self.assertEqual(p.speedriftd["default_mode"], "observe")
+            self.assertEqual(p.speedriftd["default_lease_ttl_seconds"], 0)
             self.assertEqual(p.speedriftd["interval_seconds"], 30)
             self.assertEqual(p.speedriftd["heartbeat_stale_after_seconds"], 300)
             self.assertTrue(p.plandrift["enabled"])
             self.assertEqual(p.plandrift["continuation_runtime"], "double-shot-latte")
             self.assertEqual(p.plandrift["orchestration_runtime"], "claude-session-driver")
+            self.assertEqual(p.plandrift["review_loop_mode"], "trycycle-inspired")
+            self.assertTrue(p.plandrift["fresh_reviewer_required"])
+            self.assertEqual(p.plandrift["review_rounds"], 2)
             self.assertEqual(p.northstardrift["weekly_rollup_weeks"], 8)
             self.assertEqual(p.northstardrift["dirty_repo_review_task_mode"], "workgraph-only")
             self.assertEqual(p.northstardrift["targets"]["overall"], 82.0)
@@ -177,6 +182,8 @@ class PolicyTests(unittest.TestCase):
                         "",
                         "[speedriftd]",
                         "enabled = false",
+                        "default_mode = \"wild\"",
+                        "default_lease_ttl_seconds = -60",
                         "interval_seconds = 0",
                         "max_concurrent_workers = -2",
                         "heartbeat_stale_after_seconds = 0",
@@ -197,6 +204,9 @@ class PolicyTests(unittest.TestCase):
                         "require_continuation_edges = false",
                         "continuation_runtime = \"\"",
                         "orchestration_runtime = \"\"",
+                        "review_loop_mode = \"custom\"",
+                        "fresh_reviewer_required = false",
+                        "review_rounds = 0",
                         "allow_tmux_fallback = false",
                         "hard_stop_on_critical = true",
                         "",
@@ -316,6 +326,8 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.sessiondriver["worker_timeout_seconds"], 60)
             self.assertEqual(p.sessiondriver["drift_failure_threshold"], 1)
             self.assertFalse(p.speedriftd["enabled"])
+            self.assertEqual(p.speedriftd["default_mode"], "observe")
+            self.assertEqual(p.speedriftd["default_lease_ttl_seconds"], 0)
             self.assertEqual(p.speedriftd["interval_seconds"], 5)
             self.assertEqual(p.speedriftd["max_concurrent_workers"], 1)
             self.assertEqual(p.speedriftd["heartbeat_stale_after_seconds"], 30)
@@ -334,6 +346,9 @@ class PolicyTests(unittest.TestCase):
             self.assertFalse(p.plandrift["require_continuation_edges"])
             self.assertEqual(p.plandrift["continuation_runtime"], "double-shot-latte")
             self.assertEqual(p.plandrift["orchestration_runtime"], "claude-session-driver")
+            self.assertEqual(p.plandrift["review_loop_mode"], "custom")
+            self.assertFalse(p.plandrift["fresh_reviewer_required"])
+            self.assertEqual(p.plandrift["review_rounds"], 1)
             self.assertFalse(p.plandrift["allow_tmux_fallback"])
             self.assertTrue(p.plandrift["hard_stop_on_critical"])
             self.assertFalse(p.northstardrift["enabled"])

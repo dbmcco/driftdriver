@@ -46,12 +46,14 @@ class AmplifierInstallTests(unittest.TestCase):
             self.assertIn("driftdriver --dir", script_text)
             self.assertIn("ensure-contracts --apply", script_text)
             self.assertIn("STAMP_FILE", script_text)
+            self.assertIn("speedriftd status --refresh", script_text)
+            self.assertNotIn("drifts\" orchestrate", script_text)
+            self.assertNotIn("nohup bash -lc", script_text)
 
             parsed = json.loads(hooks_json_path.read_text(encoding="utf-8"))
-            user_prompt_submit = parsed["hooks"]["UserPromptSubmit"][0]
             session_start = parsed["hooks"]["SessionStart"][0]
-            self.assertEqual(user_prompt_submit["matcher"], ".*")
             self.assertEqual(session_start["matcher"], ".*")
+            self.assertNotIn("UserPromptSubmit", parsed["hooks"])
 
             wrote_script_2, wrote_json_2 = ensure_amplifier_autostart_hook(project_dir)
             self.assertFalse(wrote_script_2)

@@ -69,7 +69,12 @@ from driftdriver.install import (
 from driftdriver.policy import ensure_drift_policy, load_drift_policy
 from driftdriver.routing_models import parse_routing_response
 from driftdriver.smart_routing import gather_evidence
-from driftdriver.speedriftd import load_runtime_snapshot, run_runtime_cycle, run_runtime_loop
+from driftdriver.speedriftd import (
+    load_runtime_snapshot,
+    run_runtime_cycle,
+    run_runtime_loop,
+    write_control_state,
+)
 from driftdriver.updates import (
     ECOSYSTEM_REPOS,
     check_ecosystem_updates,
@@ -2341,11 +2346,30 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
     project_dir = wg_dir.parent
     policy = load_drift_policy(wg_dir)
     cfg = dict(getattr(policy, "speedriftd", {}) or {})
+    control_changed = False
+
+    if (
+        getattr(args, "set_mode", None) is not None
+        or getattr(args, "lease_owner", None) is not None
+        or bool(getattr(args, "release_lease", False))
+        or getattr(args, "lease_ttl_seconds", None) is not None
+    ):
+        write_control_state(
+            project_dir,
+            policy=policy,
+            mode=getattr(args, "set_mode", None),
+            lease_owner=getattr(args, "lease_owner", None),
+            lease_ttl_seconds=getattr(args, "lease_ttl_seconds", None),
+            release_lease=bool(getattr(args, "release_lease", False)),
+            source="cli",
+            reason=str(getattr(args, "reason", "") or ""),
+        )
+        control_changed = True
 
     action = str(getattr(args, "action", "status") or "status")
     if action == "status":
         snapshot = load_runtime_snapshot(project_dir)
-        if not snapshot or bool(getattr(args, "refresh", False)):
+        if not snapshot or bool(getattr(args, "refresh", False)) or control_changed:
             snapshot = run_runtime_cycle(project_dir, policy=policy)
     elif action == "once":
         snapshot = run_runtime_cycle(project_dir, policy=policy)
@@ -2363,6 +2387,10 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
 
     print(f"speedriftd repo: {snapshot.get('repo', project_dir.name)}")
     print(f"Daemon state: {snapshot.get('daemon_state', 'unknown')}")
+    control = snapshot.get("control") if isinstance(snapshot.get("control"), dict) else {}
+    print(f"Control mode: {control.get('mode', 'observe')}")
+    if control.get("lease_owner"):
+        print(f"Lease owner: {control.get('lease_owner')}")
     print(f"Active workers: {len(snapshot.get('active_workers') or [])}")
     print(f"Ready tasks: {len(snapshot.get('ready_tasks') or [])}")
     stalled = snapshot.get("stalled_task_ids") or []
@@ -2641,6 +2669,32 @@ def _build_parser() -> argparse.ArgumentParser:
         "--refresh",
         action="store_true",
         help="Refresh runtime snapshot before returning status",
+    )
+    speedriftd_p.add_argument(
+        "--set-mode",
+        choices=["manual", "observe", "supervise", "autonomous"],
+        help="Update repo runtime control mode before the selected action runs",
+    )
+    speedriftd_p.add_argument(
+        "--lease-owner",
+        default=None,
+        help="Set or replace the current repo lease owner",
+    )
+    speedriftd_p.add_argument(
+        "--lease-ttl-seconds",
+        type=int,
+        default=None,
+        help="Lease TTL in seconds (0 = no expiry)",
+    )
+    speedriftd_p.add_argument(
+        "--release-lease",
+        action="store_true",
+        help="Release any active repo lease before the selected action runs",
+    )
+    speedriftd_p.add_argument(
+        "--reason",
+        default="",
+        help="Reason to record with a control-mode or lease update",
     )
     speedriftd_p.add_argument(
         "--interval-seconds",

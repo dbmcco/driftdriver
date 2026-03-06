@@ -17,6 +17,7 @@ from driftdriver.speedriftd import (
     run_runtime_cycle,
     run_runtime_loop,
     runtime_paths,
+    write_control_state,
 )
 
 
@@ -82,6 +83,7 @@ class SpeedriftdTests(unittest.TestCase):
             self.assertEqual(snapshot["active_workers"][0]["runtime"], "claude")
             self.assertEqual(snapshot["active_task_ids"], ["impl"])
             self.assertEqual(snapshot["next_action"], "continue supervision")
+            self.assertEqual(snapshot["control"]["mode"], "observe")
 
     def test_run_runtime_cycle_writes_runtime_files(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -99,7 +101,8 @@ class SpeedriftdTests(unittest.TestCase):
 
             loaded = load_runtime_snapshot(repo)
             self.assertEqual(loaded["repo"], repo.name)
-            self.assertEqual(loaded["next_action"], "dispatch ready task ready-1")
+            self.assertEqual(loaded["control"]["mode"], "observe")
+            self.assertEqual(loaded["next_action"], "observe mode: ready task ready-1 waiting for explicit supervisor")
 
     def test_run_runtime_cycle_marks_missing_active_worker_as_stalled(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -132,6 +135,26 @@ class SpeedriftdTests(unittest.TestCase):
             self.assertEqual(snapshot["stalled_task_ids"], ["impl"])
             stalls = runtime_paths(repo)["stalls"].read_text(encoding="utf-8")
             self.assertIn("worker_stalled_or_missing", stalls)
+
+    def test_write_control_state_arms_repo_for_autonomous_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [{"id": "ready-1", "title": "Ready", "status": "open"}])
+
+            control = write_control_state(
+                repo,
+                mode="autonomous",
+                lease_owner="speedriftd",
+                lease_ttl_seconds=120,
+                reason="central supervisor armed repo",
+            )
+            snapshot = run_runtime_cycle(repo)
+
+            self.assertEqual(control["mode"], "autonomous")
+            self.assertEqual(control["lease_owner"], "speedriftd")
+            self.assertTrue(control["lease_active"])
+            self.assertEqual(snapshot["control"]["mode"], "autonomous")
+            self.assertEqual(snapshot["next_action"], "dispatch ready task ready-1")
 
     def test_run_runtime_loop_respects_max_cycles(self) -> None:
         with tempfile.TemporaryDirectory() as td:

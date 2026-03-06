@@ -55,6 +55,9 @@ def _normalize_cfg(policy_cfg: dict[str, Any] | None) -> dict[str, Any]:
         "require_continuation_edges": bool(raw.get("require_continuation_edges", True)),
         "continuation_runtime": str(raw.get("continuation_runtime", "double-shot-latte") or "double-shot-latte"),
         "orchestration_runtime": str(raw.get("orchestration_runtime", "claude-session-driver") or "claude-session-driver"),
+        "review_loop_mode": str(raw.get("review_loop_mode", "trycycle-inspired") or "trycycle-inspired"),
+        "fresh_reviewer_required": bool(raw.get("fresh_reviewer_required", True)),
+        "review_rounds": max(1, int(raw.get("review_rounds", 2))),
         "allow_tmux_fallback": bool(raw.get("allow_tmux_fallback", True)),
         "hard_stop_on_critical": bool(raw.get("hard_stop_on_critical", False)),
     }
@@ -431,6 +434,9 @@ def run_workgraph_plan_review(
     model_contract = {
         "decision_owner": "model",
         "triage_objective": "Ensure workgraph plans enforce test gates, loopbacks, and forward continuation.",
+        "review_loop_mode": str(cfg.get("review_loop_mode") or "default"),
+        "fresh_reviewer_required": bool(cfg.get("fresh_reviewer_required", False)),
+        "review_rounds": int(cfg.get("review_rounds") or 1),
         "required_outputs": [
             "dependency_updates",
             "intervening_tests",
@@ -440,7 +446,8 @@ def run_workgraph_plan_review(
         ],
         "prompt_seed": (
             "Review plandrift findings and output exact task/dependency updates that preserve active work while "
-            "adding integration/e2e validation and explicit failure recovery paths."
+            "adding integration/e2e validation and explicit failure recovery paths. Use a trycycle-inspired loop: "
+            "plan/review first, then build/review with a fresh reviewer perspective each round."
         ),
     }
     return {

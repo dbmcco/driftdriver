@@ -17,6 +17,8 @@ from driftdriver.project_autopilot import get_ready_tasks
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
 from driftdriver.worker_monitor import check_worker_liveness
 
+CONTROL_MODES = {"manual", "observe", "supervise", "autonomous"}
+
 
 def _iso_now(ts: float | None = None) -> str:
     if ts is None:
@@ -42,6 +44,7 @@ def runtime_paths(project_dir: Path) -> dict[str, Path]:
         "workers": base / "workers.jsonl",
         "stalls": base / "stalls.jsonl",
         "leases": base / "leases.json",
+        "control": base / "control.json",
         "events_dir": base / "events",
         "heartbeats_dir": base / "heartbeats",
         "results_dir": base / "results",
@@ -67,6 +70,130 @@ def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=False) + "\n")
+
+
+def _parse_iso_timestamp(raw: str) -> float:
+    value = str(raw or "").strip()
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _default_control(repo_name: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    mode = str(cfg.get("default_mode", "observe") or "observe").strip().lower()
+    if mode not in CONTROL_MODES:
+        mode = "observe"
+    dispatch_enabled = mode in {"supervise", "autonomous"}
+    return {
+        "repo": repo_name,
+        "updated_at": _iso_now(),
+        "mode": mode,
+        "dispatch_enabled": dispatch_enabled,
+        "interactive_service_start": dispatch_enabled,
+        "lease_owner": "",
+        "lease_acquired_at": "",
+        "lease_ttl_seconds": int(cfg.get("default_lease_ttl_seconds", 0) or 0),
+        "lease_expires_at": "",
+        "lease_active": False,
+        "source": "default",
+        "reason": "default runtime control",
+    }
+
+
+def _normalize_control_state(raw: dict[str, Any], *, repo_name: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    control = _default_control(repo_name, cfg)
+    if isinstance(raw, dict):
+        control.update({k: v for k, v in raw.items() if k in control or k in {"repo"}})
+    mode = str(control.get("mode") or control["mode"]).strip().lower()
+    if mode not in CONTROL_MODES:
+        mode = control["mode"]
+    control["mode"] = mode
+    control["dispatch_enabled"] = mode in {"supervise", "autonomous"}
+    control["interactive_service_start"] = bool(control["dispatch_enabled"])
+    control["repo"] = repo_name
+    control["lease_owner"] = str(control.get("lease_owner") or "").strip()
+    control["lease_ttl_seconds"] = max(0, int(control.get("lease_ttl_seconds") or 0))
+    acquired = str(control.get("lease_acquired_at") or "").strip()
+    expires = str(control.get("lease_expires_at") or "").strip()
+    expires_ts = _parse_iso_timestamp(expires)
+    if control["lease_owner"]:
+        if control["lease_ttl_seconds"] <= 0:
+            control["lease_active"] = True
+        else:
+            control["lease_active"] = expires_ts > time.time()
+    else:
+        control["lease_active"] = False
+        control["lease_acquired_at"] = ""
+        control["lease_expires_at"] = ""
+    if not acquired and control["lease_owner"] and control["lease_active"]:
+        control["lease_acquired_at"] = _iso_now()
+    control["updated_at"] = str(control.get("updated_at") or _iso_now())
+    control["source"] = str(control.get("source") or "default")
+    control["reason"] = str(control.get("reason") or "runtime control update")
+    return control
+
+
+def load_control_state(project_dir: Path, *, policy: DriftPolicy | None = None) -> dict[str, Any]:
+    paths = runtime_paths(project_dir)
+    project_dir = paths["wg_dir"].parent.resolve()
+    repo_name = project_dir.name
+    policy = policy or load_drift_policy(paths["wg_dir"])
+    cfg = dict(getattr(policy, "speedriftd", {}) or {})
+    raw = _read_json(paths["control"])
+    return _normalize_control_state(raw, repo_name=repo_name, cfg=cfg)
+
+
+def write_control_state(
+    project_dir: Path,
+    *,
+    policy: DriftPolicy | None = None,
+    mode: str | None = None,
+    lease_owner: str | None = None,
+    lease_ttl_seconds: int | None = None,
+    release_lease: bool = False,
+    source: str = "cli",
+    reason: str = "",
+) -> dict[str, Any]:
+    paths = runtime_paths(project_dir)
+    project_dir = paths["wg_dir"].parent.resolve()
+    repo_name = project_dir.name
+    policy = policy or load_drift_policy(paths["wg_dir"])
+    cfg = dict(getattr(policy, "speedriftd", {}) or {})
+    control = load_control_state(project_dir, policy=policy)
+    now_iso = _iso_now()
+    if mode is not None:
+        normalized_mode = str(mode or "").strip().lower()
+        if normalized_mode in CONTROL_MODES:
+            control["mode"] = normalized_mode
+    if lease_ttl_seconds is not None:
+        control["lease_ttl_seconds"] = max(0, int(lease_ttl_seconds))
+    if release_lease:
+        control["lease_owner"] = ""
+        control["lease_acquired_at"] = ""
+        control["lease_expires_at"] = ""
+        control["lease_active"] = False
+    elif lease_owner is not None:
+        owner = str(lease_owner or "").strip()
+        control["lease_owner"] = owner
+        if owner:
+            control["lease_acquired_at"] = now_iso
+            ttl = int(control.get("lease_ttl_seconds") or 0)
+            control["lease_expires_at"] = _iso_now(time.time() + ttl) if ttl > 0 else ""
+            control["lease_active"] = True
+        else:
+            control["lease_acquired_at"] = ""
+            control["lease_expires_at"] = ""
+            control["lease_active"] = False
+    control["updated_at"] = now_iso
+    control["source"] = source
+    if reason:
+        control["reason"] = reason
+    normalized = _normalize_control_state(control, repo_name=repo_name, cfg=cfg)
+    _write_json(paths["control"], normalized)
+    return normalized
 
 
 def _latest_worker_events(project_dir: Path) -> dict[str, dict[str, Any]]:
@@ -229,6 +356,7 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
     repo_name = project_dir.name
     policy = policy or load_drift_policy(wg_dir)
     cfg = dict(getattr(policy, "speedriftd", {}) or {})
+    control = load_control_state(project_dir, policy=policy)
     wg = load_workgraph(wg_dir)
 
     ready_tasks = get_ready_tasks(project_dir)
@@ -270,8 +398,13 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
         next_action = f"investigate stalled task {stalled_task_ids[0]}"
     elif active_workers:
         next_action = "continue supervision"
-    elif ready_tasks:
+    elif ready_tasks and bool(control.get("dispatch_enabled")):
         next_action = f"dispatch ready task {ready_tasks[0]['id']}"
+    elif ready_tasks:
+        next_action = (
+            f"{control.get('mode', 'observe')} mode: ready task {ready_tasks[0]['id']} "
+            "waiting for explicit supervisor"
+        )
     elif in_progress_tasks:
         next_action = f"reconcile in-progress task {in_progress_tasks[0]['id']}"
 
@@ -300,6 +433,7 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
             "output_stale_after_seconds": int(cfg.get("output_stale_after_seconds", 600)),
             "worker_timeout_seconds": int(cfg.get("worker_timeout_seconds", 1800)),
         },
+        "control": control,
         "ready_tasks": ready_tasks,
         "in_progress_tasks": in_progress_tasks,
         "active_workers": active_workers,
@@ -330,6 +464,7 @@ def write_runtime_snapshot(project_dir: Path, snapshot: dict[str, Any]) -> dict[
     paths["results_dir"].mkdir(parents=True, exist_ok=True)
     paths["workers"].touch(exist_ok=True)
     paths["stalls"].touch(exist_ok=True)
+    _write_json(paths["control"], snapshot.get("control") if isinstance(snapshot.get("control"), dict) else {})
 
     _write_json(paths["current"], snapshot)
 
@@ -462,6 +597,8 @@ def write_runtime_snapshot(project_dir: Path, snapshot: dict[str, Any]) -> dict[
                 "stalled_task_ids": list(snapshot.get("stalled_task_ids", [])),
                 "runtime_mix": list(snapshot.get("runtime_mix", [])),
                 "next_action": snapshot.get("next_action"),
+                "control_mode": ((snapshot.get("control") or {}).get("mode") if isinstance(snapshot.get("control"), dict) else ""),
+                "lease_owner": ((snapshot.get("control") or {}).get("lease_owner") if isinstance(snapshot.get("control"), dict) else ""),
             },
         },
     )

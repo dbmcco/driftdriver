@@ -1054,8 +1054,12 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
         parts.append(f"{in_progress} in progress")
     runtime = snap.runtime if isinstance(snap.runtime, dict) else {}
     active_workers = runtime.get("active_workers") if isinstance(runtime.get("active_workers"), list) else []
+    control = runtime.get("control") if isinstance(runtime.get("control"), dict) else {}
+    control_mode = str(control.get("mode") or "").strip().lower()
     if active_workers:
         parts.append(f"{len(active_workers)} runtime workers active")
+    elif control_mode in {"manual", "observe"} and open_count > 0:
+        parts.append(f"control mode {control_mode}")
     if ready > 0:
         parts.append(f"{ready} ready to start")
     if open_count > 0 and in_progress == 0:
@@ -1106,6 +1110,8 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
     active_workers = runtime.get("active_workers") if isinstance(runtime.get("active_workers"), list) else []
     stalled_task_ids = runtime.get("stalled_task_ids") if isinstance(runtime.get("stalled_task_ids"), list) else []
     next_action = str(runtime.get("next_action") or "").strip()
+    control = runtime.get("control") if isinstance(runtime.get("control"), dict) else {}
+    control_mode = str(control.get("mode") or "").strip().lower()
 
     if active_workers:
         stalled_workers = [
@@ -1124,6 +1130,8 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
         return "idle", ["no open or ready tasks in graph"]
 
     reasons: list[str] = [f"{open_count} open/ready tasks but none in-progress"]
+    if control_mode in {"manual", "observe"}:
+        reasons.insert(0, f"control mode {control_mode} prevents automatic dispatch")
     if stalled_task_ids:
         reasons.insert(0, f"{len(stalled_task_ids)} tasks marked stalled by runtime supervisor")
     if ready > 0:
@@ -1357,6 +1365,13 @@ def collect_repo_snapshot(
     snap.reporting = True
     snap.heartbeat_age_seconds = _path_age_seconds(wg_dir / "graph.jsonl")
     snap.runtime = _read_json(wg_dir / "service" / "runtime" / "current.json")
+    if not snap.runtime:
+        try:
+            from driftdriver.speedriftd import load_control_state
+
+            snap.runtime = {"control": load_control_state(repo_path)}
+        except Exception:
+            snap.runtime = {}
 
     # Service status is best-effort; missing wg is non-fatal.
     rc, status_json, _ = _run(["wg", "--dir", str(wg_dir), "service", "status", "--json"], cwd=repo_path)

@@ -169,11 +169,11 @@ This writes:
 - `.amplifier/hooks/speedrift-autostart/session-start.sh`
 
 Use this when you want Workgraph to spawn Amplifier sessions and auto-bootstrap Speedrift on Amplifier session start.
-In current Amplifier runtime paths, bootstrap is triggered on first prompt submit (plus SessionStart compatibility hooks).
-The generated autostart hook now also:
-- keeps `wg service` running (prefers `--executor amplifier`)
-- starts a background Speedrift autopilot loop that runs `./.workgraph/drifts orchestrate --write-log --create-followups` every 90 seconds
-- writes monitor state under `.workgraph/service/` (`speedrift-autopilot.pid`, `speedrift-autopilot.log`)
+The generated autostart hook is now observe-first:
+- it runs on `SessionStart` only
+- it refreshes `speedriftd` runtime status/control
+- it starts `wg service` only when repo control mode is `supervise` or `autonomous`
+- it no longer starts a competing background `drifts orchestrate` loop from the hook itself
 
 ## Package Any App (Self-Serve)
 
@@ -356,9 +356,19 @@ Repo-local runtime supervision is separate from autopilot planning:
 driftdriver speedriftd once
 driftdriver speedriftd status --refresh
 driftdriver speedriftd loop --interval-seconds 30
+driftdriver speedriftd status --set-mode observe --reason "interactive coding session"
+driftdriver speedriftd status --set-mode autonomous --lease-owner speedriftd --reason "central supervisor armed repo"
 ```
 
 This writes runtime ledgers under `.workgraph/service/runtime/` so the ecosystem hub can distinguish active work, quiet workers, and stalled execution.
+
+Control model:
+- `manual`: no automatic dispatch; repo is human-driven
+- `observe`: interactive sessions refresh/report state but do not start execution services
+- `supervise`: services may run under an explicit supervisor lease
+- `autonomous`: repo is armed for daemon-led dispatch/supervision
+
+The current default is `observe`. This is intentional: interactive hooks should not silently claim scheduler authority or spawn competing workers.
 
 Shell wrapper with SIGTERM handling and PID tracking:
 
@@ -569,10 +579,14 @@ Design docs for the next-stage ecosystem control plane:
 - `docs/plans/dark-factory-operating-model.md`
 - `docs/plans/secdrift-qadrift-model-mediated-design.md`
 - `docs/plans/plandrift-workgraph-qc-design.md`
+- `docs/plans/speedriftd-runtime-contract.md`
+- `docs/plans/attractor-trycycle-integration.md`
 
 These documents define:
 - model-vs-code decision ownership
 - new ecosystem drift modules (`sourcedrift`, `syncdrift`, `stalledrift`, `servicedrift`, `federatedrift`, `secdrift`, `qadrift`, `plandrift`, `factorydrift`)
+- Attractor-shaped driver/runtime boundaries
+- trycycle-inspired fresh-reviewer planning loops
 - policy extensions for autonomy tiers and safety budgets
 - phased rollout toward autonomous dark-factory operation
   with upstream pull-down integration and verifiable guardrails

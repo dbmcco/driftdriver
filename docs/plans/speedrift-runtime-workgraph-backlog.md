@@ -18,6 +18,7 @@ Define the implementation backlog in WorkGraph-ready form for the runtime/driver
 | `runtime-contract-driver` | Finalize worker-driver contract | `speedrift-runtime-epic` | `docs/plans/worker-driver-contract.md` |
 | `runtime-contract-events` | Finalize runtime event schema | `speedrift-runtime-epic` | `docs/plans/runtime-event-schema.md` |
 | `runtime-contract-codexdriver` | Finalize `codexdriver` MVP design | `runtime-contract-driver` | `docs/plans/codexdriver-mvp-design.md` |
+| `runtime-contract-attractor-interop` | Align driver/runtime contracts with Attractor-style host-controlled loops | `runtime-contract-driver` | `docs/plans/attractor-trycycle-integration.md` |
 
 ## Phase 1: Repo Runtime MVP
 
@@ -27,6 +28,7 @@ Define the implementation backlog in WorkGraph-ready form for the runtime/driver
 | `runtime-build-lease-ledger` | Implement task lease and worker registry files | `runtime-build-speedriftd-shell` | `.workgraph/service/runtime/{leases,workers,current}.json*` |
 | `runtime-build-heartbeat-loop` | Implement worker heartbeat and output freshness monitor | `runtime-build-speedriftd-shell`,`runtime-contract-events` | local heartbeat loop |
 | `runtime-build-stall-classifier` | Implement deterministic stall classification | `runtime-build-heartbeat-loop` | `stalls.jsonl` + daemon state transitions |
+| `runtime-build-repo-control-modes` | Implement repo control modes and explicit supervisor leases | `runtime-build-speedriftd-shell` | `.workgraph/service/runtime/control.json` + observe-first hooks |
 
 ## Phase 2: Claude Reference Driver
 
@@ -60,6 +62,7 @@ Define the implementation backlog in WorkGraph-ready form for the runtime/driver
 | `runtime-plandrift-verification-edges` | Enforce integration/e2e/test-edge insertion in active plans | `runtime-contract-speedriftd` | `plandrift` updates |
 | `runtime-plandrift-continuation-edges` | Enforce continuation and failure loopback edges | `runtime-plandrift-verification-edges` | graph-integrity checks |
 | `runtime-plandrift-followups` | Emit corrective WorkGraph tasks for missing graph structure | `runtime-plandrift-continuation-edges` | repo-local follow-up emission |
+| `runtime-plandrift-trycycle-review-mode` | Add bounded trycycle-inspired fresh-reviewer loops to planning contracts | `runtime-plandrift-verification-edges` | `plandrift` review-loop policy + prompts |
 
 ## Phase 6: Ecosystem Supervision
 

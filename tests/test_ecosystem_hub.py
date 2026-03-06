@@ -252,6 +252,7 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertTrue(snap.stalled)
             self.assertGreater(len(snap.stall_reasons), 0)
             self.assertIn("stalled", snap.narrative)
+            self.assertIn("control mode observe", snap.stall_reasons[0])
 
     def test_collect_repo_snapshot_marks_idle_when_only_done_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as td:

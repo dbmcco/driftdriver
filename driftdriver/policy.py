@@ -138,6 +138,8 @@ def _default_sessiondriver_cfg() -> dict[str, Any]:
 def _default_speedriftd_cfg() -> dict[str, Any]:
     return {
         "enabled": True,
+        "default_mode": "observe",
+        "default_lease_ttl_seconds": 0,
         "interval_seconds": 30,
         "max_concurrent_workers": 2,
         "heartbeat_stale_after_seconds": 300,
@@ -161,6 +163,9 @@ def _default_plandrift_cfg() -> dict[str, Any]:
         "require_continuation_edges": True,
         "continuation_runtime": "double-shot-latte",
         "orchestration_runtime": "claude-session-driver",
+        "review_loop_mode": "trycycle-inspired",
+        "fresh_reviewer_required": True,
+        "review_rounds": 2,
         "allow_tmux_fallback": True,
         "hard_stop_on_critical": False,
     }
@@ -358,6 +363,8 @@ def _default_policy_text() -> str:
         "\n"
         "[speedriftd]\n"
         "enabled = true\n"
+        "default_mode = \"observe\"\n"
+        "default_lease_ttl_seconds = 0\n"
         "interval_seconds = 30\n"
         "max_concurrent_workers = 2\n"
         "heartbeat_stale_after_seconds = 300\n"
@@ -378,6 +385,9 @@ def _default_policy_text() -> str:
         "require_continuation_edges = true\n"
         "continuation_runtime = \"double-shot-latte\"\n"
         "orchestration_runtime = \"claude-session-driver\"\n"
+        "review_loop_mode = \"trycycle-inspired\"\n"
+        "fresh_reviewer_required = true\n"
+        "review_rounds = 2\n"
         "allow_tmux_fallback = true\n"
         "hard_stop_on_critical = false\n"
         "\n"
@@ -733,6 +743,11 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     speedriftd_raw = data.get("speedriftd") if isinstance(data.get("speedriftd"), dict) else {}
     speedriftd = _default_speedriftd_cfg()
     speedriftd["enabled"] = bool(speedriftd_raw.get("enabled", speedriftd["enabled"]))
+    default_mode = str(speedriftd_raw.get("default_mode", speedriftd["default_mode"]) or speedriftd["default_mode"]).strip().lower()
+    speedriftd["default_mode"] = default_mode if default_mode in {"manual", "observe", "supervise", "autonomous"} else _default_speedriftd_cfg()["default_mode"]
+    speedriftd["default_lease_ttl_seconds"] = max(
+        0, int(speedriftd_raw.get("default_lease_ttl_seconds", speedriftd["default_lease_ttl_seconds"]))
+    )
     speedriftd["interval_seconds"] = max(
         5, int(speedriftd_raw.get("interval_seconds", speedriftd["interval_seconds"]))
     )
@@ -796,6 +811,15 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     )
     plandrift["orchestration_runtime"] = str(
         plandrift_raw.get("orchestration_runtime", plandrift["orchestration_runtime"]) or plandrift["orchestration_runtime"]
+    )
+    plandrift["review_loop_mode"] = str(
+        plandrift_raw.get("review_loop_mode", plandrift["review_loop_mode"]) or plandrift["review_loop_mode"]
+    )
+    plandrift["fresh_reviewer_required"] = bool(
+        plandrift_raw.get("fresh_reviewer_required", plandrift["fresh_reviewer_required"])
+    )
+    plandrift["review_rounds"] = max(
+        1, int(plandrift_raw.get("review_rounds", plandrift["review_rounds"]))
     )
     plandrift["allow_tmux_fallback"] = bool(
         plandrift_raw.get("allow_tmux_fallback", plandrift["allow_tmux_fallback"])

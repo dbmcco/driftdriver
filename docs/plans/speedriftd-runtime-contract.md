@@ -126,6 +126,8 @@ Required files:
 
 - `current.json`
   - latest daemon snapshot for the repo
+- `control.json`
+  - repo control mode and current supervisor lease
 - `workers.jsonl`
   - append-only worker lifecycle ledger
 - `events/<timestamp>.jsonl`
@@ -138,6 +140,23 @@ Required files:
   - normalized terminal result
 - `leases.json`
   - active task execution leases
+
+## Repo Control Modes
+
+`speedriftd` must distinguish repo intent from repo health.
+
+Required control modes:
+
+- `manual`
+  - no automatic dispatch
+- `observe`
+  - refresh/report only; interactive sessions must not auto-start execution services
+- `supervise`
+  - services may start under an explicit supervisor lease
+- `autonomous`
+  - repo is armed for daemon-led dispatch and supervision
+
+Interactive hooks must respect `control.json` rather than silently starting competing loops.
 
 ## Central Mirror Contract
 

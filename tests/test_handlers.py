@@ -197,6 +197,23 @@ def test_session_start_uses_shared_ecosystem_hub_cli():
     )
 
 
+def test_session_start_uses_runtime_control_before_service_start():
+    """session-start.sh must refresh speedriftd status and gate service start on control mode."""
+    path = HANDLERS_DIR / "session-start.sh"
+    if not path.exists():
+        return
+    content = path.read_text()
+    assert '--json speedriftd status --refresh' in content, (
+        "session-start.sh must refresh speedriftd status before deciding on service start"
+    )
+    assert 'CONTROL_MODE' in content, (
+        "session-start.sh must derive CONTROL_MODE from the runtime snapshot"
+    )
+    assert 'if [[ "$CONTROL_MODE" == "supervise" || "$CONTROL_MODE" == "autonomous" ]]' in content, (
+        "session-start.sh must only auto-start wg service in supervise/autonomous mode"
+    )
+
+
 def test_session_start_exports_workgraph_bin_on_path():
     """session-start.sh must prepend .workgraph/bin so spawned agents can resolve repo-local shims."""
     path = HANDLERS_DIR / "session-start.sh"

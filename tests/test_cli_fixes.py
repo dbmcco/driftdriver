@@ -73,3 +73,37 @@ def test_ecosystem_hub_subcommand_delegates():
 
     assert rc == 0
     mock_main.assert_called_once_with(["--project-dir", "/tmp/demo", "status"])
+
+
+def test_speedriftd_status_forces_refresh_after_control_change(tmp_path):
+    """Updating speedriftd control must refresh the runtime snapshot immediately."""
+    from driftdriver.cli import main
+
+    wg_dir = tmp_path / ".workgraph"
+    wg_dir.mkdir()
+    (wg_dir / "graph.jsonl").write_text("", encoding="utf-8")
+
+    with patch("driftdriver.cli.write_control_state") as mock_write_control, patch(
+        "driftdriver.cli.load_runtime_snapshot", return_value={"repo": "demo", "control": {"mode": "observe"}}
+    ) as mock_load, patch(
+        "driftdriver.cli.run_runtime_cycle",
+        return_value={"repo": "demo", "daemon_state": "idle", "control": {"mode": "autonomous"}, "active_workers": [], "ready_tasks": [], "stalled_task_ids": [], "next_action": "await"},
+    ) as mock_cycle:
+        rc = main(
+            [
+                "--dir",
+                str(tmp_path),
+                "--json",
+                "speedriftd",
+                "status",
+                "--set-mode",
+                "autonomous",
+                "--lease-owner",
+                "speedriftd",
+            ]
+        )
+
+    assert rc == 0
+    mock_write_control.assert_called_once()
+    mock_load.assert_called_once()
+    mock_cycle.assert_called_once()

@@ -54,6 +54,11 @@ class PlanDriftTests(unittest.TestCase):
             categories = {str(row.get("category") or "") for row in report.get("top_findings") or []}
             self.assertIn("missing-failure-loopback", categories)
             self.assertIn("continuation-bridge-gap", categories)
+            model_contract = report.get("model_contract") or {}
+            self.assertEqual(model_contract.get("review_loop_mode"), "trycycle-inspired")
+            self.assertTrue(model_contract.get("fresh_reviewer_required"))
+            self.assertEqual(model_contract.get("review_rounds"), 2)
+            self.assertIn("fresh reviewer perspective", str(model_contract.get("prompt_seed") or ""))
 
     def test_emit_plan_review_tasks_creates_and_reuses(self) -> None:
         with tempfile.TemporaryDirectory() as td:
