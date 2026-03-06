@@ -130,16 +130,6 @@ class QADriftWrapperTests(unittest.TestCase):
         content = wrapper.read_text(encoding="utf-8")
         self.assertNotIn("cd ", content, "qadrift_wrapper.sh must not contain a 'cd' command")
 
-    def test_contrariandrift_wrapper_no_cd(self) -> None:
-        wrapper = (
-            Path(__file__).parent.parent
-            / "driftdriver"
-            / "templates"
-            / "contrariandrift_wrapper.sh"
-        )
-        content = wrapper.read_text(encoding="utf-8")
-        self.assertNotIn("cd ", content, "contrariandrift_wrapper.sh must not contain a 'cd' command")
-
     def test_qadrift_finds_nested_tests(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             project_dir = Path(td)

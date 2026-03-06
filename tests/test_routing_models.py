@@ -171,8 +171,8 @@ verify: spec is current
 
 class TestKnownLanes:
     def test_known_lanes_includes_new_lanes(self):
-        """KNOWN_LANES must include contrariandrift and qadrift."""
+        """KNOWN_LANES must include qadrift."""
         from driftdriver.routing_models import KNOWN_LANES
 
-        assert "contrariandrift" in KNOWN_LANES
         assert "qadrift" in KNOWN_LANES
+        assert "contrariandrift" not in KNOWN_LANES

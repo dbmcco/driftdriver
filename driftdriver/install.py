@@ -22,7 +22,6 @@ FIXDRIFT_MARKER = "## fixdrift Protocol"
 YAGNIDRIFT_MARKER = "## yagnidrift Protocol"
 REDRIFT_MARKER = "## redrift Protocol"
 SPECDRIFT_MARKER = "## specdrift Protocol"
-CONTRARIANDRIFT_MARKER = "## contrariandrift Protocol"
 SUPERPOWERS_MARKER = "## Superpowers Protocol"
 MODEL_MEDIATED_MARKER = "## Model-Mediated Protocol"
 CLAUDE_EXECUTOR_WRAPPER = '.workgraph/executors/claude-run.sh'
@@ -50,7 +49,6 @@ class InstallResult:
     wrote_fixdrift: bool
     wrote_yagnidrift: bool
     wrote_redrift: bool
-    wrote_contrariandrift: bool
     wrote_qadrift: bool
     wrote_handlers: bool
     wrote_amplifier_executor: bool
@@ -114,9 +112,6 @@ def ensure_yagnidrift_gitignore(wg_dir: Path) -> bool:
 
 def ensure_redrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".redrift/")
-
-def ensure_contrariandrift_gitignore(wg_dir: Path) -> bool:
-    return _ensure_line_in_file(wg_dir / ".gitignore", ".contrariandrift/")
 
 def ensure_qadrift_gitignore(wg_dir: Path) -> bool:
     return _ensure_line_in_file(wg_dir / ".gitignore", ".qadrift/")
@@ -222,9 +217,6 @@ def write_yagnidrift_wrapper(wg_dir: Path, *, yagnidrift_bin: Path, wrapper_mode
 
 def write_redrift_wrapper(wg_dir: Path, *, redrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
     return write_tool_wrapper(wg_dir, tool_name="redrift", tool_bin=redrift_bin, wrapper_mode=wrapper_mode)
-
-def write_contrariandrift_wrapper(wg_dir: Path, *, contrariandrift_bin: Path, wrapper_mode: str = "pinned") -> bool:
-    return write_tool_wrapper(wg_dir, tool_name="contrariandrift", tool_bin=contrariandrift_bin, wrapper_mode=wrapper_mode)
 
 def write_qadrift_wrapper(wg_dir: Path) -> bool:
     """Writes .workgraph/qadrift wrapper that invokes qadrift via python3 -m driftdriver.qadrift."""
