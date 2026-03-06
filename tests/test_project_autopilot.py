@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from driftdriver.project_autopilot import (
+    _run_command,
     _assistant_text_message_count,
     _last_assistant_text,
     AutopilotConfig,
@@ -44,6 +45,28 @@ class TestDiscoverSessionDriver(unittest.TestCase):
             result = discover_session_driver()
             self.assertIsNotNone(result)
             self.assertIn("1.0.1", str(result))
+
+
+class TestCommandResolution(unittest.TestCase):
+    @patch("pathlib.Path.exists", autospec=True)
+    @patch("driftdriver.project_autopilot._binary_candidates", return_value=["/tmp/fake-wg"])
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    def test_run_command_resolves_wg_without_path(self, mock_run, _mock_candidates, mock_exists):
+        mock_exists.side_effect = lambda path: str(path) == "/tmp/fake-wg"
+        mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+        result = _run_command(["wg", "ready"], cwd=Path("/project"))
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(mock_run.call_args.args[0][0], "/tmp/fake-wg")
+
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("driftdriver.project_autopilot._binary_candidates", return_value=[])
+    @patch("driftdriver.project_autopilot.subprocess.run", side_effect=FileNotFoundError("missing"))
+    def test_run_command_returns_127_when_binary_missing(self, _mock_run, _mock_candidates, _mock_exists):
+        result = _run_command(["wg", "ready"], cwd=Path("/project"))
+        self.assertEqual(result.returncode, 127)
+        self.assertIn("missing", result.stderr)
 
 
 class TestBuildPrompts(unittest.TestCase):

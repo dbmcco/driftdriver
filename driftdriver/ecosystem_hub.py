@@ -56,6 +56,7 @@ _DISCOVERY_MAX_REPOS = 16
 _SUPERVISOR_DEFAULT_COOLDOWN_SECONDS = 180
 _SUPERVISOR_DEFAULT_MAX_STARTS = 4
 _SUPERVISOR_LAST_ATTEMPT: dict[str, float] = {}
+_NORTH_STAR_MAX_BYTES = 160_000
 
 
 def _iso_now() -> str:
@@ -417,6 +418,7 @@ class RepoSnapshot:
     security_findings: list[dict[str, Any]] = field(default_factory=list)
     quality: dict[str, Any] = field(default_factory=dict)
     quality_findings: list[dict[str, Any]] = field(default_factory=list)
+    repo_north_star: dict[str, Any] = field(default_factory=dict)
     northstar: dict[str, Any] = field(default_factory=dict)
 
     def top_next_work(self, limit: int = 3) -> list[NextWorkItem]:
@@ -704,10 +706,18 @@ def _load_ecosystem_repos(ecosystem_toml: Path, workspace_root: Path) -> dict[st
     if not isinstance(repos, dict):
         return {}
     out: dict[str, Path] = {}
-    for name in repos:
+    for name, value in repos.items():
         key = str(name).strip()
         if not key:
             continue
+        if isinstance(value, dict):
+            path_raw = str(value.get("path") or "").strip()
+            if path_raw:
+                candidate = Path(path_raw).expanduser()
+                if not candidate.is_absolute():
+                    candidate = (workspace_root / candidate).resolve()
+                out[key] = candidate
+                continue
         out[key] = workspace_root / key
     return out
 
@@ -772,6 +782,151 @@ def _discover_active_workspace_repos(
     for _age_days, name, path in discovered[:max(0, max_extra)]:
         out[name] = path
     return out
+
+
+def _read_small_text(path: Path) -> str:
+    try:
+        if path.stat().st_size > _NORTH_STAR_MAX_BYTES:
+            return ""
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _north_star_candidate_paths(repo_path: Path) -> list[Path]:
+    candidates: list[Path] = []
+    direct = [
+        repo_path / "NORTH_STAR.md",
+        repo_path / "north-star.md",
+        repo_path / "README.md",
+        repo_path / "STATUS.md",
+        repo_path / "PROJECT_STATUS.md",
+        repo_path / "ROADMAP.md",
+        repo_path / "ROADMAP_CHECKLIST.md",
+        repo_path / "docs" / "NORTH_STAR.md",
+        repo_path / "docs" / "north-star.md",
+        repo_path / "docs" / "ROADMAP.md",
+        repo_path / "docs" / "ROADMAP_CHECKLIST.md",
+    ]
+    candidates.extend(path for path in direct if path.exists() and path.is_file())
+
+    patterns = (
+        "*north*star*.md",
+        "*roadmap*.md",
+        "docs/*north*star*.md",
+        "docs/*roadmap*.md",
+        "docs/plans/*north*star*.md",
+        "docs/plans/*roadmap*.md",
+        "docs/specs/*north*star*.md",
+    )
+    for pattern in patterns:
+        for path in sorted(repo_path.glob(pattern)):
+            if path.is_file():
+                candidates.append(path)
+
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        ordered.append(path)
+    return ordered[:24]
+
+
+def _extract_north_star_summary(text: str, start_idx: int) -> str:
+    tail = text[start_idx:].splitlines()
+    buf: list[str] = []
+    for line in tail:
+        stripped = line.strip()
+        if not stripped:
+            if buf:
+                break
+            continue
+        if stripped.startswith("#"):
+            if buf:
+                break
+            continue
+        if stripped.startswith(("-", "*")):
+            stripped = stripped.lstrip("-* ").strip()
+        buf.append(stripped)
+        if len(" ".join(buf)) >= 240:
+            break
+    summary = " ".join(buf).strip()
+    return summary[:280]
+
+
+def _collect_repo_north_star(repo_path: Path) -> dict[str, Any]:
+    result = {
+        "present": False,
+        "status": "missing",
+        "canonical": False,
+        "approved": False,
+        "source_path": "",
+        "title": "",
+        "summary": "",
+        "confidence": "low",
+        "signals": [],
+    }
+
+    heading_re = re.compile(r"^\s{0,3}#{1,6}\s+(?P<title>.*north star.*)$", re.IGNORECASE | re.MULTILINE)
+    mention_re = re.compile(r"(?im)^\s*(?:\*\*)?north star(?:\*\*)?\s*[:\-]")
+    best: dict[str, Any] | None = None
+
+    for path in _north_star_candidate_paths(repo_path):
+        text = _read_small_text(path)
+        if not text:
+            continue
+        rel = str(path.relative_to(repo_path))
+        lower_rel = rel.lower()
+        heading = heading_re.search(text)
+        mention = mention_re.search(text)
+        if not heading and not mention:
+            continue
+
+        title = ""
+        summary = ""
+        score = 1
+        confidence = "medium"
+        if heading:
+            title = str(heading.group("title") or "").strip()
+            summary = _extract_north_star_summary(text, heading.end())
+            score = 2
+        elif mention:
+            title = "North Star"
+            summary = _extract_north_star_summary(text, mention.end())
+
+        canonical = False
+        if "north_star" in lower_rel or "north-star" in lower_rel:
+            score += 2
+            canonical = True
+            confidence = "high"
+        elif Path(rel).name.lower() in {"readme.md", "roadmap.md", "roadmap_checklist.md", "project_status.md", "status.md"}:
+            score += 1
+            canonical = True
+
+        row = {
+            "present": True,
+            "status": "present" if canonical else "weak",
+            "canonical": canonical,
+            "approved": canonical,
+            "source_path": rel,
+            "title": title or "North Star",
+            "summary": summary,
+            "confidence": confidence,
+            "signals": ["heading" if heading else "mention"],
+            "_score": score,
+        }
+        if best is None or int(row["_score"]) > int(best["_score"]):
+            best = row
+
+    if best is None:
+        result["signals"] = ["no canonical north star signal in README/docs/plans"]
+        return result
+
+    best.pop("_score", None)
+    return best
 
 
 def _repo_token_present(text: str, repo_name: str) -> bool:
@@ -916,6 +1071,11 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
         parts.append(f"{len(snap.stale_in_progress)} long-running in-progress tasks")
     if snap.workgraph_exists and not snap.service_running:
         parts.append("workgraph service not running")
+    repo_ns = snap.repo_north_star if isinstance(snap.repo_north_star, dict) else {}
+    if not bool(repo_ns.get("present")):
+        parts.append("repo north star not defined")
+    elif str(repo_ns.get("status") or "") == "weak":
+        parts.append("repo north star needs canonicalization")
     if snap.behind > 0:
         parts.append(f"behind upstream by {snap.behind}")
     if snap.git_dirty:
@@ -1130,6 +1290,7 @@ def collect_repo_snapshot(
     if not snap.exists:
         snap.errors.append("repo_missing")
         return _finalize_repo_snapshot(snap)
+    snap.repo_north_star = _collect_repo_north_star(repo_path)
     if not (repo_path / ".git").exists():
         snap.errors.append("not_a_git_repo")
         return _finalize_repo_snapshot(snap)
@@ -1460,6 +1621,13 @@ def _repo_attention_entry(repo: RepoSnapshot) -> dict[str, Any] | None:
     if repo.git_dirty:
         score += 2
         reasons.append("dirty working tree")
+    repo_ns = repo.repo_north_star if isinstance(repo.repo_north_star, dict) else {}
+    if not bool(repo_ns.get("present")):
+        score += 8
+        reasons.append("repo north star missing")
+    elif str(repo_ns.get("status") or "") == "weak":
+        score += 3
+        reasons.append("repo north star weak")
     sec = repo.security if isinstance(repo.security, dict) else {}
     sec_critical = max(0, int(sec.get("critical") or 0))
     sec_high = max(0, int(sec.get("high") or 0))
@@ -1519,6 +1687,9 @@ def build_ecosystem_overview(
     repos_dirty = 0
     repos_security_risk = 0
     repos_quality_risk = 0
+    repos_with_north_star = 0
+    repos_missing_north_star = 0
+    repos_weak_north_star = 0
     security_critical = 0
     security_high = 0
     quality_critical = 0
@@ -1548,6 +1719,13 @@ def build_ecosystem_overview(
             repos_untracked += 1
         if repo.git_dirty:
             repos_dirty += 1
+        repo_ns = repo.repo_north_star if isinstance(repo.repo_north_star, dict) else {}
+        if bool(repo_ns.get("present")):
+            repos_with_north_star += 1
+            if str(repo_ns.get("status") or "") == "weak":
+                repos_weak_north_star += 1
+        else:
+            repos_missing_north_star += 1
         sec = repo.security if isinstance(repo.security, dict) else {}
         qa = repo.quality if isinstance(repo.quality, dict) else {}
         if bool(sec.get("at_risk")):
@@ -1573,6 +1751,9 @@ def build_ecosystem_overview(
         "repos_idle": repos_idle,
         "repos_untracked": repos_untracked,
         "repos_dirty": repos_dirty,
+        "repos_with_north_star": repos_with_north_star,
+        "repos_missing_north_star": repos_missing_north_star,
+        "repos_weak_north_star": repos_weak_north_star,
         "repos_security_risk": repos_security_risk,
         "repos_quality_risk": repos_quality_risk,
         "security_critical": security_critical,
@@ -1611,6 +1792,7 @@ def build_ecosystem_narrative(overview: dict[str, Any]) -> str:
     security_high = int(overview.get("security_high") or 0)
     quality_critical = int(overview.get("quality_critical") or 0)
     quality_high = int(overview.get("quality_high") or 0)
+    missing_north_star = int(overview.get("repos_missing_north_star") or 0)
     active = int(overview.get("tasks_in_progress") or 0)
     ready = int(overview.get("tasks_ready") or 0)
 
@@ -1619,6 +1801,7 @@ def build_ecosystem_narrative(overview: dict[str, Any]) -> str:
         or service_gaps > 0
         or stalled_repos > 0
         or int(overview.get("missing_dependencies") or 0) > 0
+        or missing_north_star > 0
         or security_critical > 0
         or quality_critical > 0
     ):
@@ -1635,6 +1818,8 @@ def build_ecosystem_narrative(overview: dict[str, Any]) -> str:
         f"Pressure points: {blockers} dependency blockers, {stale} aging tasks, {stalled_repos} stalled repos, "
         f"{service_gaps} repos without a running workgraph service."
     )
+    if missing_north_star > 0:
+        pressure += f" {missing_north_star} repos still lack a canonical North Star."
     drift = (
         f"Security/quality signals: security critical={security_critical}, security high={security_high}, "
         f"quality critical={quality_critical}, quality high={quality_high}."
@@ -3803,7 +3988,7 @@ def render_dashboard_html() -> str:
       const taskEmit = ns.task_emit || {};
       const calibration = ns.calibration || {};
       el('northstar-trend-summary').textContent =
-        `History recent=${pointsCount}, daily=${n(historySummary.daily_count)}, weekly=${n(historySummary.weekly_count)}. Participating repos=${n((ns.counts || {}).participating_repos)}. Latent repos=${n((ns.counts || {}).latent_repos)}. Targets met=${n(targetSummary.met)} watch=${n(targetSummary.watch_gap)} critical=${n(targetSummary.critical_gap)}. Review tasks created=${n(taskEmit.created)} existing=${n(taskEmit.existing)} skipped=${n(taskEmit.skipped)}. Dirty policy=${esc(String((ns.config || {}).dirty_repo_review_task_mode || 'n/a'))}. Calibration=${Array.isArray(calibration.notes) ? calibration.notes.join(' | ') : 'n/a'}.`;
+        `History recent=${pointsCount}, daily=${n(historySummary.daily_count)}, weekly=${n(historySummary.weekly_count)}. Participating repos=${n((ns.counts || {}).participating_repos)}. Latent repos=${n((ns.counts || {}).latent_repos)}. Missing repo North Stars=${n((ns.counts || {}).repos_missing_north_star)}. Targets met=${n(targetSummary.met)} watch=${n(targetSummary.watch_gap)} critical=${n(targetSummary.critical_gap)}. Review tasks created=${n(taskEmit.created)} existing=${n(taskEmit.existing)} skipped=${n(taskEmit.skipped)}. Dirty policy=${esc(String((ns.config || {}).dirty_repo_review_task_mode || 'n/a'))}. Calibration=${Array.isArray(calibration.notes) ? calibration.notes.join(' | ') : 'n/a'}.`;
       const windowRows = Object.values(windows || {});
       el('northstar-window-deltas').innerHTML = windowRows.length
         ? windowRows
@@ -3845,6 +4030,8 @@ def render_dashboard_html() -> str:
         ['Missing Deps', ov.missing_dependencies],
         ['Orch Gaps', ov.repos_with_inactive_service],
         ['Dirty Repos', ov.repos_dirty],
+        ['North Stars', ov.repos_with_north_star],
+        ['North Star Gaps', ov.repos_missing_north_star],
         ['Sec Risk Repos', ov.repos_security_risk],
         ['Sec Critical', ov.security_critical],
         ['Sec High', ov.security_high],
@@ -4003,6 +4190,7 @@ def render_dashboard_html() -> str:
         const isActiveRunning = activeCount > 0;
         const isStalled = !!repo.stalled;
         const north = repo.northstar || {};
+        const repoNorthStar = repo.repo_north_star || {};
         card.className = `repo-card${isActiveRunning ? ' active-running' : ''}${isStalled ? ' stalled' : ''}`;
         card.setAttribute('data-repo-name', repoName);
         const [pillLabel, pillKind] = qualityPill(repo);
@@ -4033,6 +4221,7 @@ def render_dashboard_html() -> str:
             <span>blocked=${esc(repo.blocked_open || 0)} missing-deps=${esc(repo.missing_dependencies || 0)}</span>
             <span>sec c/h=${esc((repo.security || {}).critical || 0)}/${esc((repo.security || {}).high || 0)}</span>
             <span>qa score=${esc((repo.quality || {}).quality_score || 100)} high=${esc((repo.quality || {}).high || 0)}</span>
+            <span>repo-north-star=${esc(repoNorthStar.present ? (repoNorthStar.status || 'present') : 'missing')}</span>
             <span>source=${esc(repo.source || 'n/a')}</span>
           </div>
           ${errs}
@@ -5026,6 +5215,27 @@ def run_service_foreground(
                         "errors": [],
                         "tasks": [],
                     }
+                    snapshot["factory"] = {
+                        "enabled": True,
+                        "summary": summarize_factory_cycle(cycle),
+                        "action_plan": cycle.get("action_plan") if isinstance(cycle.get("action_plan"), list) else [],
+                        "execution": {
+                            **execution,
+                            "phase": "executing" if execution_mode != "plan_only" else "planned",
+                        },
+                        "followups": followups,
+                        "ledger": {},
+                    }
+                    _write_json(paths["snapshot"], snapshot)
+                    _write_json(
+                        paths["heartbeat"],
+                        {
+                            "last_tick_at": _iso_now(),
+                            "phase": "factory-executing" if execution_mode != "plan_only" else "factory-planned",
+                            "supervisor": supervisor,
+                        },
+                    )
+                    live_hub.broadcast_snapshot(snapshot)
                     if execution_mode != "plan_only":
                         execution = execute_factory_cycle(
                             cycle=cycle,
@@ -5054,7 +5264,10 @@ def run_service_foreground(
                         "enabled": True,
                         "summary": summarize_factory_cycle(cycle),
                         "action_plan": cycle.get("action_plan") if isinstance(cycle.get("action_plan"), list) else [],
-                        "execution": execution,
+                        "execution": {
+                            **execution,
+                            "phase": "completed",
+                        },
                         "followups": followups,
                         "ledger": factory_ledger,
                     }

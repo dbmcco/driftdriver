@@ -449,10 +449,11 @@ def _plan_repo_actions(
         and has_ready
     ):
         dispatch_cap = max(1, int(sessiondriver_cfg.get("max_dispatch_per_repo", 2)))
+        dispatch_priority = 92 if not has_in_progress else 89
         add(
             module="sessiondriver",
             kind="dispatch_ready_workers",
-            priority=80,
+            priority=dispatch_priority,
             reason=f"ready queue has {len(ready)} task(s); dispatch cap={dispatch_cap}",
             prompt=_make_prompt(
                 repo_name,
@@ -669,6 +670,13 @@ def build_factory_cycle(
             upstream_candidates=upstream_counts.get(repo_name, 0),
             update_hits=update_counts.get(repo_name, 0),
         )
+        dispatch_idx = next(
+            (idx for idx, row in enumerate(repo_actions) if str(row.get("kind") or "") == "dispatch_ready_workers"),
+            -1,
+        )
+        if dispatch_idx > 0 and per_repo_budget > 0:
+            dispatch_row = repo_actions.pop(dispatch_idx)
+            repo_actions.insert(0, dispatch_row)
         used_repo = 0
         for action in repo_actions:
             if len(action_plan) >= max_actions:
@@ -1080,7 +1088,14 @@ def execute_factory_cycle(
                 stop_reason = "repo path missing"
             continue
 
-        def _done(status: str, *, reason: str = "", exit_code: int = 0, details: Any | None = None) -> None:
+        def _done(
+            status: str,
+            *,
+            reason: str = "",
+            exit_code: int = 0,
+            details: Any | None = None,
+            allow_hard_stop: bool = True,
+        ) -> None:
             nonlocal executed, succeeded, failed, skipped, stopped, stop_reason
             row["status"] = status
             row["reason"] = reason
@@ -1094,7 +1109,7 @@ def execute_factory_cycle(
             elif status == "failed":
                 executed += 1
                 failed += 1
-                if hard_stop:
+                if hard_stop and allow_hard_stop:
                     stopped = True
                     stop_reason = reason or f"{kind} failed"
             else:
@@ -1179,6 +1194,7 @@ def execute_factory_cycle(
                     reason=str(dispatch.get("reason") or "session-driver dispatch failed"),
                     exit_code=1,
                     details=details,
+                    allow_hard_stop=False,
                 )
             elif status == "noop":
                 _done(

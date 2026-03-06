@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -154,14 +155,94 @@ def discover_session_driver() -> Path | None:
     return None
 
 
+def _binary_candidates(binary: str) -> list[str]:
+    candidates: list[str] = []
+    discovered = shutil.which(binary)
+    if discovered:
+        candidates.append(discovered)
+    if binary == "wg":
+        candidates.extend(
+            [
+                str(Path.home() / ".cargo" / "bin" / "wg"),
+                "/opt/homebrew/bin/wg",
+                "/usr/local/bin/wg",
+            ]
+        )
+        users_root = Path("/Users")
+        if users_root.exists():
+            for extra in users_root.glob("*/.cargo/bin/wg"):
+                candidates.append(str(extra))
+    elif binary == "claude":
+        candidates.extend(
+            [
+                str(Path.home() / ".npm-global" / "bin" / "claude"),
+                str(Path.home() / ".local" / "bin" / "claude"),
+                "/opt/homebrew/bin/claude",
+                "/usr/local/bin/claude",
+            ]
+        )
+    return candidates
+
+
+def _resolve_command(cmd: list[str]) -> list[str]:
+    if not cmd:
+        return cmd
+    binary = str(cmd[0] or "")
+    if not binary or "/" in binary:
+        return cmd
+    seen: set[str] = set()
+    for candidate in _binary_candidates(binary):
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if Path(candidate).exists():
+            return [candidate, *cmd[1:]]
+    return cmd
+
+
+def _subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    path_entries = []
+    for binary in ("wg", "claude"):
+        for candidate in _binary_candidates(binary):
+            parent = str(Path(candidate).parent)
+            if parent and parent not in path_entries:
+                path_entries.append(parent)
+    current = env.get("PATH", "")
+    if current:
+        path_entries.extend(part for part in current.split(os.pathsep) if part)
+    env["PATH"] = os.pathsep.join(path_entries)
+    return env
+
+
+def _run_command(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int | None = None,
+) -> subprocess.CompletedProcess[str]:
+    resolved = _resolve_command(cmd)
+    try:
+        return subprocess.run(
+            resolved,
+            capture_output=True,
+            text=True,
+            cwd=str(cwd) if cwd else None,
+            timeout=timeout,
+            env=_subprocess_env(),
+        )
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(
+            resolved,
+            127,
+            stdout="",
+            stderr=str(exc),
+        )
+
+
 def get_task_details(project_dir: Path, task_id: str) -> dict | None:
     """Get full task details from workgraph."""
-    result = subprocess.run(
-        ["wg", "show", task_id],
-        capture_output=True,
-        text=True,
-        cwd=str(project_dir),
-    )
+    result = _run_command(["wg", "show", task_id], cwd=project_dir)
     if result.returncode != 0:
         return None
 
@@ -196,12 +277,7 @@ def get_ready_tasks(project_dir: Path) -> list[dict]:
     """Get ready tasks from workgraph with full details."""
     from .pm_coordination import parse_ready_output
 
-    result = subprocess.run(
-        ["wg", "ready"],
-        capture_output=True,
-        text=True,
-        cwd=str(project_dir),
-    )
+    result = _run_command(["wg", "ready"], cwd=project_dir)
     if result.returncode != 0:
         return []
 
@@ -263,12 +339,7 @@ def get_wg_eval_scores(project_dir: Path, task_ids: set[str]) -> str:
 
         # Also check wg show for evaluation log entries
         try:
-            result = subprocess.run(
-                ["wg", "show", tid],
-                capture_output=True,
-                text=True,
-                cwd=str(project_dir),
-            )
+            result = _run_command(["wg", "show", tid], cwd=project_dir)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     line_lower = line.strip().lower()
@@ -521,17 +592,12 @@ def dispatch_task(
     )
 
     # Claim the task
-    subprocess.run(
-        ["wg", "claim", task["id"]],
-        capture_output=True,
-        text=True,
-        cwd=str(project_dir),
-    )
+    _run_command(["wg", "claim", task["id"]], cwd=project_dir)
 
     if scripts_dir is None:
         # Fallback: direct CLI execution (no session-driver)
         prompt = build_worker_prompt(task, project_dir)
-        result = subprocess.run(
+        result = _run_command(
             [
                 "claude",
                 "--print",
@@ -540,9 +606,7 @@ def dispatch_task(
                 "-p",
                 prompt,
             ],
-            capture_output=True,
-            text=True,
-            cwd=str(project_dir),
+            cwd=project_dir,
             timeout=run.config.worker_timeout + 60,
         )
         ctx.response = result.stdout
@@ -551,7 +615,9 @@ def dispatch_task(
         # Session-driver path
         worker_info = launch_worker(scripts_dir, worker_name, project_dir)
         if worker_info is None:
+            ctx.response = "worker launch failed"
             ctx.status = "failed"
+            run.workers[task["id"]] = ctx
             return ctx
 
         ctx.session_id = worker_info.get("session_id")
@@ -564,6 +630,8 @@ def dispatch_task(
             run.config.worker_timeout,
         )
         stop_worker(scripts_dir, worker_name, ctx.session_id)
+        if not ctx.response:
+            ctx.response = "worker conversation returned no output"
         ctx.status = (
             "completed"
             if ctx.response and not ctx.response.lstrip().startswith("Error:")
@@ -772,7 +840,7 @@ def run_milestone_review(
             return response
 
     # Fallback: direct CLI
-    result = subprocess.run(
+    result = _run_command(
         [
             "claude",
             "--print",
@@ -781,9 +849,7 @@ def run_milestone_review(
             "-p",
             prompt,
         ],
-        capture_output=True,
-        text=True,
-        cwd=str(project_dir),
+        cwd=project_dir,
         timeout=660,
     )
     return result.stdout
@@ -807,7 +873,7 @@ def decompose_goal(
             return response
 
     # Fallback: direct CLI
-    result = subprocess.run(
+    result = _run_command(
         [
             "claude",
             "--print",
@@ -816,9 +882,7 @@ def decompose_goal(
             "-p",
             prompt,
         ],
-        capture_output=True,
-        text=True,
-        cwd=str(project_dir),
+        cwd=project_dir,
         timeout=660,
     )
     return result.stdout

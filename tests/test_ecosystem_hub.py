@@ -132,6 +132,22 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertEqual(set(repos.keys()), {"driftdriver", "coredrift"})
             self.assertEqual(repos["driftdriver"], root / "driftdriver")
 
+    def test_load_ecosystem_repos_supports_explicit_repo_path(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            outside = root.parent / "outside-repo"
+            (root / "speedrift-ecosystem").mkdir(parents=True)
+            toml_path = root / "speedrift-ecosystem" / "ecosystem.toml"
+            toml_path.write_text(
+                "schema = 1\n"
+                "[repos.atlas_product]\n"
+                "role='product'\n"
+                "path='../outside-repo'\n",
+                encoding="utf-8",
+            )
+            repos = _load_ecosystem_repos(toml_path, root)
+            self.assertEqual(repos["atlas_product"], outside.resolve())
+
     def test_compute_ready_tasks_respects_dependencies(self) -> None:
         tasks = {
             "root": {"id": "root", "status": "done", "title": "Root"},
@@ -154,6 +170,7 @@ class EcosystemHubTests(unittest.TestCase):
             repo = Path(td) / "repo"
             repo.mkdir(parents=True)
             _init_repo(repo)
+            (repo / "README.md").write_text("## North Star\nBuild a durable test system.\n", encoding="utf-8")
             _write_graph(
                 repo,
                 [
@@ -168,6 +185,18 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertTrue(snap.workgraph_exists)
             self.assertEqual(len(snap.in_progress), 1)
             self.assertEqual([t["id"] for t in snap.ready], ["t1"])
+            self.assertTrue(snap.repo_north_star["present"])
+            self.assertEqual(snap.repo_north_star["status"], "present")
+
+    def test_collect_repo_snapshot_marks_missing_repo_north_star(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            _write_graph(repo, [{"id": "t1", "title": "ready", "status": "open"}])
+            snap = collect_repo_snapshot("repo", repo)
+            self.assertFalse(snap.repo_north_star["present"])
+            self.assertEqual(snap.repo_north_star["status"], "missing")
             self.assertIsInstance(snap.task_graph_nodes, list)
             self.assertIsInstance(snap.task_graph_edges, list)
             self.assertIn("repo:", snap.narrative)
@@ -448,10 +477,42 @@ class EcosystemHubTests(unittest.TestCase):
             names = {row["name"] for row in snapshot.get("repos", [])}
             self.assertIn("driftdriver", names)
             self.assertIn("meridian", names)
+
+    def test_collect_snapshot_includes_explicit_out_of_tree_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "driftdriver"
+            project.mkdir(parents=True)
+            _init_repo(project)
+            _write_graph(project, [{"id": "a", "title": "A", "status": "open"}])
+
+            external = root / "external" / "atlas_product"
+            external.mkdir(parents=True, exist_ok=True)
+            _init_repo(external)
+            (external / "README.md").write_text("# Atlas\n", encoding="utf-8")
+
+            ecosystem_root = root / "speedrift-ecosystem"
+            ecosystem_root.mkdir()
+            (ecosystem_root / "ecosystem.toml").write_text(
+                "schema = 1\n"
+                "[repos.driftdriver]\nrole='orchestrator'\nurl='https://example.com'\n"
+                "[repos.atlas_product]\nrole='product'\npath='external/atlas_product'\n",
+                encoding="utf-8",
+            )
+
+            snapshot = collect_ecosystem_snapshot(
+                project_dir=project,
+                workspace_root=root,
+                include_updates=False,
+            )
+            names = {row["name"] for row in snapshot.get("repos", [])}
+            self.assertIn("atlas_product", names)
+            atlas = next(row for row in snapshot.get("repos", []) if row["name"] == "atlas_product")
+            self.assertEqual(Path(atlas["path"]).resolve(), external.resolve())
             self.assertNotIn("old-repo", names)
 
             sources = snapshot.get("repo_sources", {})
-            self.assertEqual(sources.get("meridian"), "autodiscovered")
+            self.assertEqual(sources.get("atlas_product"), "ecosystem-toml")
 
     def test_service_status_not_running(self) -> None:
         with tempfile.TemporaryDirectory() as td:

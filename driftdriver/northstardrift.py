@@ -449,6 +449,7 @@ def _is_latent_repo(repo: dict[str, Any]) -> bool:
 
 def _repo_reasons(repo: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
+    repo_north_star = repo.get("repo_north_star") if isinstance(repo.get("repo_north_star"), dict) else {}
     errors = repo.get("errors")
     if isinstance(errors, list) and errors:
         reasons.append(f"errors: {', '.join(str(item) for item in errors[:2])}")
@@ -462,6 +463,10 @@ def _repo_reasons(repo: dict[str, Any]) -> list[str]:
             reasons.append(f"stalled: {str(stall_reasons[0])}")
         else:
             reasons.append("stalled without active execution")
+    if not bool(repo_north_star.get("present")):
+        reasons.append("repo north star missing")
+    elif str(repo_north_star.get("status") or "") == "weak":
+        reasons.append("repo north star weak")
     if bool(repo.get("workgraph_exists")) and not bool(repo.get("service_running")):
         ready = repo.get("ready")
         in_progress = repo.get("in_progress")
@@ -526,10 +531,15 @@ def _score_repo(repo: dict[str, Any], previous: dict[str, Any] | None, *, config
     penalty = 0.0
     reasons = _repo_reasons(repo)
     latent_repo = _is_latent_repo(repo)
+    repo_north_star = repo.get("repo_north_star") if isinstance(repo.get("repo_north_star"), dict) else {}
     if not bool(repo.get("exists")):
         penalty += 85
     elif not bool(repo.get("workgraph_exists")):
         penalty += 18 if latent_repo else 28
+    if not bool(repo_north_star.get("present")):
+        penalty += 8.0
+    elif str(repo_north_star.get("status") or "") == "weak":
+        penalty += 3.0
     penalty += min(28.0, len(reasons) * 4.0)
     penalty += min(24.0, int(repo.get("missing_dependencies") or 0) * 6.0)
     penalty += min(18.0, int(repo.get("blocked_open") or 0) * 3.0)
@@ -683,6 +693,19 @@ def compute_northstardrift(
     participating_repos = sum(1 for repo in repos if isinstance(repo, dict) and _is_participating_repo(repo))
     latent_repos = sum(1 for repo in repos if isinstance(repo, dict) and _is_latent_repo(repo))
     reporting_repos = sum(1 for repo in repos if isinstance(repo, dict) and bool(repo.get("reporting")))
+    north_star_present_repos = sum(
+        1
+        for repo in repos
+        if isinstance(repo, dict)
+        and isinstance(repo.get("repo_north_star"), dict)
+        and bool((repo.get("repo_north_star") or {}).get("present"))
+    )
+    missing_north_star_repos = sum(
+        1
+        for repo in repos
+        if isinstance(repo, dict)
+        and not bool(((repo.get("repo_north_star") or {}) if isinstance(repo.get("repo_north_star"), dict) else {}).get("present"))
+    )
     open_work_repos = 0
     service_healthy_repos = 0
     active_repos = 0
@@ -816,13 +839,15 @@ def compute_northstardrift(
         elif stalled_repos > prev_stalled or missing_dependencies > prev_missing:
             improvement_change = 55.0
     rollout_coverage = reporting_coverage
+    north_star_coverage = _ratio_score(north_star_present_repos, total_repos, default=0.0)
     throughput_score = _clamp_score(min(100.0, 55.0 + (len(upstream_candidates) * 10.0) + (10.0 if bool(updates.get("has_updates")) else 0.0) + (10.0 if bool(updates.get("has_discoveries")) else 0.0)))
     plan_integrity_coverage = _penalty_inverse((missing_dependencies * 9.0) + (blocked_total * 3.0) + (stale_active_total * 4.0))
     self_improvement = _clamp_score(
         (0.25 * improvement_change)
-        + (0.25 * rollout_coverage)
+        + (0.20 * rollout_coverage)
         + (0.20 * throughput_score)
-        + (0.30 * plan_integrity_coverage)
+        + (0.20 * north_star_coverage)
+        + (0.35 * plan_integrity_coverage)
     )
 
     axis_raw = {
@@ -981,6 +1006,44 @@ def compute_northstardrift(
             }
         )
 
+    for repo in repos:
+        if not isinstance(repo, dict):
+            continue
+        repo_name = str(repo.get("name") or "").strip()
+        if not repo_name or not bool(repo.get("workgraph_exists")):
+            continue
+        repo_north_star = repo.get("repo_north_star") if isinstance(repo.get("repo_north_star"), dict) else {}
+        if bool(repo_north_star.get("present")):
+            continue
+        fingerprint = _fingerprint([repo_name, "missing-repo-north-star"])
+        recommended_reviews.append(
+            {
+                "fingerprint": fingerprint,
+                "repo": repo_name,
+                "severity": "high",
+                "category": "missing-repo-north-star",
+                "title": f"Canonical repo North Star missing for {repo_name}",
+                "evidence": "No canonical repo North Star signal found in README/docs/plans.",
+                "recommendation": "Evaluate the repo purpose, current workgraph, and dependency context; draft a concise repo North Star for human approval and add it to a canonical doc.",
+                "model_prompt": (
+                    f"In `{repo_name}`, evaluate the repo purpose, current workgraph, active plans, and inter-repo dependencies. "
+                    "Draft a concise but nuanced repo North Star for human approval, propose the canonical doc location, and emit exact workgraph tasks to adopt it without disrupting active work."
+                ),
+                "codex_prompt": (
+                    f"In repo {repo_name}, determine the missing canonical North Star. Read README/docs/plans and current workgraph intent, draft a proposed North Star for human approval, and create the smallest safe task/doc plan to adopt it."
+                ),
+                "score": next(
+                    (
+                        row.get("score")
+                        for row in repo_scores
+                        if isinstance(row, dict) and str(row.get("repo") or "") == repo_name
+                    ),
+                    0.0,
+                ),
+                "human_approval_required": True,
+            }
+        )
+
     weakest_axis = min(axes.items(), key=lambda item: float(item[1].get("score") or 0.0)) if axes else ("continuity", {"score": 0})
     strongest_axis = max(axes.items(), key=lambda item: float(item[1].get("score") or 0.0)) if axes else ("continuity", {"score": 0})
     narrative = _build_narrative(
@@ -1017,6 +1080,8 @@ def compute_northstardrift(
             "tracked_repos": total_repos,
             "participating_repos": participating_repos,
             "reporting_repos": reporting_repos,
+            "repos_with_north_star": north_star_present_repos,
+            "repos_missing_north_star": missing_north_star_repos,
             "latent_repos": latent_repos,
             "active_repos": active_repos,
             "stalled_repos": stalled_repos,
@@ -1194,6 +1259,7 @@ def emit_northstar_review_tasks(
         title = f"northstardrift: {str(row.get('severity') or 'medium')} {str(row.get('category') or 'repo-attention')}"
         prompt = str(row.get("model_prompt") or "")
         codex_prompt = str(row.get("codex_prompt") or "")
+        approval = "yes" if bool(row.get("human_approval_required")) else "no"
         desc = (
             "North-star effectiveness review task.\n\n"
             f"Finding: {row.get('title')}\n"
@@ -1201,6 +1267,7 @@ def emit_northstar_review_tasks(
             f"Evidence: {row.get('evidence')}\n"
             f"Recommendation: {row.get('recommendation')}\n"
             f"North-star score: {row.get('score')}\n\n"
+            f"Human approval required: {approval}\n\n"
             f"Suggested Claude prompt:\n{prompt}\n\n"
             f"Suggested Codex prompt:\n{codex_prompt}\n"
         )

@@ -273,6 +273,40 @@ class FactoryDriftTests(unittest.TestCase):
         self.assertLessEqual(len(actions), 2)
         self.assertLessEqual(sum(1 for row in actions if row.get("repo") == selected[0]["repo"]), 1)
 
+    def test_build_factory_cycle_reserves_dispatch_when_ready_work_exists(self) -> None:
+        policy = _policy()
+        policy.autonomy_default["max_actions_per_cycle"] = 3
+        snapshot = {
+            "overview": {"attention_repos": [{"repo": "repo-a", "score": 40}]},
+            "repos": [
+                {
+                    "name": "repo-a",
+                    "exists": True,
+                    "workgraph_exists": True,
+                    "service_running": True,
+                    "activity_state": "stalled",
+                    "missing_dependencies": 1,
+                    "blocked_open": 2,
+                    "stale_open": [{"id": "o1"}],
+                    "stale_in_progress": [],
+                    "behind": 0,
+                    "git_dirty": False,
+                    "ready": [{"id": "r1"}, {"id": "r2"}],
+                    "in_progress": [],
+                    "security": {"findings_total": 2, "critical": 0, "high": 1},
+                    "quality": {"findings_total": 3, "quality_score": 68, "at_risk": True},
+                }
+            ],
+            "upstream_candidates": [],
+            "updates": {},
+        }
+        cycle = build_factory_cycle(snapshot=snapshot, policy=policy, project_name="driftdriver")
+        actions = [row for row in (cycle.get("action_plan") or []) if isinstance(row, dict)]
+        repo_actions = [row for row in actions if str(row.get("repo") or "") == "repo-a"]
+        kinds = [str(row.get("kind") or "") for row in repo_actions]
+        self.assertIn("dispatch_ready_workers", kinds)
+        self.assertEqual(kinds[0], "dispatch_ready_workers")
+
     def test_write_factory_ledger_writes_local_and_central(self) -> None:
         cycle = {
             "cycle_id": "factory-test",
@@ -629,6 +663,83 @@ class FactoryDriftTests(unittest.TestCase):
             self.assertEqual(execution["failed"], 0)
             attempts = execution.get("attempts") or []
             self.assertEqual(str(attempts[0]["status"]), "succeeded")
+
+    def test_execute_factory_cycle_does_not_hard_stop_on_dispatch_failure(self) -> None:
+        policy = _policy()
+        cycle = {
+            "cycle_id": "factory-test",
+            "generated_at": "2026-03-05T12:00:00+00:00",
+            "execution_mode": "execute",
+            "execution_status": "planned_only",
+            "policy": {"factory": {"hard_stop_on_failed_verification": True}},
+            "action_plan": [
+                {
+                    "id": "repo-a:dispatch_ready_workers:1",
+                    "repo": "repo-a",
+                    "module": "sessiondriver",
+                    "kind": "dispatch_ready_workers",
+                    "automation_allowed": True,
+                },
+                {
+                    "id": "repo-b:review_workgraph_plan:1",
+                    "repo": "repo-b",
+                    "module": "plandrift",
+                    "kind": "review_workgraph_plan",
+                    "automation_allowed": True,
+                },
+            ],
+            "outcomes": {"planned_actions": 2, "executed_actions": 0},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo_a = root / "repo-a"
+            repo_b = root / "repo-b"
+            (repo_a / ".workgraph").mkdir(parents=True, exist_ok=True)
+            (repo_b / ".workgraph").mkdir(parents=True, exist_ok=True)
+            snapshot = {
+                "repos": [
+                    {"name": "repo-a", "path": str(repo_a)},
+                    {"name": "repo-b", "path": str(repo_b)},
+                ]
+            }
+            dispatch = {
+                "ok": False,
+                "status": "failed",
+                "reason": "worker launch failed",
+                "using_session_driver": True,
+                "attempted": 1,
+                "ready_seen": 1,
+                "dispatched": [],
+                "failed": [{"task_id": "r1", "worker_status": "failed", "error": "worker launch failed"}],
+                "escalated": [],
+            }
+            review = {
+                "summary": {"critical": 0, "high": 0, "findings_total": 0, "quality_score": 100},
+                "recommended_reviews": [],
+                "model_contract": {},
+            }
+            with patch("driftdriver.factorydrift._dispatch_ready_workers", return_value=dispatch), patch(
+                "driftdriver.factorydrift.run_workgraph_plan_review",
+                return_value=review,
+            ), patch(
+                "driftdriver.factorydrift.emit_plan_review_tasks",
+                return_value={"enabled": True, "attempted": 0, "created": 0, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
+            ):
+                execution = execute_factory_cycle(
+                    cycle=cycle,
+                    snapshot=snapshot,
+                    policy=policy,
+                    project_dir=root,
+                    emit_followups=False,
+                    max_followups_per_repo=2,
+                    allow_execute_draft_prs=False,
+                )
+            self.assertEqual(execution["executed"], 2)
+            self.assertEqual(execution["failed"], 1)
+            self.assertFalse(execution["stopped_early"])
+            attempts = execution.get("attempts") or []
+            self.assertEqual(str(attempts[0]["status"]), "failed")
+            self.assertEqual(str(attempts[1]["status"]), "succeeded")
 
 
 if __name__ == "__main__":

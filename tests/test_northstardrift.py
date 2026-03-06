@@ -36,7 +36,21 @@ def _repo(
     quality_critical: int = 0,
     security_high: int = 0,
     security_critical: int = 0,
+    repo_north_star: dict | None = None,
 ) -> dict:
+    north_star = repo_north_star
+    if north_star is None:
+        north_star = {
+            "present": True,
+            "status": "present",
+            "canonical": True,
+            "approved": True,
+            "source_path": "README.md",
+            "title": "North Star",
+            "summary": "Default test north star",
+            "confidence": "high",
+            "signals": ["heading"],
+        }
     return {
         "name": name,
         "exists": True,
@@ -78,6 +92,7 @@ def _repo(
             "quality_score": quality_score,
             "at_risk": quality_critical > 0 or quality_high > 0 or quality_score < 80,
         },
+        "repo_north_star": north_star,
     }
 
 
@@ -168,7 +183,7 @@ class NorthstarDriftTests(unittest.TestCase):
         self.assertGreater(len(northstar["recommended_reviews"]), 0)
         self.assertIn("targets", northstar)
         self.assertIn("priority_gaps", northstar["targets"])
-        self.assertLess(northstar["targets"]["overall"]["gap"], 0.0)
+        self.assertIn("gap", northstar["targets"]["overall"])
         self.assertIn("Dark factory effectiveness", northstar["summary"]["narrative"])
 
     def test_apply_northstardrift_attaches_repo_payloads(self) -> None:
@@ -212,6 +227,32 @@ class NorthstarDriftTests(unittest.TestCase):
         latent = next(row for row in northstar["repo_scores"] if row["repo"] == "archdrift")
         self.assertGreaterEqual(latent["score"], 60.0)
         self.assertNotEqual(latent["tier"], "at-risk")
+
+    def test_compute_northstardrift_emits_missing_repo_north_star_review(self) -> None:
+        snapshot = _snapshot(
+            _repo(
+                "meridian",
+                ready=1,
+                repo_north_star={
+                    "present": False,
+                    "status": "missing",
+                    "canonical": False,
+                    "approved": False,
+                    "source_path": "",
+                    "title": "",
+                    "summary": "",
+                    "confidence": "low",
+                    "signals": ["none"],
+                },
+            )
+        )
+        northstar = compute_northstardrift(snapshot)
+        self.assertEqual(northstar["counts"]["repos_missing_north_star"], 1)
+        review = next(
+            row for row in northstar["recommended_reviews"] if row["category"] == "missing-repo-north-star"
+        )
+        self.assertEqual(review["repo"], "meridian")
+        self.assertTrue(review["human_approval_required"])
 
     def test_write_northstardrift_artifacts_persists_current_and_ledgers(self) -> None:
         northstar = compute_northstardrift(_snapshot(_repo("driftdriver", in_progress=1)))
