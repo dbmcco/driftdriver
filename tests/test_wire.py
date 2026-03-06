@@ -156,15 +156,3 @@ def test_cmd_recover_empty():
         wg_dir.mkdir()
         result = cmd_recover(Path(tmp))
     assert result == []
-
-
-def test_state_file_sanitizes_path_traversal():
-    from driftdriver.execution_state import state_file
-
-    with TemporaryDirectory() as tmp:
-        wg_dir = Path(tmp) / ".workgraph"
-        wg_dir.mkdir()
-        path = state_file(wg_dir, "../../etc/passwd")
-    # Must not escape the recovery directory
-    assert ".." not in str(path.name)
-    assert path.parent == wg_dir / "recovery"

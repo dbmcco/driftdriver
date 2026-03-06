@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import types
 from pathlib import Path
 
 from driftdriver.knowledge_priming import prime_context
-from driftdriver.execution_state import list_interrupted
 from driftdriver.scope_enforcement import get_changed_files, check_file_scope, format_scope_report
 from driftdriver.self_reflect import self_reflect, format_learnings_for_review
 
@@ -18,10 +19,30 @@ def cmd_prime(project_dir: Path, changed_files: list[str] | None = None) -> str:
     return prime_context(kb_path, changed_files=changed_files)
 
 
+def _list_interrupted(wg_dir: Path) -> list:
+    """Find all tasks with saved recovery state (potentially interrupted).
+
+    Reads JSON files from .workgraph/recovery/ and returns those whose
+    phase is not 'done' as SimpleNamespace objects.
+    """
+    recovery = wg_dir / "recovery"
+    if not recovery.exists():
+        return []
+    states = []
+    for sf in recovery.glob("*.json"):
+        try:
+            data = json.loads(sf.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if data.get("phase") != "done":
+            states.append(types.SimpleNamespace(**data))
+    return states
+
+
 def cmd_recover(project_dir: Path) -> list:
     """List interrupted tasks that can be recovered."""
     wg_dir = project_dir / ".workgraph"
-    return list_interrupted(wg_dir)
+    return _list_interrupted(wg_dir)
 
 
 def cmd_scope_check(project_dir: Path, allowed_patterns: list[str]) -> str:
