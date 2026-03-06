@@ -567,6 +567,25 @@ class EcosystemHubTests(unittest.TestCase):
             out = resolve_central_repo_path(project, explicit_path=str(explicit))
             self.assertEqual(out, explicit.resolve())
 
+    def test_resolve_central_repo_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / "meridian"
+            project.mkdir(parents=True)
+            explicit = Path(td) / "central-env"
+            with patch.dict(os.environ, {"ECOSYSTEM_HUB_CENTRAL_REPO": str(explicit)}):
+                out = resolve_central_repo_path(project)
+            self.assertEqual(out, explicit.resolve())
+
+    def test_resolve_central_repo_from_workspace_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "meridian"
+            sibling = root / "speedrift-ecosystem"
+            project.mkdir(parents=True)
+            sibling.mkdir(parents=True)
+            out = resolve_central_repo_path(project)
+            self.assertEqual(out, (sibling / ".workgraph" / "service" / "ecosystem-central").resolve())
+
     def test_write_snapshot_once_writes_central_register(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

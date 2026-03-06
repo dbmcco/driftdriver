@@ -216,15 +216,24 @@ def _safe_ts_for_file(iso_ts: str) -> str:
 def resolve_central_repo_path(project_dir: Path, explicit_path: str = "") -> Path | None:
     if explicit_path:
         return Path(explicit_path).expanduser().resolve()
+    env_path = str(os.environ.get("ECOSYSTEM_HUB_CENTRAL_REPO", "") or "").strip()
+    if env_path:
+        return Path(env_path).expanduser().resolve()
     wg_dir = project_dir / ".workgraph"
     try:
         policy = load_drift_policy(wg_dir)
     except Exception:
-        return None
+        policy = None
     raw = str(getattr(policy, "reporting_central_repo", "") or "").strip()
-    if not raw:
-        return None
-    return Path(raw).expanduser().resolve()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    workspace_root = project_dir.parent
+    if project_dir.name == "speedrift-ecosystem":
+        return (project_dir / ".workgraph" / "service" / "ecosystem-central").resolve()
+    sibling = workspace_root / "speedrift-ecosystem"
+    if sibling.exists():
+        return (sibling / ".workgraph" / "service" / "ecosystem-central").resolve()
+    return None
 
 
 def _collect_central_reports_summary(central_repo: Path, *, limit: int = 20) -> list[dict[str, Any]]:

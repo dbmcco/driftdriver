@@ -20,6 +20,15 @@ SPECDRIFT_MARKER = "## specdrift Protocol"
 CONTRARIANDRIFT_MARKER = "## contrariandrift Protocol"
 SUPERPOWERS_MARKER = "## Superpowers Protocol"
 MODEL_MEDIATED_MARKER = "## Model-Mediated Protocol"
+CLAUDE_EXECUTOR_WRAPPER = '.workgraph/executors/claude-run.sh'
+CLAUDE_EXECUTOR_LEGACY = (
+    'command = "claude"\n'
+    'args = ["--print", "--dangerously-skip-permissions", "--no-session-persistence"]'
+)
+CLAUDE_EXECUTOR_CURRENT = (
+    f'command = "{CLAUDE_EXECUTOR_WRAPPER}"\n'
+    "args = []"
+)
 
 
 @dataclass(frozen=True)
@@ -349,8 +358,8 @@ def _default_claude_executor_text(
 
     return f"""[executor]
 type = "claude"
-command = "claude"
-args = ["--print", "--dangerously-skip-permissions", "--no-session-persistence"]
+command = "{CLAUDE_EXECUTOR_WRAPPER}"
+args = []
 
 [executor.prompt_template]
 template = \"\"\"
@@ -400,6 +409,14 @@ Context from dependencies:
 
 
 _TEMPLATE_START_RE = re.compile(r'(?P<prefix>\btemplate\s*=\s*"""\r?\n)', re.MULTILINE)
+
+
+def _inject_claude_executor_runner(body: str) -> str | None:
+    if CLAUDE_EXECUTOR_CURRENT in body:
+        return None
+    if CLAUDE_EXECUTOR_LEGACY not in body:
+        return None
+    return body.replace(CLAUDE_EXECUTOR_LEGACY, CLAUDE_EXECUTOR_CURRENT, 1)
 
 
 def _inject_coredrift_into_template(body: str) -> str | None:
@@ -643,6 +660,7 @@ def ensure_executor_guidance(
 ) -> tuple[bool, list[str]]:
     executors_dir = wg_dir / "executors"
     executors_dir.mkdir(parents=True, exist_ok=True)
+    install_claude_executor_support(wg_dir)
 
     created = False
     claude_path = executors_dir / "claude.toml"
@@ -666,6 +684,12 @@ def ensure_executor_guidance(
         text = p.read_text(encoding="utf-8")
         cur = text
         changed = False
+
+        if p.name == "claude.toml":
+            new_text = _inject_claude_executor_runner(cur)
+            if new_text is not None:
+                cur = new_text
+                changed = True
 
         new_text = _inject_coredrift_into_template(cur)
         if new_text is not None:
@@ -762,6 +786,39 @@ def _write_text_if_changed(path: Path, content: str) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return True
+
+
+def _template_text(*parts: str) -> str:
+    path = Path(__file__).parent / "templates"
+    for part in parts:
+        path = path / part
+    return path.read_text(encoding="utf-8")
+
+
+def _make_executable(path: Path) -> None:
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def install_claude_executor_support(wg_dir: Path) -> tuple[bool, bool]:
+    """
+    Install the repo-local Claude executor wrapper and portable timeout shim.
+
+    Returns (wrote_runner, wrote_timeout). Both values are False when the
+    destination content already matches the bundled templates.
+    """
+    executors_dir = wg_dir / "executors"
+    executors_dir.mkdir(parents=True, exist_ok=True)
+    runner_dst = executors_dir / "claude-run.sh"
+    wrote_runner = _write_text_if_changed(runner_dst, _template_text("executors", "claude-run.sh"))
+    _make_executable(runner_dst)
+
+    bin_dir = wg_dir / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    timeout_dst = bin_dir / "timeout"
+    wrote_timeout = _write_text_if_changed(timeout_dst, _template_text("bin", "timeout"))
+    _make_executable(timeout_dst)
+
+    return (wrote_runner, wrote_timeout)
 
 
 def ensure_amplifier_executor(wg_dir: Path, *, bundle_name: str = "speedrift") -> tuple[bool, bool]:

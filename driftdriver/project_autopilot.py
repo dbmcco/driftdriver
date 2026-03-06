@@ -331,6 +331,71 @@ def launch_worker(
         return None
 
 
+def _session_log_path(session_id: str) -> Path | None:
+    meta_file = Path("/tmp/claude-workers") / f"{session_id}.meta"
+    if not meta_file.exists():
+        return None
+
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+    cwd_raw = str(meta.get("cwd") or "").strip()
+    if not cwd_raw:
+        return None
+
+    cwd = Path(cwd_raw).expanduser()
+    try:
+        if cwd.exists():
+            cwd = cwd.resolve()
+    except OSError:
+        pass
+
+    encoded = str(cwd).replace("/", "-")
+    return Path.home() / ".claude" / "projects" / encoded / f"{session_id}.jsonl"
+
+
+def _assistant_text_messages(log_file: Path | None) -> list[str]:
+    if log_file is None or not log_file.exists():
+        return []
+
+    messages: list[str] = []
+    try:
+        lines = log_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+    for line in lines:
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if payload.get("type") != "assistant":
+            continue
+        blocks = (payload.get("message") or {}).get("content") or []
+        texts = [
+            str(block.get("text") or "")
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
+        ]
+        if texts:
+            messages.append("\n".join(texts))
+    return messages
+
+
+def _assistant_text_message_count(log_file: Path | None) -> int:
+    return len(_assistant_text_messages(log_file))
+
+
+def _last_assistant_text(log_file: Path | None) -> str:
+    messages = _assistant_text_messages(log_file)
+    return messages[-1] if messages else ""
+
+
 def converse(
     scripts_dir: Path,
     worker_name: str,
@@ -339,15 +404,45 @@ def converse(
     timeout: int = 1800,
 ) -> str:
     """Send a prompt to a worker and wait for response."""
-    converse_script = scripts_dir / "converse.sh"
+    send_script = scripts_dir / "send-prompt.sh"
+    wait_script = scripts_dir / "wait-for-event.sh"
+    event_file = Path("/tmp/claude-workers") / f"{session_id}.events.jsonl"
+    log_file = _session_log_path(session_id)
+    before_count = _assistant_text_message_count(log_file)
+    after_line = 0
+    if event_file.exists():
+        try:
+            after_line = sum(1 for _ in event_file.open("r", encoding="utf-8"))
+        except OSError:
+            after_line = 0
 
-    result = subprocess.run(
-        [str(converse_script), worker_name, session_id, prompt, str(timeout)],
+    send_result = subprocess.run(
+        [str(send_script), worker_name, prompt],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if send_result.returncode != 0:
+        return (send_result.stderr or send_result.stdout).strip()
+
+    wait_result = subprocess.run(
+        [str(wait_script), session_id, "stop", str(timeout), "--after-line", str(after_line)],
         capture_output=True,
         text=True,
         timeout=timeout + 60,
     )
-    return result.stdout.strip()
+    if wait_result.returncode != 0:
+        return (wait_result.stderr or wait_result.stdout).strip()
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if _assistant_text_message_count(log_file) > before_count:
+            response = _last_assistant_text(log_file)
+            if response:
+                return response
+        time.sleep(0.1)
+
+    return "Error: Timed out waiting for assistant response in session log"
 
 
 def stop_worker(scripts_dir: Path, worker_name: str, session_id: str) -> None:
@@ -469,7 +564,11 @@ def dispatch_task(
             run.config.worker_timeout,
         )
         stop_worker(scripts_dir, worker_name, ctx.session_id)
-        ctx.status = "completed"
+        ctx.status = (
+            "completed"
+            if ctx.response and not ctx.response.lstrip().startswith("Error:")
+            else "failed"
+        )
 
     run.workers[task["id"]] = ctx
     return ctx

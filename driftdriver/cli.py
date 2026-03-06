@@ -2326,6 +2326,15 @@ def cmd_report_cli(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ecosystem_hub_proxy(args: argparse.Namespace) -> int:
+    from driftdriver.ecosystem_hub import main as ecosystem_hub_main
+
+    forwarded = list(getattr(args, "ecosystem_hub_args", []) or [])
+    if not forwarded:
+        forwarded = ["--help"]
+    return int(ecosystem_hub_main(forwarded))
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="driftdriver")
     p.add_argument("--dir", help="Project directory (or .workgraph dir). Defaults to cwd search.")
@@ -2600,6 +2609,10 @@ def _build_parser() -> argparse.ArgumentParser:
     report_p.add_argument("--push", action="store_true", help="Push report to central repo")
     report_p.set_defaults(func=cmd_report_cli)
 
+    ecosystem_hub_p = sub.add_parser("ecosystem-hub", help="Proxy to the ecosystem hub service manager")
+    ecosystem_hub_p.add_argument("ecosystem_hub_args", nargs=argparse.REMAINDER, help="Arguments for ecosystem hub")
+    ecosystem_hub_p.set_defaults(func=cmd_ecosystem_hub_proxy)
+
     return p
 
 
@@ -2753,8 +2766,32 @@ def cmd_health_workers_cli(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    if forwarded:
+        try:
+            hub_idx = forwarded.index("ecosystem-hub")
+        except ValueError:
+            hub_idx = -1
+        if hub_idx != -1:
+            from driftdriver.ecosystem_hub import main as ecosystem_hub_main
+
+            prefix = forwarded[:hub_idx]
+            hub_args = forwarded[hub_idx + 1 :]
+            if "--project-dir" not in hub_args:
+                if "--dir" in prefix:
+                    idx = prefix.index("--dir")
+                    if idx + 1 < len(prefix):
+                        hub_args = ["--project-dir", prefix[idx + 1], *hub_args]
+                else:
+                    for item in prefix:
+                        if item.startswith("--dir="):
+                            hub_args = ["--project-dir", item.split("=", 1)[1], *hub_args]
+                            break
+            if not hub_args:
+                hub_args = ["--help"]
+            return int(ecosystem_hub_main(hub_args))
     p = _build_parser()
-    args = p.parse_args(argv)
+    args = p.parse_args(forwarded)
     return int(args.func(args))
 
 

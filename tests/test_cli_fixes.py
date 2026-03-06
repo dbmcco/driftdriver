@@ -1,11 +1,12 @@
 # ABOUTME: Tests for cli.py fixes - _repair_wrappers NameError and new subcommands
-# ABOUTME: Verifies bug fix and wire/profile/ready subcommand wiring
+# ABOUTME: Verifies bug fix and wire/profile/ready/ecosystem-hub subcommand wiring
 
 from __future__ import annotations
 
 import subprocess
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 def test_repair_wrappers_no_name_error(tmp_path):
@@ -61,3 +62,14 @@ def test_ready_subcommand_exists():
     ]
     choices = set(subparsers_actions[0]._name_parser_map.keys())
     assert "ready" in choices, f"Subcommand 'ready' not found in: {choices}"
+
+
+def test_ecosystem_hub_subcommand_delegates():
+    """CLI must expose ecosystem-hub and forward args to driftdriver.ecosystem_hub.main."""
+    from driftdriver.cli import main
+
+    with patch("driftdriver.ecosystem_hub.main", return_value=0) as mock_main:
+        rc = main(["ecosystem-hub", "--project-dir", "/tmp/demo", "status"])
+
+    assert rc == 0
+    mock_main.assert_called_once_with(["--project-dir", "/tmp/demo", "status"])

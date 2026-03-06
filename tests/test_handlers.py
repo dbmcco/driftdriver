@@ -169,6 +169,31 @@ def test_session_start_uses_jq():
     )
 
 
+def test_session_start_uses_shared_ecosystem_hub_cli():
+    """session-start.sh must use the driftdriver ecosystem-hub CLI, not a repo-local script path."""
+    path = HANDLERS_DIR / "session-start.sh"
+    if not path.exists():
+        return
+    content = path.read_text()
+    assert "driftdriver \"${HUB_ARGS[@]}\"" in content, (
+        "session-start.sh must invoke the shared driftdriver ecosystem-hub CLI"
+    )
+    assert "scripts/ecosystem_hub_daemon.sh" not in content, (
+        "session-start.sh must not depend on a repo-local ecosystem_hub_daemon.sh path"
+    )
+
+
+def test_session_start_exports_workgraph_bin_on_path():
+    """session-start.sh must prepend .workgraph/bin so spawned agents can resolve repo-local shims."""
+    path = HANDLERS_DIR / "session-start.sh"
+    if not path.exists():
+        return
+    content = path.read_text()
+    assert 'export PATH="$PROJECT_DIR/.workgraph/bin:$PATH"' in content, (
+        "session-start.sh must prepend .workgraph/bin to PATH before starting the service"
+    )
+
+
 def test_pre_compact_uses_jq():
     """pre-compact.sh must use 'jq -n' to build JSON, not string interpolation."""
     path = HANDLERS_DIR / "pre-compact.sh"

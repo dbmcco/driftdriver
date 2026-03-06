@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from driftdriver.project_autopilot import (
+    _assistant_text_message_count,
+    _last_assistant_text,
     AutopilotConfig,
     AutopilotRun,
     WorkerContext,
@@ -59,6 +61,38 @@ class TestBuildPrompts(unittest.TestCase):
         self.assertIn("Build login form", prompt)
         self.assertIn("drifts check", prompt)
         self.assertIn("wg done", prompt)
+
+
+class TestSessionLogHelpers(unittest.TestCase):
+    def test_counts_only_assistant_text_messages(self):
+        with tempfile.TemporaryDirectory() as td:
+            log_file = Path(td) / "session.jsonl"
+            log_file.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "assistant", "message": {"content": [{"type": "thinking", "text": "x"}]}}),
+                        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "first"}]}}),
+                        json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "ignore"}]}}),
+                        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "second"}]}}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(_assistant_text_message_count(log_file), 2)
+
+    def test_returns_last_assistant_text_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            log_file = Path(td) / "session.jsonl"
+            log_file.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "first"}]}}),
+                        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "second"}, {"type": "text", "text": "line"}]}}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(_last_assistant_text(log_file), "second\nline")
 
 
 class TestEscalation(unittest.TestCase):

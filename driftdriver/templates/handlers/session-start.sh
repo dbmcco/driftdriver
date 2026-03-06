@@ -10,12 +10,19 @@ HANDLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Ensure driftdriver install wrappers exist (idempotent)
 driftdriver install 2>/dev/null || true
 
+# Provide repo-local shims needed by Workgraph-generated agent wrappers.
+export PATH="$PROJECT_DIR/.workgraph/bin:$PATH"
+
 # Start workgraph service if not already running
 wg service start 2>/dev/null || true
 
-# Ensure ecosystem hub daemon is persistent (when daemon script exists)
-if [[ -x "$PROJECT_DIR/scripts/ecosystem_hub_daemon.sh" ]]; then
-  "$PROJECT_DIR/scripts/ecosystem_hub_daemon.sh" ensure-running >/dev/null 2>&1 || true
+# Ensure ecosystem hub automation runs through the shared driftdriver CLI.
+if command -v driftdriver >/dev/null 2>&1; then
+  HUB_ARGS=(ecosystem-hub --project-dir "$PROJECT_DIR" automate --host "${ECOSYSTEM_HUB_HOST:-0.0.0.0}" --port "${ECOSYSTEM_HUB_PORT:-8777}")
+  if [[ -n "${ECOSYSTEM_HUB_CENTRAL_REPO:-}" ]]; then
+    HUB_ARGS+=(--central-repo "$ECOSYSTEM_HUB_CENTRAL_REPO")
+  fi
+  driftdriver "${HUB_ARGS[@]}" >/dev/null 2>&1 || true
 fi
 
 # Query Lessons MCP for project context and print to stdout

@@ -59,7 +59,8 @@ class SessionDriverTemplateTests(unittest.TestCase):
         sh_path = _TEMPLATES / "session-driver-run.sh"
         text = sh_path.read_text(encoding="utf-8")
         self.assertIn("launch-worker.sh", text)
-        self.assertIn("converse.sh", text)
+        self.assertIn("send-prompt.sh", text)
+        self.assertIn("wait-for-event.sh", text)
         self.assertIn("stop-worker.sh", text)
 
 
