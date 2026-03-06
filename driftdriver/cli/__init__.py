@@ -13,7 +13,6 @@ from typing import Any
 
 from driftdriver import wire
 from driftdriver.pm_coordination import get_ready_tasks
-from driftdriver.project_profiles import build_profile, format_profile_report
 from driftdriver.speedriftd import (
     load_runtime_snapshot,
     run_runtime_cycle,
@@ -125,9 +124,7 @@ def cmd_wire_rollback_eval(args: argparse.Namespace) -> int:
 
 
 def cmd_profile(args: argparse.Namespace) -> int:
-    project_dir = Path(args.dir) if args.dir else Path.cwd()
-    profile = build_profile(project_dir.name, [])
-    print(format_profile_report(profile))
+    print("Profile command will be rebuilt in the Learning service.")
     return 0
 
 
