@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from driftdriver.autopilot_state import load_run_state, load_worker_events
 from driftdriver.policy import DriftPolicy, load_drift_policy
 from driftdriver.project_autopilot import get_ready_tasks
 from driftdriver.workgraph import find_workgraph_dir, load_workgraph
@@ -70,6 +69,38 @@ def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=False) + "\n")
+
+
+def _autopilot_dir(project_dir: Path) -> Path:
+    """Get the autopilot state directory."""
+    return project_dir / ".workgraph" / ".autopilot"
+
+
+def load_run_state(project_dir: Path) -> dict | None:
+    """Load the last saved run state."""
+    f = _autopilot_dir(project_dir) / "run-state.json"
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text())
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def load_worker_events(project_dir: Path) -> list[dict]:
+    """Load all worker events from the JSONL log."""
+    f = _autopilot_dir(project_dir) / "workers.jsonl"
+    if not f.exists():
+        return []
+    events = []
+    for line in f.read_text().splitlines():
+        line = line.strip()
+        if line:
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return events
 
 
 def _parse_iso_timestamp(raw: str) -> float:

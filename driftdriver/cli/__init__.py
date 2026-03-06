@@ -274,13 +274,80 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
 # Autopilot command
 # ---------------------------------------------------------------------------
 
+def _autopilot_dir(project_dir: Path) -> Path:
+    """Get the autopilot state directory."""
+    return project_dir / ".workgraph" / ".autopilot"
+
+
+def _ensure_autopilot_dir(project_dir: Path) -> Path:
+    """Ensure autopilot state directory exists and return it."""
+    d = _autopilot_dir(project_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _save_worker_event(project_dir: Path, worker: Any, event: str) -> None:
+    """Append a worker event to workers.jsonl."""
+    import time as _time
+
+    d = _ensure_autopilot_dir(project_dir)
+    entry = {
+        "ts": _time.time(),
+        "event": event,
+        "task_id": worker.task_id,
+        "task_title": worker.task_title,
+        "worker_name": worker.worker_name,
+        "session_id": worker.session_id,
+        "started_at": worker.started_at,
+        "status": worker.status,
+        "drift_fail_count": worker.drift_fail_count,
+        "drift_findings": worker.drift_findings,
+    }
+    with open(d / "workers.jsonl", "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def _save_run_state(project_dir: Path, run: Any) -> None:
+    """Save current run state as JSON snapshot."""
+    import time as _time
+
+    d = _ensure_autopilot_dir(project_dir)
+    state = {
+        "ts": _time.time(),
+        "goal": run.config.goal,
+        "loop_count": run.loop_count,
+        "completed_tasks": sorted(run.completed_tasks),
+        "failed_tasks": sorted(run.failed_tasks),
+        "escalated_tasks": sorted(run.escalated_tasks),
+        "started_at": run.started_at,
+        "workers": {
+            tid: {
+                "task_id": ctx.task_id,
+                "task_title": ctx.task_title,
+                "worker_name": ctx.worker_name,
+                "session_id": ctx.session_id,
+                "started_at": ctx.started_at,
+                "status": ctx.status,
+                "drift_fail_count": ctx.drift_fail_count,
+                "drift_findings": ctx.drift_findings,
+            }
+            for tid, ctx in run.workers.items()
+        },
+    }
+    (d / "run-state.json").write_text(json.dumps(state, indent=2))
+
+
+def _clear_run_state(project_dir: Path) -> None:
+    """Remove run state files (for fresh start)."""
+    d = _autopilot_dir(project_dir)
+    for name in ("run-state.json", "workers.jsonl"):
+        f = d / name
+        if f.exists():
+            f.unlink()
+
+
 def cmd_autopilot(args: argparse.Namespace) -> int:
     """Run the project autopilot."""
-    from driftdriver.autopilot_state import (
-        clear_run_state,
-        save_run_state,
-        save_worker_event,
-    )
     from driftdriver.project_autopilot import (
         AutopilotConfig,
         AutopilotRun,
@@ -324,7 +391,7 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
             )
 
     # Clear previous state for fresh run
-    clear_run_state(project_dir)
+    _clear_run_state(project_dir)
 
     # Step 2: Run autopilot loop
     run = AutopilotRun(config=config)
@@ -333,10 +400,10 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
 
     # Persist worker events for completed workers
     for tid, ctx in run.workers.items():
-        save_worker_event(project_dir, ctx, ctx.status)
+        _save_worker_event(project_dir, ctx, ctx.status)
 
     # Save final run state
-    save_run_state(project_dir, run)
+    _save_run_state(project_dir, run)
 
     # Step 3: Milestone review -- evidence-based verification
     if run.completed_tasks and not args.skip_review:

@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from driftdriver.autopilot_state import save_run_state
 from driftdriver.project_autopilot import AutopilotConfig, AutopilotRun, WorkerContext
 from driftdriver.speedriftd import (
     collect_runtime_snapshot,
@@ -40,6 +39,36 @@ def _write_graph(repo: Path, tasks: list[dict]) -> None:
     (wg_dir / "graph.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
+def _write_run_state(repo: Path, run: AutopilotRun) -> None:
+    """Write autopilot run state as JSON (inlined from deleted autopilot_state)."""
+    import time
+    d = repo / ".workgraph" / ".autopilot"
+    d.mkdir(parents=True, exist_ok=True)
+    state = {
+        "ts": time.time(),
+        "goal": run.config.goal,
+        "loop_count": run.loop_count,
+        "completed_tasks": sorted(run.completed_tasks),
+        "failed_tasks": sorted(run.failed_tasks),
+        "escalated_tasks": sorted(run.escalated_tasks),
+        "started_at": run.started_at,
+        "workers": {
+            tid: {
+                "task_id": ctx.task_id,
+                "task_title": ctx.task_title,
+                "worker_name": ctx.worker_name,
+                "session_id": ctx.session_id,
+                "started_at": ctx.started_at,
+                "status": ctx.status,
+                "drift_fail_count": ctx.drift_fail_count,
+                "drift_findings": ctx.drift_findings,
+            }
+            for tid, ctx in run.workers.items()
+        },
+    }
+    (d / "run-state.json").write_text(json.dumps(state, indent=2))
+
+
 class SpeedriftdTests(unittest.TestCase):
     def test_collect_runtime_snapshot_uses_saved_session_id_and_ready_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -67,7 +96,7 @@ class SpeedriftdTests(unittest.TestCase):
                     )
                 },
             )
-            save_run_state(repo, run)
+            _write_run_state(repo, run)
 
             with patch("driftdriver.speedriftd.check_worker_liveness") as fake_health:
                 fake_health.return_value.status = "alive"
@@ -122,7 +151,7 @@ class SpeedriftdTests(unittest.TestCase):
                     )
                 },
             )
-            save_run_state(repo, run)
+            _write_run_state(repo, run)
 
             with patch("driftdriver.speedriftd.check_worker_liveness") as fake_health:
                 fake_health.return_value.status = "dead"
@@ -237,7 +266,7 @@ class SpeedriftdTests(unittest.TestCase):
                     )
                 },
             )
-            save_run_state(repo, run)
+            _write_run_state(repo, run)
             write_control_state(
                 repo,
                 mode="autonomous",
