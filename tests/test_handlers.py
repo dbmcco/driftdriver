@@ -127,6 +127,20 @@ def test_handler_scripts_use_jq_for_json_construction():
         )
 
 
+def test_task_completing_uses_single_value_changed_files_count():
+    """task-completing.sh must not build a multiline count that breaks jq --argjson."""
+    path = HANDLERS_DIR / "task-completing.sh"
+    if not path.exists():
+        return
+    content = path.read_text()
+    assert 'grep -cE "changed|insertion|deletion" || true' in content, (
+        "task-completing.sh must use a single grep count with '|| true'"
+    )
+    assert '|| echo "0"' not in content, (
+        "task-completing.sh must not append a second zero line via '|| echo \"0\"'"
+    )
+
+
 # Fix 2: lessons_mcp() must write to JSONL file, not pipe to node
 def test_lessons_mcp_writes_to_jsonl_file():
     """lessons_mcp() must write events to .lessons-events/pending.jsonl, not pipe to node."""
