@@ -567,6 +567,12 @@ These documents define:
 - phased rollout toward autonomous dark-factory operation
   with upstream pull-down integration and verifiable guardrails
   across growing repo counts.
+- concrete runtime/driver plans:
+  - `docs/plans/speedriftd-runtime-contract.md`
+  - `docs/plans/worker-driver-contract.md`
+  - `docs/plans/codexdriver-mvp-design.md`
+  - `docs/plans/runtime-event-schema.md`
+  - `docs/plans/speedrift-runtime-workgraph-backlog.md`
 
 Phase 0 implementation is now available:
 
