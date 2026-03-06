@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from driftdriver.outcome import DriftOutcome, write_outcome
 from driftdriver.plandrift import emit_plan_review_tasks, run_workgraph_plan_review
 from driftdriver.qadrift import emit_quality_review_tasks, run_program_quality_scan
 from driftdriver.secdrift import emit_security_review_tasks, run_secdrift_scan
@@ -90,6 +91,59 @@ def _run_cmd(
     except Exception as exc:
         return 1, "", str(exc)
     return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
+
+
+def classify_drift_outcome(
+    drift_score: str,
+    findings: list[str],
+) -> str:
+    """Map a post-completion drift score and findings list to an outcome value.
+
+    Returns one of: resolved, worsened, deferred, ignored.
+    """
+    score = str(drift_score or "").strip().lower()
+    has_findings = bool(findings)
+
+    if score == "red":
+        return "worsened"
+    if score == "yellow":
+        return "deferred" if has_findings else "resolved"
+    if score == "green" or not has_findings:
+        return "resolved"
+    # Unknown score with findings — not resolved, not red-level bad.
+    return "deferred"
+
+
+def record_task_outcome(
+    *,
+    project_dir: Path,
+    task_id: str,
+    lane: str,
+    finding_key: str,
+    recommendation: str,
+    action_taken: str,
+    outcome: str,
+    evidence: list[str] | None = None,
+) -> DriftOutcome:
+    """Record a DriftOutcome to the project's drift-outcomes JSONL ledger.
+
+    Creates .workgraph/ and the ledger file if they don't exist yet.
+    Returns the written DriftOutcome for caller inspection.
+    """
+    ledger = Path(project_dir) / ".workgraph" / "drift-outcomes.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+
+    drift_outcome = DriftOutcome(
+        task_id=str(task_id),
+        lane=str(lane),
+        finding_key=str(finding_key),
+        recommendation=str(recommendation),
+        action_taken=str(action_taken),
+        outcome=str(outcome),
+        evidence=list(evidence) if evidence is not None else [],
+    )
+    write_outcome(ledger, drift_outcome)
+    return drift_outcome
 
 
 def _as_repo_map(repos: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -958,11 +1012,31 @@ def _dispatch_ready_workers(
             continue
 
         drift = run_drift_check(repo_path, task_id)
-        row["drift_score"] = str(drift.get("score") or "")
-        row["drift_findings"] = list(drift.get("findings") or [])[:6]
+        drift_score = str(drift.get("score") or "")
+        drift_findings = list(drift.get("findings") or [])[:6]
+        row["drift_score"] = drift_score
+        row["drift_findings"] = drift_findings
         row["drift_exit_code"] = int(drift.get("exit_code") or 0)
 
-        if str(drift.get("score") or "").strip().lower() == "red":
+        # Record outcome for this completed worker's drift check.
+        outcome_value = classify_drift_outcome(drift_score, drift_findings)
+        try:
+            record_task_outcome(
+                project_dir=repo_path,
+                task_id=task_id,
+                lane="factorydrift",
+                finding_key=f"post-completion-drift:{task_id}",
+                recommendation="resolve drift findings before closing task",
+                action_taken=f"worker completed; drift score {drift_score}",
+                outcome=outcome_value,
+                evidence=drift_findings[:6],
+            )
+            row["outcome_recorded"] = True
+            row["outcome_value"] = outcome_value
+        except Exception:
+            row["outcome_recorded"] = False
+
+        if drift_score.strip().lower() == "red":
             ctx.drift_fail_count += 1
             ctx.drift_findings = list(drift.get("findings") or [])[:20]
             if should_escalate(ctx, drift_failure_threshold):
@@ -1170,6 +1244,24 @@ def execute_factory_cycle(
                 if rc not in (0, 3):
                     ok = False
                     checks[-1]["error"] = (err or out or "")[:220]
+
+                # Record outcome for each verified task.
+                verify_outcome = "resolved" if rc == 0 else ("deferred" if rc == 3 else "worsened")
+                try:
+                    record_task_outcome(
+                        project_dir=repo_path,
+                        task_id=task_id,
+                        lane="factorydrift",
+                        finding_key=f"verify-active:{task_id}",
+                        recommendation="drift check pass required for active tasks",
+                        action_taken=f"verify_active_tasks exit_code={rc}",
+                        outcome=verify_outcome,
+                        evidence=[(err or out or "")[:200]] if rc != 0 else [],
+                    )
+                    checks[-1]["outcome_recorded"] = True
+                    checks[-1]["outcome_value"] = verify_outcome
+                except Exception:
+                    checks[-1]["outcome_recorded"] = False
             if ok:
                 _done("succeeded", reason=f"verified {len(task_ids)} active task(s)", details={"checks": checks})
             else:

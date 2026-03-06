@@ -1,0 +1,797 @@
+# ABOUTME: CLI subpackage entrypoint for driftdriver.
+# ABOUTME: Re-exports all public names, argparse setup, main() entrypoint, and thin command handlers.
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from driftdriver import wire
+from driftdriver.pm_coordination import get_ready_tasks
+from driftdriver.project_profiles import build_profile, format_profile_report
+from driftdriver.speedriftd import (
+    load_runtime_snapshot,
+    run_runtime_cycle,
+    run_runtime_loop,
+    write_control_state,
+)
+from driftdriver.workgraph import find_workgraph_dir
+
+# -- Re-export everything that was previously importable from driftdriver.cli --
+
+from .check import (
+    COMPLEXITY_KEYWORDS,
+    ExitCode,
+    FULL_SUITE_TRIGGER_FENCES,
+    FULL_SUITE_TRIGGER_PHRASES,
+    LANE_STRATEGIES,
+    OPTIONAL_PLUGINS,
+    _collect_findings,
+    _compute_loop_safety,
+    _dedupe_strings,
+    _ensure_breaker_task,
+    _ensure_update_followup_task,
+    _ensure_wg_init,
+    _extract_contract_int,
+    _load_task,
+    _maybe_auto_ensure_contracts,
+    _mode_flags,
+    _normalize_actions,
+    _ordered_optional_plugins,
+    _parse_watch_repo,
+    _parse_watch_report,
+    _plugin_cmd,
+    _plugin_supports_json,
+    _resolve_update_sources,
+    _run,
+    _run_optional_plugin_json,
+    _run_optional_plugin_text,
+    _run_update_preflight,
+    _select_optional_plugins,
+    _should_run_full_suite,
+    _task_has_fence,
+    _task_text,
+    _update_errors,
+    _wg_log_message,
+    _wrapper_commands_available,
+    cmd_check,
+    cmd_updates,
+)
+from .doctor import (
+    _compact_plan,
+    _doctor_report,
+    _repair_wrappers,
+    cmd_compact,
+    cmd_doctor,
+    cmd_queue,
+)
+from .install_cmd import cmd_install
+from .run import (
+    _invoke_check_json,
+    cmd_factory,
+    cmd_orchestrate,
+    cmd_run,
+)
+
+
+# ---------------------------------------------------------------------------
+# Wire subcommands (thin wrappers delegating to driftdriver.wire)
+# ---------------------------------------------------------------------------
+
+def cmd_wire_verify(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_verify(project_dir)
+    print(json.dumps(result))
+    return 0 if result.get("passed") else 1
+
+
+def cmd_wire_loop_check(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_loop_check(project_dir, args.tool_name, args.tool_input)
+    print(json.dumps(result))
+    return 1 if result.get("detected") else 0
+
+
+def cmd_wire_enrich(args: argparse.Namespace) -> int:
+    result = wire.cmd_enrich(args.task_id, args.task_description, args.project, [])
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_wire_bridge(args: argparse.Namespace) -> int:
+    result = wire.cmd_bridge(Path(args.events_file), args.session_id, args.project)
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_wire_distill(args: argparse.Namespace) -> int:
+    result = wire.cmd_distill([], [])
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_wire_rollback_eval(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_rollback_eval(args.drift_score, args.task_id, project_dir)
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    profile = build_profile(project_dir.name, [])
+    print(format_profile_report(profile))
+    return 0
+
+
+def cmd_ready(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    tasks = get_ready_tasks(project_dir)
+    if args.json:
+        print(json.dumps(tasks))
+    else:
+        for t in tasks:
+            print(f"  {t.get('id', '?')}  {t.get('title', '')}")
+    return 0
+
+
+def cmd_wire_prime(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_prime(project_dir)
+    print(result)
+    return 0
+
+
+def cmd_wire_recover(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_recover(project_dir)
+    print(json.dumps([r.__dict__ if hasattr(r, "__dict__") else r for r in result]))
+    return 0
+
+
+def cmd_wire_scope_check(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    patterns = args.allowed_patterns.split(",") if args.allowed_patterns else []
+    result = wire.cmd_scope_check(project_dir, patterns)
+    print(result)
+    return 0
+
+
+def cmd_wire_reflect(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_reflect(project_dir)
+    print(result)
+    return 0
+
+
+def cmd_report_cli(args: argparse.Namespace) -> int:
+    """Generate session report, flush events, export knowledge."""
+    from driftdriver.wire import cmd_report
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    session_id = args.session_id or os.environ.get("CLAUDE_SESSION_ID", "unknown")
+    project = args.project or project_dir.name
+    result = cmd_report(project_dir, session_id, project, flush=args.flush, push=args.push)
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Session: {result['session_id']}")
+        print(f"Events: {result['events_read']} read, {result['events_written']} written, {result['duplicates_skipped']} dupes")
+        if result.get('drift_findings_read'):
+            print(f"Drift findings: {result['drift_findings_read']} read, {result['drift_findings_written']} written")
+        if result.get('chat_messages_read'):
+            print(f"Chat history: {result['chat_messages_read']} read, {result['chat_messages_written']} written")
+        if result['knowledge_exported']:
+            print(f"Knowledge: {result['knowledge_exported']} entries exported")
+        if result['pushed_to_central']:
+            print("Pushed to central repo")
+    return 0
+
+
+def cmd_ecosystem_hub_proxy(args: argparse.Namespace) -> int:
+    from driftdriver.ecosystem_hub import main as ecosystem_hub_main
+
+    forwarded = list(getattr(args, "ecosystem_hub_args", []) or [])
+    if not forwarded:
+        forwarded = ["--help"]
+    return int(ecosystem_hub_main(forwarded))
+
+
+# ---------------------------------------------------------------------------
+# Speedriftd command (kept here for test patch compatibility --
+# tests patch driftdriver.cli.write_control_state etc.)
+# ---------------------------------------------------------------------------
+
+def cmd_speedriftd(args: argparse.Namespace) -> int:
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    project_dir = wg_dir.parent
+    from driftdriver.policy import load_drift_policy
+    policy = load_drift_policy(wg_dir)
+    cfg = dict(getattr(policy, "speedriftd", {}) or {})
+    control_changed = False
+
+    if (
+        getattr(args, "set_mode", None) is not None
+        or getattr(args, "lease_owner", None) is not None
+        or bool(getattr(args, "release_lease", False))
+        or getattr(args, "lease_ttl_seconds", None) is not None
+    ):
+        write_control_state(
+            project_dir,
+            policy=policy,
+            mode=getattr(args, "set_mode", None),
+            lease_owner=getattr(args, "lease_owner", None),
+            lease_ttl_seconds=getattr(args, "lease_ttl_seconds", None),
+            release_lease=bool(getattr(args, "release_lease", False)),
+            source="cli",
+            reason=str(getattr(args, "reason", "") or ""),
+        )
+        control_changed = True
+
+    action = str(getattr(args, "action", "status") or "status")
+    if action == "status":
+        snapshot = load_runtime_snapshot(project_dir)
+        if not snapshot or bool(getattr(args, "refresh", False)) or control_changed:
+            snapshot = run_runtime_cycle(project_dir, policy=policy)
+    elif action == "once":
+        snapshot = run_runtime_cycle(project_dir, policy=policy)
+    else:
+        snapshot = run_runtime_loop(
+            project_dir,
+            interval_seconds=max(1, int(getattr(args, "interval_seconds", cfg.get("interval_seconds", 30)))),
+            max_cycles=max(0, int(getattr(args, "max_cycles", 0))),
+            policy=policy,
+        )
+
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(snapshot, indent=2, sort_keys=False))
+        return ExitCode.ok
+
+    print(f"speedriftd repo: {snapshot.get('repo', project_dir.name)}")
+    print(f"Daemon state: {snapshot.get('daemon_state', 'unknown')}")
+    control = snapshot.get("control") if isinstance(snapshot.get("control"), dict) else {}
+    print(f"Control mode: {control.get('mode', 'observe')}")
+    if control.get("lease_owner"):
+        print(f"Lease owner: {control.get('lease_owner')}")
+    print(f"Active workers: {len(snapshot.get('active_workers') or [])}")
+    print(f"Ready tasks: {len(snapshot.get('ready_tasks') or [])}")
+    stalled = snapshot.get("stalled_task_ids") or []
+    print(f"Stalled tasks: {len(stalled)}")
+    if stalled:
+        print(f"- {', '.join(str(item) for item in stalled[:6])}")
+    print(f"Next action: {snapshot.get('next_action', '')}")
+    return ExitCode.ok
+
+
+# ---------------------------------------------------------------------------
+# Autopilot command
+# ---------------------------------------------------------------------------
+
+def cmd_autopilot(args: argparse.Namespace) -> int:
+    """Run the project autopilot."""
+    from driftdriver.autopilot_state import (
+        clear_run_state,
+        save_run_state,
+        save_worker_event,
+    )
+    from driftdriver.project_autopilot import (
+        AutopilotConfig,
+        AutopilotRun,
+        decompose_goal,
+        discover_session_driver,
+        generate_report,
+        run_autopilot_loop,
+        run_milestone_review,
+    )
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    wg_dir = project_dir / ".workgraph"
+    if not wg_dir.exists():
+        print("Error: no .workgraph found. Run `wg init` first.", file=sys.stderr)
+        return 1
+
+    config = AutopilotConfig(
+        project_dir=project_dir,
+        max_parallel=args.max_parallel,
+        worker_timeout=args.worker_timeout,
+        dry_run=args.dry_run,
+        goal=args.goal,
+        no_peer_dispatch=args.no_peer_dispatch,
+    )
+
+    # Step 1: Decompose goal into workgraph tasks (unless --skip-decompose)
+    if not args.skip_decompose:
+        print(f"[autopilot] Decomposing goal: {args.goal}")
+        scripts_dir = discover_session_driver()
+        response = decompose_goal(args.goal, project_dir, scripts_dir)
+        print(f"[autopilot] Decomposition complete:\n{response[:500]}")
+
+        # Ensure contracts on new tasks
+        coredrift = wg_dir / "coredrift"
+        if coredrift.exists():
+            subprocess.run(
+                [str(coredrift), "ensure-contracts", "--apply"],
+                capture_output=True,
+                text=True,
+                cwd=str(project_dir),
+            )
+
+    # Clear previous state for fresh run
+    clear_run_state(project_dir)
+
+    # Step 2: Run autopilot loop
+    run = AutopilotRun(config=config)
+    print("[autopilot] Starting execution loop...")
+    run = run_autopilot_loop(run)
+
+    # Persist worker events for completed workers
+    for tid, ctx in run.workers.items():
+        save_worker_event(project_dir, ctx, ctx.status)
+
+    # Save final run state
+    save_run_state(project_dir, run)
+
+    # Step 3: Milestone review -- evidence-based verification
+    if run.completed_tasks and not args.skip_review:
+        scripts_dir = discover_session_driver()
+        review = run_milestone_review(run, scripts_dir)
+        review_file = (wg_dir / ".autopilot" / "milestone-review.md")
+        review_file.parent.mkdir(parents=True, exist_ok=True)
+        review_file.write_text(review)
+        print(f"[autopilot] Milestone review saved to: {review_file}")
+
+    # Step 4: Generate report
+    report = generate_report(run)
+    report_path = wg_dir / ".autopilot"
+    report_path.mkdir(parents=True, exist_ok=True)
+    report_file = report_path / "latest-report.md"
+    report_file.write_text(report)
+
+    print(f"\n{report}")
+    print(f"Report saved to: {report_file}")
+
+    if run.escalated_tasks:
+        print("\n[autopilot] Some tasks need human judgment. Review the report above.")
+        return 3
+
+    if run.failed_tasks:
+        return 1
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Peer federation commands
+# ---------------------------------------------------------------------------
+
+def cmd_peer_list_cli(args: argparse.Namespace) -> int:
+    """List workgraph peers."""
+    from driftdriver.wire import cmd_peer_list
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    peers = cmd_peer_list(project_dir)
+    if not peers:
+        print("No peers discovered.")
+        return 0
+
+    # Table header
+    print(f"{'Name':<20} {'Path':<40} {'Service':<10} {'Description'}")
+    print("-" * 90)
+    for p in peers:
+        svc = "running" if p["service_running"] else "stopped"
+        print(f"{p['name']:<20} {p['path']:<40} {svc:<10} {p['description']}")
+    return 0
+
+
+def cmd_peer_health_cli(args: argparse.Namespace) -> int:
+    """Check health of all peers."""
+    from driftdriver.wire import cmd_peer_health
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    reports = cmd_peer_health(project_dir)
+    if not reports:
+        print("No peers to check.")
+        return 0
+
+    print(f"{'Peer':<20} {'Reachable':<12} {'Service':<12} {'Latency':<12} {'Error'}")
+    print("-" * 80)
+    for r in reports:
+        reachable = "yes" if r["reachable"] else "no"
+        svc = "running" if r["service_running"] else "stopped"
+        latency = f"{r['latency_ms']}ms"
+        print(f"{r['peer']:<20} {reachable:<12} {svc:<12} {latency:<12} {r['error']}")
+    return 0
+
+
+def cmd_health_workers_cli(args: argparse.Namespace) -> int:
+    """Check liveness of autopilot workers."""
+    from driftdriver.wire import cmd_health_workers
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    workers = cmd_health_workers(project_dir)
+    if not workers:
+        print("No workers found (no autopilot state).")
+        return 0
+
+    print(f"{'Task ID':<20} {'Session':<30} {'Status':<12} {'Last Event':<20} {'Count'}")
+    print("-" * 95)
+    for w in workers:
+        print(f"{w['task_id']:<20} {w['session_id']:<30} {w['status']:<12} {w['last_event_type']:<20} {w['event_count']}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Argparse setup
+# ---------------------------------------------------------------------------
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="driftdriver")
+    p.add_argument("--dir", help="Project directory (or .workgraph dir). Defaults to cwd search.")
+    p.add_argument("--json", action="store_true", help="JSON output (where supported)")
+
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    install = sub.add_parser("install", help="Install Driftdriver into a workgraph repo")
+    install.add_argument("--coredrift-bin", help="Path to coredrift bin/coredrift (required if not discoverable)")
+    install.add_argument("--specdrift-bin", help="Path to specdrift bin/specdrift (optional)")
+    install.add_argument("--datadrift-bin", help="Path to datadrift bin/datadrift (optional)")
+    install.add_argument("--archdrift-bin", help="Path to archdrift bin/archdrift (optional)")
+    install.add_argument("--depsdrift-bin", help="Path to depsdrift bin/depsdrift (optional)")
+    install.add_argument("--with-uxdrift", action="store_true", help="Best-effort: enable uxdrift integration if found")
+    install.add_argument("--uxdrift-bin", help="Path to uxdrift bin/uxdrift (enables uxdrift integration)")
+    install.add_argument(
+        "--with-therapydrift",
+        action="store_true",
+        help="Best-effort: enable therapydrift integration if found",
+    )
+    install.add_argument("--therapydrift-bin", help="Path to therapydrift bin/therapydrift (enables therapydrift integration)")
+    install.add_argument(
+        "--with-fixdrift",
+        action="store_true",
+        help="Best-effort: enable fixdrift integration if found",
+    )
+    install.add_argument("--fixdrift-bin", help="Path to fixdrift bin/fixdrift (enables fixdrift integration)")
+    install.add_argument(
+        "--with-yagnidrift",
+        action="store_true",
+        help="Best-effort: enable yagnidrift integration if found",
+    )
+    install.add_argument("--yagnidrift-bin", help="Path to yagnidrift bin/yagnidrift (enables yagnidrift integration)")
+    install.add_argument(
+        "--with-redrift",
+        action="store_true",
+        help="Best-effort: enable redrift integration if found",
+    )
+    install.add_argument("--redrift-bin", help="Path to redrift bin/redrift (enables redrift integration)")
+    install.add_argument(
+        "--with-amplifier-executor",
+        action="store_true",
+        help="Install .workgraph/executors/amplifier.toml + autostart hooks for Amplifier sessions",
+    )
+    install.add_argument(
+        "--with-claude-code-hooks",
+        action="store_true",
+        help="Install .claude/hooks.json adapter for Claude Code lifecycle events",
+    )
+    install.add_argument(
+        "--all-clis",
+        action="store_true",
+        help="Install all CLI adapter hooks at once (claude-code, codex, opencode, amplifier, session-driver)",
+    )
+    install.add_argument(
+        "--with-lessons-mcp",
+        action="store_true",
+        help="Configure lessons-mcp in .mcp.json in the project root",
+    )
+    install.add_argument("--json", action="store_true", help="JSON output")
+    install.add_argument(
+        "--wrapper-mode",
+        choices=["auto", "pinned", "portable"],
+        default="auto",
+        help="Wrapper style: pinned paths (dev) or portable PATH-based (commit-safe). Default: auto.",
+    )
+    install.add_argument("--no-ensure-contracts", action="store_true", help="Do not inject default contracts into tasks")
+    install.set_defaults(func=cmd_install)
+
+    check = sub.add_parser(
+        "check",
+        help="Unified check (coredrift always; optional drifts selected by lane strategy)",
+    )
+    check.add_argument("--task", help="Task id to check")
+    check.add_argument(
+        "--lane-strategy",
+        choices=LANE_STRATEGIES,
+        default="auto",
+        help="Optional lane routing: auto (default), fences, or all.",
+    )
+    check.add_argument("--json", action="store_true", help="JSON output")
+    check.add_argument("--write-log", action="store_true", help="Write summary into wg log")
+    check.add_argument("--create-followups", action="store_true", help="Create follow-up tasks for findings")
+    check.set_defaults(func=cmd_check)
+
+    updates = sub.add_parser("updates", help="Check Speedrift ecosystem repos for upstream updates")
+    updates.add_argument("--json", action="store_true", help="JSON output")
+    updates.add_argument("--force", action="store_true", help="Ignore interval and check remotes now")
+    updates.add_argument(
+        "--config",
+        help="Path to ecosystem review JSON config (default: .workgraph/.driftdriver/ecosystem-review.json)",
+    )
+    updates.add_argument(
+        "--watch-repo",
+        action="append",
+        default=[],
+        help="Extra repo watch target in the form tool=owner/repo (repeatable)",
+    )
+    updates.add_argument(
+        "--watch-user",
+        action="append",
+        default=[],
+        help="GitHub user to scan for new/updated repos (repeatable)",
+    )
+    updates.add_argument(
+        "--watch-report",
+        action="append",
+        default=[],
+        help="Report URL to watch, optionally named as name=url (repeatable)",
+    )
+    updates.add_argument(
+        "--report-keyword",
+        action="append",
+        default=[],
+        help="Keyword to surface from watched report content (repeatable)",
+    )
+    updates.add_argument(
+        "--user-repo-limit",
+        type=int,
+        help="Max repos per watched GitHub user to inspect (default: config value or 10)",
+    )
+    updates.add_argument(
+        "--write-review",
+        help="Write a markdown review report to this path",
+    )
+    updates.set_defaults(func=cmd_updates)
+
+    queue = sub.add_parser("queue", help="Show ranked ready drift follow-ups and duplicate groups")
+    queue.add_argument("--json", action="store_true", help="JSON output")
+    queue.add_argument("--limit", type=int, default=10, help="Maximum queue items to display (default: 10)")
+    queue.set_defaults(func=cmd_queue)
+
+    doctor = sub.add_parser("doctor", help="Health audit for wrappers, contracts, drift queue pressure, and loop risk")
+    doctor.add_argument("--json", action="store_true", help="JSON output")
+    doctor.add_argument("--fix", action="store_true", help="Reinstall wrappers + run contract hygiene before reporting")
+    doctor.set_defaults(func=cmd_doctor)
+
+    compact = sub.add_parser(
+        "compact",
+        help="Compact drift queue by abandoning duplicate follow-ups and deferring overflow ready items",
+    )
+    compact.add_argument("--json", action="store_true", help="JSON output")
+    compact.add_argument("--apply", action="store_true", help="Apply compaction actions (default: dry-run)")
+    compact.add_argument(
+        "--max-ready",
+        type=int,
+        help="Ready drift queue cap for overflow defer (default: policy loop_safety.max_ready_drift_followups)",
+    )
+    compact.add_argument("--defer-hours", type=int, default=24, help="Reschedule overflow items by this many hours")
+    compact.set_defaults(func=cmd_compact)
+
+    run_p = sub.add_parser("run", help="One-shot operation: check + normalized actions + next queued drift tasks")
+    run_p.add_argument("--task", help="Task id to run")
+    run_p.add_argument(
+        "--lane-strategy",
+        choices=LANE_STRATEGIES,
+        default="auto",
+        help="Optional lane routing: auto (default), fences, or all.",
+    )
+    run_p.add_argument("--max-next", type=int, default=3, help="Max queued next actions to print (default: 3)")
+    run_p.add_argument("--json", action="store_true", help="JSON output")
+    run_p.set_defaults(func=cmd_run)
+
+    factory = sub.add_parser("factory", help="Generate one autonomous factory cycle plan + decision ledger")
+    factory.add_argument(
+        "--workspace-root",
+        default="",
+        help="Workspace root containing ecosystem repos (default: parent of project dir)",
+    )
+    factory.add_argument(
+        "--ecosystem-toml",
+        default="",
+        help="Path to ecosystem.toml (default: <workspace-root>/speedrift-ecosystem/ecosystem.toml)",
+    )
+    factory.add_argument(
+        "--central-repo",
+        default="",
+        help="Override central register repo path (default: policy reporting.central_repo)",
+    )
+    factory.add_argument("--skip-updates", action="store_true", help="Skip remote update checks for this cycle")
+    factory.add_argument("--max-next", type=int, default=5, help="Max next-work items per repo for snapshot context")
+    factory.add_argument("--plan-only", action="store_true", help="Force plan-only mode for this cycle")
+    factory.add_argument("--execute", action="store_true", help="Run execute mode with deterministic safe handlers")
+    factory.add_argument("--force", action="store_true", help="Run even when [factory].enabled is false")
+    factory.add_argument("--emit-followups", action="store_true", help="Create/update local corrective workgraph tasks")
+    factory.add_argument("--execute-draft-prs", action="store_true", help="Allow factory executor to open upstream draft PRs")
+    factory.add_argument("--no-write-ledger", action="store_true", help="Do not write local/central decision ledger")
+    factory.add_argument("--write", default="", help="Write JSON payload to this path")
+    factory.add_argument("--max-prompts", type=int, default=8, help="Max prompts to print in text mode")
+    factory.add_argument("--json", action="store_true", help="JSON output")
+    factory.set_defaults(func=cmd_factory)
+
+    orch = sub.add_parser("orchestrate", help="Run continuous drift monitor+redirect loops (delegates to coredrift)")
+    orch.add_argument("--interval", type=int, default=30, help="Monitor poll interval seconds (default: 30)")
+    orch.add_argument("--redirect-interval", type=int, default=5, help="Redirect poll interval seconds (default: 5)")
+    orch.add_argument("--write-log", action="store_true", help="Write a drift summary to wg log (redirect agent)")
+    orch.add_argument("--create-followups", action="store_true", help="Create follow-up tasks (redirect agent)")
+    orch.set_defaults(func=cmd_orchestrate)
+
+    verify_p = sub.add_parser("verify", help="Run verification checks on the project")
+    verify_p.set_defaults(func=cmd_wire_verify)
+
+    loop_check_p = sub.add_parser("loop-check", help="Record a tool action and detect loops")
+    loop_check_p.add_argument("--tool-name", default="unknown", help="Tool name")
+    loop_check_p.add_argument("--tool-input", default="", help="Tool input string")
+    loop_check_p.set_defaults(func=cmd_wire_loop_check)
+
+    enrich_p = sub.add_parser("enrich", help="Enrich a task contract with prior learnings")
+    enrich_p.add_argument("--task-id", default="", help="Task ID")
+    enrich_p.add_argument("--task-description", default="", help="Task description")
+    enrich_p.add_argument("--project", default="", help="Project name")
+    enrich_p.set_defaults(func=cmd_wire_enrich)
+
+    bridge_p = sub.add_parser("bridge", help="Parse events file and emit Lessons MCP calls")
+    bridge_p.add_argument("--events-file", default="events.jsonl", help="Path to JSONL events file")
+    bridge_p.add_argument("--session-id", default="", help="Session ID")
+    bridge_p.add_argument("--project", default="", help="Project name")
+    bridge_p.set_defaults(func=cmd_wire_bridge)
+
+    distill_p = sub.add_parser("distill", help="Distill events into knowledge entries")
+    distill_p.set_defaults(func=cmd_wire_distill)
+
+    rollback_p = sub.add_parser("rollback-eval", help="Evaluate drift score and return rollback decision")
+    rollback_p.add_argument("--drift-score", type=float, default=0.0, help="Drift score (0.0-1.0)")
+    rollback_p.add_argument("--task-id", default="", help="Task ID")
+    rollback_p.set_defaults(func=cmd_wire_rollback_eval)
+
+    profile_p = sub.add_parser("profile", help="Build and display a project profile report")
+    profile_p.set_defaults(func=cmd_profile)
+
+    ready_p = sub.add_parser("ready", help="List ready tasks from the workgraph")
+    ready_p.set_defaults(func=cmd_ready)
+
+    prime_p = sub.add_parser("prime", help="Prime knowledge context for current task scope")
+    prime_p.set_defaults(func=cmd_wire_prime)
+
+    recover_p = sub.add_parser("recover", help="List interrupted tasks that can be recovered")
+    recover_p.set_defaults(func=cmd_wire_recover)
+
+    scope_check_p = sub.add_parser("scope-check", help="Check if current changes are within declared scope")
+    scope_check_p.add_argument("--allowed-patterns", default="", help="Comma-separated allowed file patterns")
+    scope_check_p.set_defaults(func=cmd_wire_scope_check)
+
+    reflect_p = sub.add_parser("reflect", help="Run self-reflect on recent task")
+    reflect_p.set_defaults(func=cmd_wire_reflect)
+
+    autopilot_p = sub.add_parser("autopilot", help="Run project autopilot: goal -> tasks -> workers -> drift -> done")
+    autopilot_p.add_argument("--goal", required=True, help="High-level goal to decompose and execute")
+    autopilot_p.add_argument("--max-parallel", type=int, default=4, help="Max parallel workers (default: 4)")
+    autopilot_p.add_argument("--worker-timeout", type=int, default=1800, help="Worker timeout in seconds (default: 1800)")
+    autopilot_p.add_argument("--dry-run", action="store_true", help="Print plan without dispatching workers")
+    autopilot_p.add_argument("--skip-decompose", action="store_true", help="Skip goal decomposition, use existing wg tasks")
+    autopilot_p.add_argument("--skip-review", action="store_true", help="Skip milestone review after completion")
+    autopilot_p.add_argument("--no-peer-dispatch", action="store_true", help="Disable cross-repo peer dispatch")
+    autopilot_p.set_defaults(func=cmd_autopilot)
+
+    speedriftd_p = sub.add_parser("speedriftd", help="Run the repo-local runtime supervisor shell")
+    speedriftd_p.add_argument(
+        "action",
+        nargs="?",
+        choices=["status", "once", "loop"],
+        default="status",
+        help="status (default), once, or loop",
+    )
+    speedriftd_p.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Refresh runtime snapshot before returning status",
+    )
+    speedriftd_p.add_argument(
+        "--set-mode",
+        choices=["manual", "observe", "supervise", "autonomous"],
+        help="Update repo runtime control mode before the selected action runs",
+    )
+    speedriftd_p.add_argument(
+        "--lease-owner",
+        default=None,
+        help="Set or replace the current repo lease owner",
+    )
+    speedriftd_p.add_argument(
+        "--lease-ttl-seconds",
+        type=int,
+        default=None,
+        help="Lease TTL in seconds (0 = no expiry)",
+    )
+    speedriftd_p.add_argument(
+        "--release-lease",
+        action="store_true",
+        help="Release any active repo lease before the selected action runs",
+    )
+    speedriftd_p.add_argument(
+        "--reason",
+        default="",
+        help="Reason to record with a control-mode or lease update",
+    )
+    speedriftd_p.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=30,
+        help="Loop interval seconds for `speedriftd loop` (default: 30)",
+    )
+    speedriftd_p.add_argument(
+        "--max-cycles",
+        type=int,
+        default=0,
+        help="Stop after this many cycles when looping (default: 0 = forever)",
+    )
+    speedriftd_p.set_defaults(func=cmd_speedriftd)
+
+    # -- Peer federation commands --
+    peer_list_p = sub.add_parser("peer-list", help="Discover and list workgraph peers")
+    peer_list_p.set_defaults(func=cmd_peer_list_cli)
+
+    peer_health_p = sub.add_parser("peer-health", help="Check health of all known peers")
+    peer_health_p.set_defaults(func=cmd_peer_health_cli)
+
+    health_workers_p = sub.add_parser("health-workers", help="Check liveness of autopilot workers")
+    health_workers_p.set_defaults(func=cmd_health_workers_cli)
+
+    # -- Reporting commands --
+    report_p = sub.add_parser("report", help="Generate session report, flush events, export knowledge")
+    report_p.add_argument("--session-id", default="", help="Session ID (defaults to CLAUDE_SESSION_ID env var)")
+    report_p.add_argument("--project", default="", help="Project name (defaults to directory name)")
+    report_p.add_argument("--flush", action="store_true", help="Flush pending events to lessons DB")
+    report_p.add_argument("--push", action="store_true", help="Push report to central repo")
+    report_p.set_defaults(func=cmd_report_cli)
+
+    ecosystem_hub_p = sub.add_parser("ecosystem-hub", help="Proxy to the ecosystem hub service manager")
+    ecosystem_hub_p.add_argument("ecosystem_hub_args", nargs=argparse.REMAINDER, help="Arguments for ecosystem hub")
+    ecosystem_hub_p.set_defaults(func=cmd_ecosystem_hub_proxy)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    forwarded = list(argv) if argv is not None else sys.argv[1:]
+    if forwarded:
+        try:
+            hub_idx = forwarded.index("ecosystem-hub")
+        except ValueError:
+            hub_idx = -1
+        if hub_idx != -1:
+            from driftdriver.ecosystem_hub import main as ecosystem_hub_main
+
+            prefix = forwarded[:hub_idx]
+            hub_args = forwarded[hub_idx + 1 :]
+            if "--project-dir" not in hub_args:
+                if "--dir" in prefix:
+                    idx = prefix.index("--dir")
+                    if idx + 1 < len(prefix):
+                        hub_args = ["--project-dir", prefix[idx + 1], *hub_args]
+                else:
+                    for item in prefix:
+                        if item.startswith("--dir="):
+                            hub_args = ["--project-dir", item.split("=", 1)[1], *hub_args]
+                            break
+            if not hub_args:
+                hub_args = ["--help"]
+            return int(ecosystem_hub_main(hub_args))
+    p = _build_parser()
+    args = p.parse_args(forwarded)
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

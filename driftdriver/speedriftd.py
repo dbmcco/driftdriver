@@ -387,6 +387,14 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
     stalled_task_ids = sorted({str(row["task_id"]) for row in stalled_workers if str(row.get("task_id") or "")})
     runtime_mix = sorted({str(row["runtime"]) for row in active_workers if str(row.get("runtime") or "")})
 
+    # Detect manually-claimed tasks (in-progress but no matching active worker).
+    # When respect_manual_claims is true, suppress auto-dispatch while humans work.
+    manual_claim_ids = sorted(
+        {str(t["id"]) for t in in_progress_tasks if str(t["id"]) not in set(active_task_ids)}
+    )
+    respect_manual = bool(cfg.get("respect_manual_claims", True))
+    dispatch_blocked_by_manual = respect_manual and bool(manual_claim_ids)
+
     daemon_state = "idle"
     if active_workers:
         daemon_state = "stalled" if stalled_task_ids and len(stalled_task_ids) == len(active_workers) else "running"
@@ -398,6 +406,11 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
         next_action = f"investigate stalled task {stalled_task_ids[0]}"
     elif active_workers:
         next_action = "continue supervision"
+    elif dispatch_blocked_by_manual:
+        next_action = (
+            f"dispatch paused: manual claim on {manual_claim_ids[0]} "
+            "(respect_manual_claims=true)"
+        )
     elif ready_tasks and bool(control.get("dispatch_enabled")):
         next_action = f"dispatch ready task {ready_tasks[0]['id']}"
     elif ready_tasks:
@@ -429,6 +442,7 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
             "enabled": bool(cfg.get("enabled", True)),
             "interval_seconds": int(cfg.get("interval_seconds", 30)),
             "max_concurrent_workers": int(cfg.get("max_concurrent_workers", 2)),
+            "respect_manual_claims": respect_manual,
             "heartbeat_stale_after_seconds": int(cfg.get("heartbeat_stale_after_seconds", 300)),
             "output_stale_after_seconds": int(cfg.get("output_stale_after_seconds", 600)),
             "worker_timeout_seconds": int(cfg.get("worker_timeout_seconds", 1800)),
@@ -436,6 +450,8 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
         "control": control,
         "ready_tasks": ready_tasks,
         "in_progress_tasks": in_progress_tasks,
+        "manual_claim_ids": manual_claim_ids,
+        "dispatch_blocked_by_manual": dispatch_blocked_by_manual,
         "active_workers": active_workers,
         "terminal_workers": terminal_workers,
         "stalled_task_ids": stalled_task_ids,

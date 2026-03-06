@@ -3,7 +3,8 @@
 
 import pytest
 from pathlib import Path
-from driftdriver.smart_routing import EvidencePackage, gather_evidence, parse_git_diff_stat, load_pattern_hints
+from driftdriver.smart_routing import EvidencePackage, compute_lane_weights, gather_evidence, parse_git_diff_stat, load_pattern_hints
+from driftdriver.outcome import DriftOutcome, write_outcome
 
 
 class TestEvidencePackage:
@@ -142,3 +143,93 @@ class TestLoadPatternHints:
         result = load_pattern_hints(toml_file)
         assert isinstance(result, dict)
         assert "coredrift" in result
+
+
+class TestComputeLaneWeights:
+    """Tests for outcome-based lane weight computation."""
+
+    def _write_outcomes(self, path, outcomes):
+        for o in outcomes:
+            write_outcome(path, DriftOutcome(
+                task_id=o.get("task_id", "t1"),
+                lane=o["lane"],
+                finding_key="f1",
+                recommendation="fix it",
+                action_taken="did something",
+                outcome=o["outcome"],
+            ))
+
+    def test_no_history_returns_neutral(self, tmp_path):
+        ledger = tmp_path / "drift-outcomes.jsonl"
+        weights = compute_lane_weights(ledger, ["coredrift", "specdrift"])
+        assert weights == {"coredrift": 1.0, "specdrift": 1.0}
+
+    def test_high_ignored_rate_escalates(self, tmp_path):
+        ledger = tmp_path / "drift-outcomes.jsonl"
+        self._write_outcomes(ledger, [
+            {"lane": "secdrift", "outcome": "ignored"},
+            {"lane": "secdrift", "outcome": "ignored"},
+            {"lane": "secdrift", "outcome": "ignored"},
+            {"lane": "secdrift", "outcome": "resolved"},
+        ])
+        weights = compute_lane_weights(ledger, ["secdrift"])
+        # 75% ignored, 25% resolved → 1.0 + 0.75 - 0.125 = 1.625
+        assert weights["secdrift"] > 1.5
+
+    def test_high_resolved_rate_demotes(self, tmp_path):
+        ledger = tmp_path / "drift-outcomes.jsonl"
+        self._write_outcomes(ledger, [
+            {"lane": "coredrift", "outcome": "resolved"},
+            {"lane": "coredrift", "outcome": "resolved"},
+            {"lane": "coredrift", "outcome": "resolved"},
+            {"lane": "coredrift", "outcome": "resolved"},
+        ])
+        weights = compute_lane_weights(ledger, ["coredrift"])
+        # 100% resolved → 1.0 + 0 - 0.5 = 0.5
+        assert weights["coredrift"] < 0.6
+
+    def test_worsened_rate_strongly_escalates(self, tmp_path):
+        ledger = tmp_path / "drift-outcomes.jsonl"
+        self._write_outcomes(ledger, [
+            {"lane": "qadrift", "outcome": "worsened"},
+            {"lane": "qadrift", "outcome": "worsened"},
+        ])
+        weights = compute_lane_weights(ledger, ["qadrift"])
+        # 100% worsened → 1.0 + 1.0 = 2.0
+        assert weights["qadrift"] >= 2.0
+
+    def test_weights_clamped_to_bounds(self, tmp_path):
+        ledger = tmp_path / "drift-outcomes.jsonl"
+        # All resolved → should clamp at 0.2 minimum
+        self._write_outcomes(ledger, [
+            {"lane": "x", "outcome": "resolved"},
+        ] * 10)
+        weights = compute_lane_weights(ledger, ["x"])
+        assert weights["x"] >= 0.2
+
+    def test_mixed_lanes_weighted_independently(self, tmp_path):
+        ledger = tmp_path / "drift-outcomes.jsonl"
+        self._write_outcomes(ledger, [
+            {"lane": "coredrift", "outcome": "resolved"},
+            {"lane": "coredrift", "outcome": "resolved"},
+            {"lane": "secdrift", "outcome": "ignored"},
+            {"lane": "secdrift", "outcome": "ignored"},
+        ])
+        weights = compute_lane_weights(ledger, ["coredrift", "secdrift"])
+        assert weights["coredrift"] < weights["secdrift"]
+
+    def test_evidence_package_includes_lane_weights(self, tmp_path):
+        """EvidencePackage should accept and render lane weights."""
+        pkg = EvidencePackage(
+            changed_files={"src/app.py": "modified"},
+            file_classifications={},
+            task_description="test",
+            task_contract={},
+            project_context=[],
+            prior_drift_findings=[],
+            installed_lanes=["coredrift", "secdrift"],
+            lane_weights={"coredrift": 0.5, "secdrift": 1.8},
+        )
+        prompt = pkg.to_prompt_context()
+        assert "Escalated Lanes" in prompt
+        assert "secdrift" in prompt

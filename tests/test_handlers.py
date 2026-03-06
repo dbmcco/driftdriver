@@ -3,6 +3,7 @@
 
 import os
 import stat
+import subprocess
 from pathlib import Path
 
 HANDLERS_DIR = Path(__file__).parent.parent / "driftdriver" / "templates" / "handlers"
@@ -128,16 +129,60 @@ def test_handler_scripts_use_jq_for_json_construction():
 
 
 def test_task_completing_uses_single_value_changed_files_count():
-    """task-completing.sh must not build a multiline count that breaks jq --argjson."""
+    """task-completing.sh must handle grep -c exit-1 on zero matches without breaking jq."""
     path = HANDLERS_DIR / "task-completing.sh"
     if not path.exists():
         return
     content = path.read_text()
-    assert 'grep -cE "changed|insertion|deletion" || true' in content, (
-        "task-completing.sh must use a single grep count with '|| true'"
+    # The fallback assignment must be OUTSIDE the command substitution so grep's
+    # exit-1 on zero matches doesn't produce a multi-line value or crash the script.
+    assert 'grep -cE "changed|insertion|deletion") || CHANGED_FILES=0' in content, (
+        "task-completing.sh must use external fallback: '...) || CHANGED_FILES=0'"
     )
     assert '|| echo "0"' not in content, (
         "task-completing.sh must not append a second zero line via '|| echo \"0\"'"
+    )
+
+
+def test_task_completing_changed_files_zero_change_diff():
+    """When git diff --stat is empty, CHANGED_FILES must be the integer 0 (not empty or error)."""
+    # Simulate the exact snippet from task-completing.sh with an empty diff
+    script = (
+        'set -euo pipefail\n'
+        'GIT_DIFF_STAT=""\n'
+        'CHANGED_FILES=$(printf \'%s\\n\' "$GIT_DIFF_STAT" '
+        '| grep -cE "changed|insertion|deletion") || CHANGED_FILES=0\n'
+        'printf "%s" "$CHANGED_FILES"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"script failed: {result.stderr}"
+    assert result.stdout == "0", (
+        f"CHANGED_FILES should be '0' on empty diff, got {result.stdout!r}"
+    )
+
+
+def test_task_completing_changed_files_normal_diff():
+    """When git diff --stat has real changes, CHANGED_FILES must be a positive integer."""
+    # Typical single-file git diff --stat output
+    diff_stat = " src/foo.py | 5 ++---\\n 1 file changed, 2 insertions(+), 3 deletions(-)"
+    script = (
+        'set -euo pipefail\n'
+        f'GIT_DIFF_STAT="{diff_stat}"\n'
+        'CHANGED_FILES=$(printf \'%s\\n\' "$GIT_DIFF_STAT" '
+        '| grep -cE "changed|insertion|deletion") || CHANGED_FILES=0\n'
+        'printf "%s" "$CHANGED_FILES"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"script failed: {result.stderr}"
+    count = int(result.stdout)
+    assert count > 0, (
+        f"CHANGED_FILES should be positive for a real diff, got {count}"
     )
 
 

@@ -135,6 +135,16 @@ def _default_sessiondriver_cfg() -> dict[str, Any]:
     }
 
 
+def _default_enforcement_cfg() -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "block_on_critical": True,
+        "warn_on_error": True,
+        "max_unresolved_warnings": 10,
+        "severity_order": ["info", "warning", "error", "critical"],
+    }
+
+
 def _default_speedriftd_cfg() -> dict[str, Any]:
     return {
         "enabled": True,
@@ -142,6 +152,7 @@ def _default_speedriftd_cfg() -> dict[str, Any]:
         "default_lease_ttl_seconds": 0,
         "interval_seconds": 30,
         "max_concurrent_workers": 2,
+        "respect_manual_claims": True,
         "heartbeat_stale_after_seconds": 300,
         "output_stale_after_seconds": 600,
         "worker_timeout_seconds": 1800,
@@ -245,6 +256,7 @@ class DriftPolicy:
     speedriftd: dict[str, Any]
     plandrift: dict[str, Any]
     northstardrift: dict[str, Any]
+    enforcement: dict[str, Any]
     autonomy_default: dict[str, Any]
     autonomy_repos: list[dict[str, Any]]
 
@@ -273,6 +285,12 @@ def _default_policy_text() -> str:
         "max_redrift_depth = 2\n"
         "max_ready_drift_followups = 20\n"
         "block_followup_creation = true\n"
+        "\n"
+        "[enforcement]\n"
+        "enabled = false\n"
+        "block_on_critical = true\n"
+        "warn_on_error = true\n"
+        "max_unresolved_warnings = 10\n"
         "\n"
         "[reporting]\n"
         "central_repo = \"\"\n"
@@ -367,6 +385,7 @@ def _default_policy_text() -> str:
         "default_lease_ttl_seconds = 0\n"
         "interval_seconds = 30\n"
         "max_concurrent_workers = 2\n"
+        "respect_manual_claims = true\n"
         "heartbeat_stale_after_seconds = 300\n"
         "output_stale_after_seconds = 600\n"
         "worker_timeout_seconds = 1800\n"
@@ -475,6 +494,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             speedriftd=_default_speedriftd_cfg(),
             plandrift=_default_plandrift_cfg(),
             northstardrift=_default_northstardrift_cfg(),
+            enforcement=_default_enforcement_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
         )
@@ -513,6 +533,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             speedriftd=_default_speedriftd_cfg(),
             plandrift=_default_plandrift_cfg(),
             northstardrift=_default_northstardrift_cfg(),
+            enforcement=_default_enforcement_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
         )
@@ -929,6 +950,15 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     targets["axes"] = axis_targets
     northstardrift["targets"] = targets
 
+    enforcement_raw = data.get("enforcement") if isinstance(data.get("enforcement"), dict) else {}
+    enforcement = _default_enforcement_cfg()
+    enforcement["enabled"] = bool(enforcement_raw.get("enabled", enforcement["enabled"]))
+    enforcement["block_on_critical"] = bool(enforcement_raw.get("block_on_critical", enforcement["block_on_critical"]))
+    enforcement["warn_on_error"] = bool(enforcement_raw.get("warn_on_error", enforcement["warn_on_error"]))
+    enforcement["max_unresolved_warnings"] = max(
+        0, int(enforcement_raw.get("max_unresolved_warnings", enforcement["max_unresolved_warnings"]))
+    )
+
     autonomy_raw = data.get("autonomy") if isinstance(data.get("autonomy"), dict) else {}
     autonomy_default_raw = autonomy_raw.get("default") if isinstance(autonomy_raw.get("default"), dict) else {}
     autonomy_default = _default_autonomy_default_cfg()
@@ -994,6 +1024,65 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         speedriftd=speedriftd,
         plandrift=plandrift,
         northstardrift=northstardrift,
+        enforcement=enforcement,
         autonomy_default=autonomy_default,
         autonomy_repos=autonomy_repos,
     )
+
+
+_SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "critical": 3}
+
+
+def evaluate_enforcement(
+    policy: DriftPolicy,
+    findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Evaluate findings against enforcement thresholds.
+
+    Returns dict with:
+      blocked: bool — True if enforcement requires blocking
+      warnings: list[str] — human-readable warning messages
+      exit_code: int — 0 (clean), 1 (warnings), 2 (blocked)
+      counts: dict — {info: N, warning: N, error: N, critical: N}
+    """
+    cfg = policy.enforcement
+    if not cfg.get("enabled", False):
+        return {"blocked": False, "warnings": [], "exit_code": 0, "counts": {}}
+
+    counts: dict[str, int] = {"info": 0, "warning": 0, "error": 0, "critical": 0}
+    for f in findings:
+        sev = str(f.get("severity", "info")).strip().lower()
+        if sev not in counts:
+            sev = "info"
+        counts[sev] += 1
+
+    warnings: list[str] = []
+    blocked = False
+
+    if cfg.get("block_on_critical", True) and counts["critical"] > 0:
+        blocked = True
+        warnings.append(f"BLOCKED: {counts['critical']} critical finding(s) require resolution")
+
+    if cfg.get("warn_on_error", True) and counts["error"] > 0:
+        warnings.append(f"WARNING: {counts['error']} error-level finding(s)")
+
+    max_warnings = int(cfg.get("max_unresolved_warnings", 10))
+    total_actionable = counts["warning"] + counts["error"] + counts["critical"]
+    if total_actionable > max_warnings:
+        warnings.append(
+            f"WARNING: {total_actionable} unresolved findings exceed threshold of {max_warnings}"
+        )
+
+    if blocked:
+        exit_code = 2
+    elif warnings:
+        exit_code = 1
+    else:
+        exit_code = 0
+
+    return {
+        "blocked": blocked,
+        "warnings": warnings,
+        "exit_code": exit_code,
+        "counts": counts,
+    }

@@ -16,8 +16,7 @@ fi
 
 # Basic verification: did any files change?
 GIT_DIFF_STAT=$(git -C "$PROJECT_DIR" diff --stat HEAD 2>/dev/null || echo "")
-CHANGED_FILES=$(printf '%s\n' "$GIT_DIFF_STAT" | grep -cE "changed|insertion|deletion" || true)
-CHANGED_FILES="${CHANGED_FILES:-0}"
+CHANGED_FILES=$(printf '%s\n' "$GIT_DIFF_STAT" | grep -cE "changed|insertion|deletion") || CHANGED_FILES=0
 
 # Record completion event to Lessons MCP
 EVENT_JSON=$(jq -n --arg event "task_completing" --arg tid "$TASK_ID" --arg cli "$CLI_TOOL" \

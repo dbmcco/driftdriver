@@ -156,6 +156,108 @@ class SpeedriftdTests(unittest.TestCase):
             self.assertEqual(snapshot["control"]["mode"], "autonomous")
             self.assertEqual(snapshot["next_action"], "dispatch ready task ready-1")
 
+    def test_dispatch_blocked_when_manual_claim_exists(self) -> None:
+        """When respect_manual_claims=true and a task is in-progress without a
+        matching active worker, dispatch should be suppressed."""
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(
+                repo,
+                [
+                    {"id": "manual-task", "title": "Human working", "status": "in-progress"},
+                    {"id": "ready-task", "title": "Waiting", "status": "open"},
+                ],
+            )
+            # Arm repo for autonomous dispatch (would normally dispatch ready-task)
+            write_control_state(
+                repo,
+                mode="autonomous",
+                lease_owner="speedriftd",
+                lease_ttl_seconds=120,
+                reason="test",
+            )
+            snapshot = collect_runtime_snapshot(repo)
+
+            # manual-task is in-progress but has no active worker -> manual claim
+            self.assertEqual(snapshot["manual_claim_ids"], ["manual-task"])
+            self.assertTrue(snapshot["dispatch_blocked_by_manual"])
+            self.assertIn("manual claim", snapshot["next_action"])
+            self.assertIn("respect_manual_claims=true", snapshot["next_action"])
+
+    def test_dispatch_allowed_when_respect_manual_claims_disabled(self) -> None:
+        """When respect_manual_claims=false, manual claims don't block dispatch."""
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(
+                repo,
+                [
+                    {"id": "manual-task", "title": "Human working", "status": "in-progress"},
+                    {"id": "ready-task", "title": "Waiting", "status": "open"},
+                ],
+            )
+            write_control_state(
+                repo,
+                mode="autonomous",
+                lease_owner="speedriftd",
+                lease_ttl_seconds=120,
+                reason="test",
+            )
+            # Override policy to disable respect_manual_claims
+            from driftdriver.policy import load_drift_policy
+            policy = load_drift_policy(repo / ".workgraph")
+            policy.speedriftd["respect_manual_claims"] = False
+
+            snapshot = collect_runtime_snapshot(repo, policy=policy)
+
+            self.assertFalse(snapshot["dispatch_blocked_by_manual"])
+            self.assertEqual(snapshot["next_action"], "dispatch ready task ready-task")
+
+    def test_no_manual_claims_when_worker_matches_in_progress(self) -> None:
+        """In-progress tasks with matching active workers are NOT manual claims."""
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(
+                repo,
+                [
+                    {"id": "impl", "title": "Implement", "status": "in-progress"},
+                    {"id": "ready-task", "title": "Waiting", "status": "open"},
+                ],
+            )
+            config = AutopilotConfig(project_dir=repo, goal="test")
+            run = AutopilotRun(
+                config=config,
+                workers={
+                    "impl": WorkerContext(
+                        task_id="impl",
+                        task_title="Implement",
+                        worker_name="ap-impl",
+                        session_id="sess-456",
+                        started_at=100.0,
+                        status="running",
+                    )
+                },
+            )
+            save_run_state(repo, run)
+            write_control_state(
+                repo,
+                mode="autonomous",
+                lease_owner="speedriftd",
+                lease_ttl_seconds=120,
+                reason="test",
+            )
+
+            with patch("driftdriver.speedriftd.check_worker_liveness") as fake_health:
+                fake_health.return_value.status = "alive"
+                fake_health.return_value.last_event_ts = 200.0
+                fake_health.return_value.last_event_type = "pre_tool_use"
+                fake_health.return_value.event_count = 4
+                snapshot = collect_runtime_snapshot(repo)
+
+            # impl has a matching active worker, so it's NOT a manual claim
+            self.assertEqual(snapshot["manual_claim_ids"], [])
+            self.assertFalse(snapshot["dispatch_blocked_by_manual"])
+            self.assertEqual(snapshot["next_action"], "continue supervision")
+
     def test_run_runtime_loop_respects_max_cycles(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)

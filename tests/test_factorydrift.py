@@ -8,10 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from driftdriver.factorydrift import (
     build_factory_cycle,
+    classify_drift_outcome,
     emit_factory_followups,
     execute_factory_cycle,
+    record_task_outcome,
     resolve_repo_autonomy,
     summarize_factory_cycle,
     write_factory_ledger,
@@ -740,6 +744,252 @@ class FactoryDriftTests(unittest.TestCase):
             attempts = execution.get("attempts") or []
             self.assertEqual(str(attempts[0]["status"]), "failed")
             self.assertEqual(str(attempts[1]["status"]), "succeeded")
+
+
+class TestRecordTaskOutcome:
+    """Tests for record_task_outcome writing DriftOutcome entries to the JSONL ledger."""
+
+    def test_writes_outcome_to_ledger(self, tmp_path: Path) -> None:
+        from driftdriver.factorydrift import record_task_outcome
+        from driftdriver.outcome import read_outcomes
+
+        project_dir = tmp_path / "repo"
+        (project_dir / ".workgraph").mkdir(parents=True)
+
+        record_task_outcome(
+            project_dir=project_dir,
+            task_id="fix-scope-123",
+            lane="coredrift",
+            finding_key="scope-creep",
+            recommendation="Reduce scope to match contract",
+            action_taken="Split task into two subtasks",
+            outcome="resolved",
+        )
+
+        ledger = project_dir / ".workgraph" / "drift-outcomes.jsonl"
+        assert ledger.exists()
+        outcomes = read_outcomes(ledger)
+        assert len(outcomes) == 1
+
+    def test_outcome_fields_populated(self, tmp_path: Path) -> None:
+        from driftdriver.factorydrift import record_task_outcome
+        from driftdriver.outcome import read_outcomes
+
+        project_dir = tmp_path / "repo"
+        (project_dir / ".workgraph").mkdir(parents=True)
+
+        record_task_outcome(
+            project_dir=project_dir,
+            task_id="fix-scope-123",
+            lane="coredrift",
+            finding_key="scope-creep",
+            recommendation="Reduce scope to match contract",
+            action_taken="Split task into two subtasks",
+            outcome="resolved",
+            evidence=["commit abc123", "drift score green"],
+        )
+
+        outcomes = read_outcomes(project_dir / ".workgraph" / "drift-outcomes.jsonl")
+        assert len(outcomes) == 1
+        o = outcomes[0]
+        assert o.task_id == "fix-scope-123"
+        assert o.lane == "coredrift"
+        assert o.finding_key == "scope-creep"
+        assert o.recommendation == "Reduce scope to match contract"
+        assert o.action_taken == "Split task into two subtasks"
+        assert o.outcome == "resolved"
+        assert o.evidence == ["commit abc123", "drift score green"]
+        assert o.timestamp is not None
+
+    def test_appends_multiple_outcomes(self, tmp_path: Path) -> None:
+        from driftdriver.factorydrift import record_task_outcome
+        from driftdriver.outcome import read_outcomes
+
+        project_dir = tmp_path / "repo"
+        (project_dir / ".workgraph").mkdir(parents=True)
+
+        for i, outcome_val in enumerate(["resolved", "ignored", "deferred"]):
+            record_task_outcome(
+                project_dir=project_dir,
+                task_id=f"task-{i}",
+                lane="coredrift",
+                finding_key=f"finding-{i}",
+                recommendation=f"rec-{i}",
+                action_taken=f"action-{i}",
+                outcome=outcome_val,
+            )
+
+        outcomes = read_outcomes(project_dir / ".workgraph" / "drift-outcomes.jsonl")
+        assert len(outcomes) == 3
+        assert [o.outcome for o in outcomes] == ["resolved", "ignored", "deferred"]
+
+    def test_missing_workgraph_dir_creates_it(self, tmp_path: Path) -> None:
+        from driftdriver.factorydrift import record_task_outcome
+        from driftdriver.outcome import read_outcomes
+
+        project_dir = tmp_path / "repo"
+        assert not (project_dir / ".workgraph").exists()
+
+        record_task_outcome(
+            project_dir=project_dir,
+            task_id="task-1",
+            lane="coredrift",
+            finding_key="key",
+            recommendation="rec",
+            action_taken="action",
+            outcome="resolved",
+        )
+
+        ledger = project_dir / ".workgraph" / "drift-outcomes.jsonl"
+        assert ledger.exists()
+        outcomes = read_outcomes(ledger)
+        assert len(outcomes) == 1
+
+    def test_empty_strings_dont_crash(self, tmp_path: Path) -> None:
+        from driftdriver.factorydrift import record_task_outcome
+        from driftdriver.outcome import read_outcomes
+
+        project_dir = tmp_path / "repo"
+        (project_dir / ".workgraph").mkdir(parents=True)
+
+        record_task_outcome(
+            project_dir=project_dir,
+            task_id="",
+            lane="",
+            finding_key="",
+            recommendation="",
+            action_taken="",
+            outcome="resolved",
+        )
+
+        outcomes = read_outcomes(project_dir / ".workgraph" / "drift-outcomes.jsonl")
+        assert len(outcomes) == 1
+        assert outcomes[0].task_id == ""
+        assert outcomes[0].lane == ""
+
+    def test_none_evidence_defaults_to_empty_list(self, tmp_path: Path) -> None:
+        from driftdriver.factorydrift import record_task_outcome
+        from driftdriver.outcome import read_outcomes
+
+        project_dir = tmp_path / "repo"
+        (project_dir / ".workgraph").mkdir(parents=True)
+
+        record_task_outcome(
+            project_dir=project_dir,
+            task_id="task-1",
+            lane="coredrift",
+            finding_key="key",
+            recommendation="rec",
+            action_taken="action",
+            outcome="resolved",
+            evidence=None,
+        )
+
+        outcomes = read_outcomes(project_dir / ".workgraph" / "drift-outcomes.jsonl")
+        assert outcomes[0].evidence == []
+
+    def test_invalid_outcome_value_raises(self, tmp_path: Path) -> None:
+        from driftdriver.factorydrift import record_task_outcome
+
+        project_dir = tmp_path / "repo"
+        (project_dir / ".workgraph").mkdir(parents=True)
+
+        with pytest.raises(ValueError, match="invalid outcome"):
+            record_task_outcome(
+                project_dir=project_dir,
+                task_id="task-1",
+                lane="coredrift",
+                finding_key="key",
+                recommendation="rec",
+                action_taken="action",
+                outcome="banana",
+            )
+
+    def test_returns_drift_outcome_object(self, tmp_path: Path) -> None:
+        from driftdriver.factorydrift import record_task_outcome
+
+        project_dir = tmp_path / "repo"
+        (project_dir / ".workgraph").mkdir(parents=True)
+
+        result = record_task_outcome(
+            project_dir=project_dir,
+            task_id="task-1",
+            lane="coredrift",
+            finding_key="key",
+            recommendation="rec",
+            action_taken="action",
+            outcome="resolved",
+        )
+
+        assert result.task_id == "task-1"
+        assert result.outcome == "resolved"
+
+
+class TestClassifyDriftOutcome:
+    """Tests for classify_drift_outcome mapping drift results to outcome values."""
+
+    def test_green_score_means_resolved(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        assert classify_drift_outcome(drift_score="green", findings=[]) == "resolved"
+
+    def test_green_score_with_findings_still_resolved(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        # Green overrides findings — the drift system said green.
+        assert classify_drift_outcome(drift_score="green", findings=["minor note"]) == "resolved"
+
+    def test_no_findings_means_resolved(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        assert classify_drift_outcome(drift_score="", findings=[]) == "resolved"
+
+    def test_red_score_means_worsened(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        result = classify_drift_outcome(
+            drift_score="red",
+            findings=["scope-creep detected", "contract violation"],
+        )
+        assert result == "worsened"
+
+    def test_red_score_no_findings_still_worsened(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        assert classify_drift_outcome(drift_score="red", findings=[]) == "worsened"
+
+    def test_yellow_score_with_findings_means_deferred(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        result = classify_drift_outcome(
+            drift_score="yellow",
+            findings=["minor scope drift"],
+        )
+        assert result == "deferred"
+
+    def test_yellow_score_no_findings_means_resolved(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        assert classify_drift_outcome(drift_score="yellow", findings=[]) == "resolved"
+
+    def test_unknown_score_with_findings_means_deferred(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        result = classify_drift_outcome(
+            drift_score="unknown",
+            findings=["something found"],
+        )
+        assert result == "deferred"
+
+    def test_unknown_score_no_findings_means_resolved(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        assert classify_drift_outcome(drift_score="unknown", findings=[]) == "resolved"
+
+    def test_empty_score_with_findings_means_deferred(self) -> None:
+        from driftdriver.factorydrift import classify_drift_outcome
+
+        assert classify_drift_outcome(drift_score="", findings=["something"]) == "deferred"
 
 
 if __name__ == "__main__":

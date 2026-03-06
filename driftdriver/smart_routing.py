@@ -9,6 +9,8 @@ import os
 import subprocess
 import json
 
+from driftdriver.outcome import outcome_rates
+
 
 @dataclass
 class EvidencePackage:
@@ -21,6 +23,7 @@ class EvidencePackage:
     prior_drift_findings: list[dict]  # recent drift results
     installed_lanes: list[str]
     pattern_hints: dict[str, list[str]] = field(default_factory=dict)  # lane -> glob patterns
+    lane_weights: dict[str, float] = field(default_factory=dict)  # lane -> outcome-based weight
 
     def classify_files(self) -> dict[str, list[str]]:
         """Classify changed files into lane suggestions based on glob patterns."""
@@ -65,6 +68,11 @@ class EvidencePackage:
         sections.append(f"\n## Installed Lanes\n{', '.join(self.installed_lanes)}")
         sections.append(f"\n## Pattern-Suggested Lanes\n{', '.join(self.suggest_lanes()) or 'none'}")
 
+        if self.lane_weights:
+            escalated = [f"{k} ({v:.2f})" for k, v in self.lane_weights.items() if v > 1.1]
+            if escalated:
+                sections.append(f"\n## Escalated Lanes (findings often ignored/worsened)\n{', '.join(escalated)}")
+
         if self.prior_drift_findings:
             sections.append("## Prior Drift Findings")
             for finding in self.prior_drift_findings[-5:]:
@@ -76,6 +84,34 @@ class EvidencePackage:
                 sections.append(f"- [{entry.get('category', '?')}] {entry.get('content', '')[:200]}")
 
         return "\n".join(sections)
+
+
+def compute_lane_weights(
+    outcome_ledger: Path,
+    installed_lanes: list[str],
+) -> dict[str, float]:
+    """Compute lane priority weights based on historical outcome rates.
+
+    Returns a dict of lane -> weight where:
+      - 1.0 = neutral (no history or balanced outcomes)
+      - >1.0 = escalated (high ignored/worsened rate — this lane's findings are being ignored)
+      - <1.0 = demoted (high resolved rate — findings routinely handled, less urgency)
+
+    The weight is: 1.0 + (ignored_rate + worsened_rate) - (0.5 * resolved_rate)
+    Clamped to [0.2, 3.0].
+    """
+    weights: dict[str, float] = {}
+    for lane in installed_lanes:
+        rates = outcome_rates(outcome_ledger, lane=lane)
+        if not any(rates.values()):
+            weights[lane] = 1.0
+            continue
+        ignored = rates.get("ignored", 0.0)
+        worsened = rates.get("worsened", 0.0)
+        resolved = rates.get("resolved", 0.0)
+        weight = 1.0 + (ignored + worsened) - (0.5 * resolved)
+        weights[lane] = max(0.2, min(3.0, weight))
+    return weights
 
 
 def parse_git_diff_stat(diff_output: str) -> dict[str, str]:
@@ -149,6 +185,10 @@ def gather_evidence(
     policy_path = workgraph_dir / "drift-policy.toml"
     pattern_hints = load_pattern_hints(policy_path)
 
+    # Compute lane weights from outcome history
+    outcome_ledger = workgraph_dir / "drift-outcomes.jsonl"
+    lane_weights = compute_lane_weights(outcome_ledger, installed_lanes)
+
     return EvidencePackage(
         changed_files=changed_files,
         file_classifications={},
@@ -158,4 +198,5 @@ def gather_evidence(
         prior_drift_findings=[],
         installed_lanes=installed_lanes,
         pattern_hints=pattern_hints,
+        lane_weights=lane_weights,
     )

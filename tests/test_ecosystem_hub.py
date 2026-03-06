@@ -117,6 +117,40 @@ def _ws_read_text(sock_obj: socket.socket, timeout: float = 3.0) -> str:
     return payload.decode("utf-8")
 
 
+class SubpackageBoundaryTests(unittest.TestCase):
+    """Smoke tests ensuring hub subpackage re-exports work correctly."""
+
+    def test_submodule_re_exports_accessible_from_package(self) -> None:
+        """Key names should be importable from driftdriver.ecosystem_hub directly."""
+        from driftdriver.ecosystem_hub import (
+            RepoSnapshot,
+            _run,
+            collect_repo_snapshot,
+            supervise_repo_services,
+            render_dashboard_html,
+            main,
+            LiveStreamHub,
+        )
+        self.assertTrue(callable(_run))
+        self.assertTrue(callable(collect_repo_snapshot))
+        self.assertTrue(callable(supervise_repo_services))
+        self.assertTrue(callable(render_dashboard_html))
+        self.assertTrue(callable(main))
+        self.assertIsNotNone(RepoSnapshot)
+        self.assertIsNotNone(LiveStreamHub)
+
+    def test_submodules_importable_directly(self) -> None:
+        """Each submodule should be importable on its own."""
+        from driftdriver.ecosystem_hub import models, discovery, snapshot, websocket, api, dashboard, server
+        self.assertTrue(hasattr(models, 'RepoSnapshot'))
+        self.assertTrue(hasattr(discovery, '_run'))
+        self.assertTrue(hasattr(snapshot, 'collect_repo_snapshot'))
+        self.assertTrue(hasattr(websocket, 'LiveStreamHub'))
+        self.assertTrue(hasattr(api, '_HubHandler'))
+        self.assertTrue(hasattr(dashboard, 'render_dashboard_html'))
+        self.assertTrue(hasattr(server, 'main'))
+
+
 class EcosystemHubTests(unittest.TestCase):
     def test_load_ecosystem_repos_from_toml(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from driftdriver.cli import _ordered_optional_plugins
-from driftdriver.policy import ensure_drift_policy, load_drift_policy
+from driftdriver.policy import ensure_drift_policy, evaluate_enforcement, load_drift_policy
 
 
 class PolicyTests(unittest.TestCase):
@@ -418,6 +418,159 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.reporting_central_repo, "/tmp/my-central")
             self.assertFalse(p.reporting_auto_report)
             self.assertFalse(p.reporting_include_knowledge)
+
+    def test_enforcement_defaults_in_policy(self) -> None:
+        """Default enforcement is disabled."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            ensure_drift_policy(wg_dir)
+            p = load_drift_policy(wg_dir)
+            self.assertFalse(p.enforcement["enabled"])
+            self.assertTrue(p.enforcement["block_on_critical"])
+            self.assertTrue(p.enforcement["warn_on_error"])
+            self.assertEqual(p.enforcement["max_unresolved_warnings"], 10)
+
+    def test_enforcement_parsed_from_toml(self) -> None:
+        """Explicit [enforcement] values are parsed correctly."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            (wg_dir / "drift-policy.toml").write_text(
+                "\n".join([
+                    "schema = 1",
+                    'mode = "redirect"',
+                    "",
+                    "[enforcement]",
+                    "enabled = true",
+                    "block_on_critical = false",
+                    "warn_on_error = false",
+                    "max_unresolved_warnings = 5",
+                ]),
+                encoding="utf-8",
+            )
+            p = load_drift_policy(wg_dir)
+            self.assertTrue(p.enforcement["enabled"])
+            self.assertFalse(p.enforcement["block_on_critical"])
+            self.assertFalse(p.enforcement["warn_on_error"])
+            self.assertEqual(p.enforcement["max_unresolved_warnings"], 5)
+
+    def test_evaluate_enforcement_disabled(self) -> None:
+        """When enforcement is disabled, always returns clean."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            ensure_drift_policy(wg_dir)
+            p = load_drift_policy(wg_dir)
+            findings = [{"severity": "critical", "category": "test"}]
+            result = evaluate_enforcement(p, findings)
+            self.assertFalse(result["blocked"])
+            self.assertEqual(result["exit_code"], 0)
+
+    def test_evaluate_enforcement_blocks_on_critical(self) -> None:
+        """Critical findings block when enforcement enabled + block_on_critical."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            (wg_dir / "drift-policy.toml").write_text(
+                "\n".join([
+                    "schema = 1",
+                    'mode = "redirect"',
+                    "",
+                    "[enforcement]",
+                    "enabled = true",
+                    "block_on_critical = true",
+                ]),
+                encoding="utf-8",
+            )
+            p = load_drift_policy(wg_dir)
+            findings = [
+                {"severity": "critical", "category": "credential-leak"},
+                {"severity": "warning", "category": "test-gap"},
+            ]
+            result = evaluate_enforcement(p, findings)
+            self.assertTrue(result["blocked"])
+            self.assertEqual(result["exit_code"], 2)
+            self.assertEqual(result["counts"]["critical"], 1)
+            self.assertEqual(result["counts"]["warning"], 1)
+            self.assertIn("BLOCKED", result["warnings"][0])
+
+    def test_evaluate_enforcement_warns_on_error(self) -> None:
+        """Error findings produce warnings but don't block."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            (wg_dir / "drift-policy.toml").write_text(
+                "\n".join([
+                    "schema = 1",
+                    'mode = "redirect"',
+                    "",
+                    "[enforcement]",
+                    "enabled = true",
+                    "block_on_critical = true",
+                    "warn_on_error = true",
+                ]),
+                encoding="utf-8",
+            )
+            p = load_drift_policy(wg_dir)
+            findings = [
+                {"severity": "error", "category": "mock-violation"},
+                {"severity": "info", "category": "note"},
+            ]
+            result = evaluate_enforcement(p, findings)
+            self.assertFalse(result["blocked"])
+            self.assertEqual(result["exit_code"], 1)
+            self.assertEqual(result["counts"]["error"], 1)
+            self.assertEqual(result["counts"]["info"], 1)
+
+    def test_evaluate_enforcement_threshold_exceeded(self) -> None:
+        """Exceeding max_unresolved_warnings triggers warning."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            (wg_dir / "drift-policy.toml").write_text(
+                "\n".join([
+                    "schema = 1",
+                    'mode = "redirect"',
+                    "",
+                    "[enforcement]",
+                    "enabled = true",
+                    "max_unresolved_warnings = 2",
+                ]),
+                encoding="utf-8",
+            )
+            p = load_drift_policy(wg_dir)
+            findings = [
+                {"severity": "warning"},
+                {"severity": "warning"},
+                {"severity": "warning"},
+            ]
+            result = evaluate_enforcement(p, findings)
+            self.assertFalse(result["blocked"])
+            self.assertEqual(result["exit_code"], 1)
+            self.assertTrue(any("exceed threshold" in w for w in result["warnings"]))
+
+    def test_evaluate_enforcement_clean_when_all_info(self) -> None:
+        """Info-only findings produce no warnings or blocks."""
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+            (wg_dir / "drift-policy.toml").write_text(
+                "\n".join([
+                    "schema = 1",
+                    'mode = "redirect"',
+                    "",
+                    "[enforcement]",
+                    "enabled = true",
+                ]),
+                encoding="utf-8",
+            )
+            p = load_drift_policy(wg_dir)
+            findings = [{"severity": "info"}, {"severity": "info"}]
+            result = evaluate_enforcement(p, findings)
+            self.assertFalse(result["blocked"])
+            self.assertEqual(result["exit_code"], 0)
+            self.assertEqual(result["warnings"], [])
 
     def test_ordered_optional_plugins(self) -> None:
         ordered = _ordered_optional_plugins(["yagnidrift", "specdrift", "unknown", "specdrift", "redrift"])
