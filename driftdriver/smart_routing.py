@@ -189,12 +189,22 @@ def gather_evidence(
     outcome_ledger = workgraph_dir / "drift-outcomes.jsonl"
     lane_weights = compute_lane_weights(outcome_ledger, installed_lanes)
 
+    # Load project knowledge for routing context
+    from driftdriver.knowledge_priming import load_knowledge_base
+    kb_path = workgraph_dir / "knowledge.jsonl"
+    raw_facts = load_knowledge_base(kb_path)
+    project_context = [
+        {"category": f.fact_type, "content": f.content, "confidence": f.confidence}
+        for f in raw_facts
+        if f.confidence in ("high", "medium")
+    ][:10]
+
     return EvidencePackage(
         changed_files=changed_files,
         file_classifications={},
         task_description=task_description,
         task_contract=task_contract,
-        project_context=[],
+        project_context=project_context,
         prior_drift_findings=[],
         installed_lanes=installed_lanes,
         pattern_hints=pattern_hints,
