@@ -166,6 +166,9 @@ class NorthstarDriftTests(unittest.TestCase):
         self.assertEqual(worst["tier"], "at-risk")
         self.assertGreater(len(northstar["operator_prompts"]), 0)
         self.assertGreater(len(northstar["recommended_reviews"]), 0)
+        self.assertIn("targets", northstar)
+        self.assertIn("priority_gaps", northstar["targets"])
+        self.assertLess(northstar["targets"]["overall"]["gap"], 0.0)
         self.assertIn("Dark factory effectiveness", northstar["summary"]["narrative"])
 
     def test_apply_northstardrift_attaches_repo_payloads(self) -> None:
@@ -228,6 +231,28 @@ class NorthstarDriftTests(unittest.TestCase):
             self.assertEqual(meta["current_path"], str(current))
             history = read_northstardrift_history(service_dir=service_dir, central_repo=central, current=northstar)
             self.assertGreaterEqual(history["summary"]["count"], 1)
+            self.assertIn("weekly_points", history)
+            self.assertIn("windows", history)
+
+    def test_read_northstardrift_history_includes_daily_weekly_and_window_rollups(self) -> None:
+        older = compute_northstardrift(_snapshot(_repo("driftdriver", ready=1), generated_at="2026-02-25T12:00:00Z"))
+        current = compute_northstardrift(_snapshot(_repo("driftdriver", in_progress=1), generated_at="2026-03-06T12:00:00Z"))
+        with tempfile.TemporaryDirectory() as td:
+            service_dir = Path(td) / "service"
+            central = Path(td) / "central"
+            write_northstardrift_artifacts(service_dir=service_dir, central_repo=central, northstardrift=older)
+            write_northstardrift_artifacts(service_dir=service_dir, central_repo=central, northstardrift=current)
+            history = read_northstardrift_history(
+                service_dir=service_dir,
+                central_repo=central,
+                current=current,
+                limit=12,
+                weekly_limit=8,
+            )
+            self.assertGreaterEqual(history["summary"]["daily_count"], 2)
+            self.assertGreaterEqual(len(history["weekly_points"]), 2)
+            self.assertIn("7d", history["windows"])
+            self.assertIn("30d", history["windows"])
 
     def test_emit_northstar_review_tasks_creates_local_followups(self) -> None:
         snapshot = _snapshot(
@@ -279,6 +304,32 @@ class NorthstarDriftTests(unittest.TestCase):
             result = emit_northstar_review_tasks(snapshot=snapshot, report=northstar)
             self.assertEqual(result["created"], 0)
             self.assertEqual(result["skipped"], 1)
+
+    def test_emit_northstar_review_tasks_allows_dirty_repo_when_workgraph_is_ignored(self) -> None:
+        snapshot = _snapshot(
+            _repo(
+                "meridian",
+                stalled=True,
+                service_running=False,
+                blocked_open=2,
+                missing_dependencies=1,
+                git_dirty=True,
+                dirty_file_count=3,
+                quality_score=71,
+            ),
+        )
+        northstar = compute_northstardrift(snapshot)
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "meridian"
+            repo.mkdir(parents=True)
+            subprocess.run(["git", "init"], cwd=str(repo), check=True, capture_output=True)
+            (repo / ".gitignore").write_text(".workgraph/\n", encoding="utf-8")
+            (repo / "scratch.txt").write_text("dirty\n", encoding="utf-8")
+            subprocess.run(["wg", "init"], cwd=str(repo), check=True, capture_output=True)
+            snapshot["repos"][0]["path"] = str(repo)
+            result = emit_northstar_review_tasks(snapshot=snapshot, report=northstar)
+            self.assertEqual(result["created"], 1)
+            self.assertEqual(result["skipped"], 0)
 
 
 if __name__ == "__main__":

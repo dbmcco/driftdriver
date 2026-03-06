@@ -1932,6 +1932,16 @@ def _decorate_snapshot_with_northstardrift(
             "regressions": [],
             "improvements": [],
             "operator_prompts": [],
+            "recommended_reviews": [],
+            "targets": {"overall": {}, "axes": {}, "summary": {}, "priority_gaps": []},
+            "history": {
+                "points": [],
+                "daily_points": [],
+                "weekly_points": [],
+                "windows": {},
+                "summary": {"count": 0, "daily_count": 0, "weekly_count": 0, "window": "recent"},
+            },
+            "task_emit": {"enabled": False, "attempted": 0, "created": 0, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
         }
         return snapshot["northstardrift"]
 
@@ -1950,6 +1960,7 @@ def _decorate_snapshot_with_northstardrift(
             central_repo=central_repo,
             current=snapshot["northstardrift"],
             limit=max(6, int(cfg.get("history_points") or 18)),
+            weekly_limit=max(4, int(cfg.get("weekly_rollup_weeks") or 8)),
         )
         snapshot["northstardrift"]["artifacts"] = artifacts
     return snapshot.get("northstardrift") if isinstance(snapshot.get("northstardrift"), dict) else {}
@@ -2213,7 +2224,14 @@ class _HubHandler(BaseHTTPRequestHandler):
                     "improvements": [],
                     "operator_prompts": [],
                     "recommended_reviews": [],
-                    "history": {"points": [], "summary": {"count": 0, "window": "recent"}},
+                    "targets": {"overall": {}, "axes": {}, "summary": {}, "priority_gaps": []},
+                    "history": {
+                        "points": [],
+                        "daily_points": [],
+                        "weekly_points": [],
+                        "windows": {},
+                        "summary": {"count": 0, "daily_count": 0, "weekly_count": 0, "window": "recent"},
+                    },
                     "task_emit": {"enabled": False, "attempted": 0, "created": 0, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
                 },
                 "supervisor": {},
@@ -2336,7 +2354,14 @@ class _HubHandler(BaseHTTPRequestHandler):
                     "improvements": [],
                     "operator_prompts": [],
                     "recommended_reviews": [],
-                    "history": {"points": [], "summary": {"count": 0, "window": "recent"}},
+                    "targets": {"overall": {}, "axes": {}, "summary": {}, "priority_gaps": []},
+                    "history": {
+                        "points": [],
+                        "daily_points": [],
+                        "weekly_points": [],
+                        "windows": {},
+                        "summary": {"count": 0, "daily_count": 0, "weekly_count": 0, "window": "recent"},
+                    },
                     "task_emit": {"enabled": False, "attempted": 0, "created": 0, "existing": 0, "skipped": 0, "errors": [], "tasks": []},
                 }
             )
@@ -2346,7 +2371,13 @@ class _HubHandler(BaseHTTPRequestHandler):
             self._send_json(
                 northstar.get("history")
                 if isinstance(northstar.get("history"), dict)
-                else {"points": [], "summary": {"count": 0, "window": "recent"}}
+                else {
+                    "points": [],
+                    "daily_points": [],
+                    "weekly_points": [],
+                    "windows": {},
+                    "summary": {"count": 0, "daily_count": 0, "weekly_count": 0, "window": "recent"},
+                }
             )
             return
         if route == "/api/overview":
@@ -2975,6 +3006,18 @@ def render_dashboard_html() -> str:
         <article class="trend-panel">
           <h3>Trend Review</h3>
           <p class="narrative" id="northstar-trend-summary">Loading effectiveness history…</p>
+        </article>
+        <article class="trend-panel">
+          <h3>Window Deltas</h3>
+          <ul id="northstar-window-deltas"></ul>
+        </article>
+        <article class="trend-panel">
+          <h3>Target Gaps</h3>
+          <ul id="northstar-target-gaps"></ul>
+        </article>
+        <article class="trend-panel">
+          <h3>Weekly Rollups</h3>
+          <ul id="northstar-weekly-rollups"></ul>
         </article>
         <article class="trend-panel">
           <h3>Top Regressions</h3>
@@ -3691,11 +3734,27 @@ def render_dashboard_html() -> str:
       const ns = data.northstardrift || {};
       const summary = ns.summary || {};
       const axes = ns.axes || {};
-      const history = (ns.history && Array.isArray(ns.history.points)) ? ns.history.points : [];
+      const targets = ns.targets || {};
+      const historyBlock = ns.history || {};
+      const history = Array.isArray(historyBlock.points) ? historyBlock.points : [];
+      const weekly = Array.isArray(historyBlock.weekly_points) ? historyBlock.weekly_points : [];
+      const windows = (historyBlock.windows && typeof historyBlock.windows === 'object') ? historyBlock.windows : {};
+      const historySummary = (historyBlock.summary && typeof historyBlock.summary === 'object') ? historyBlock.summary : {};
+      const targetSummary = (targets.summary && typeof targets.summary === 'object') ? targets.summary : {};
       const scoreText = (value) => {
         if (value == null || value === '') return 'n/a';
         const num = Number(value);
         return Number.isFinite(num) ? num.toFixed(1) : String(value);
+      };
+      const signedScoreText = (value) => {
+        if (value == null || value === '') return 'n/a';
+        const num = Number(value);
+        if (!Number.isFinite(num)) return String(value);
+        return `${num >= 0 ? '+' : ''}${num.toFixed(1)}`;
+      };
+      const targetFor = (key) => {
+        if (key === 'overall') return targets.overall || {};
+        return ((targets.axes || {})[key]) || {};
       };
       const seriesFor = (key) => history
         .map((point) => {
@@ -3717,23 +3776,51 @@ def render_dashboard_html() -> str:
         }).join(' ');
         return `<svg class="spark" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><polyline fill="none" stroke="${color}" stroke-width="2.2" points="${pts}" /></svg>`;
       };
+      const cardSub = (key, axis) => {
+        const target = targetFor(key);
+        const bits = [`${axis.tier || 'n/a'}`, `${axis.trend || 'flat'}`];
+        if (target.target != null) {
+          bits.push(`target ${scoreText(target.target)}`);
+        }
+        if (target.gap != null) {
+          bits.push(`${target.status || 'gap'} ${signedScoreText(target.gap)}`);
+        }
+        return bits.join(' | ');
+      };
       const cards = [
-        ['Dark Factory', summary.overall_score, `${summary.overall_tier || 'n/a'} | ${summary.overall_trend || 'flat'}`, sparkline(seriesFor('overall'), '#0f6f7c')],
-        ['Continuity', (axes.continuity || {}).score, `${(axes.continuity || {}).tier || 'n/a'} | ${(axes.continuity || {}).trend || 'flat'}`, sparkline(seriesFor('continuity'), '#2f6e39')],
-        ['Autonomy', (axes.autonomy || {}).score, `${(axes.autonomy || {}).tier || 'n/a'} | ${(axes.autonomy || {}).trend || 'flat'}`, sparkline(seriesFor('autonomy'), '#0f6f7c')],
-        ['Quality', (axes.quality || {}).score, `${(axes.quality || {}).tier || 'n/a'} | ${(axes.quality || {}).trend || 'flat'}`, sparkline(seriesFor('quality'), '#934e1c')],
-        ['Coordination', (axes.coordination || {}).score, `${(axes.coordination || {}).tier || 'n/a'} | ${(axes.coordination || {}).trend || 'flat'}`, sparkline(seriesFor('coordination'), '#7b5a1c')],
-        ['Self Improve', (axes.self_improvement || {}).score, `${(axes.self_improvement || {}).tier || 'n/a'} | ${(axes.self_improvement || {}).trend || 'flat'}`, sparkline(seriesFor('self_improvement'), '#6e4d8f')],
+        ['Dark Factory', summary.overall_score, cardSub('overall', { tier: summary.overall_tier, trend: summary.overall_trend }), sparkline(seriesFor('overall'), '#0f6f7c')],
+        ['Continuity', (axes.continuity || {}).score, cardSub('continuity', axes.continuity || {}), sparkline(seriesFor('continuity'), '#2f6e39')],
+        ['Autonomy', (axes.autonomy || {}).score, cardSub('autonomy', axes.autonomy || {}), sparkline(seriesFor('autonomy'), '#0f6f7c')],
+        ['Quality', (axes.quality || {}).score, cardSub('quality', axes.quality || {}), sparkline(seriesFor('quality'), '#934e1c')],
+        ['Coordination', (axes.coordination || {}).score, cardSub('coordination', axes.coordination || {}), sparkline(seriesFor('coordination'), '#7b5a1c')],
+        ['Self Improve', (axes.self_improvement || {}).score, cardSub('self_improvement', axes.self_improvement || {}), sparkline(seriesFor('self_improvement'), '#6e4d8f')],
       ];
       el('northstar-summary').textContent = summary.narrative || 'No north-star narrative generated yet.';
       el('northstar-cards').innerHTML = cards
         .map(([k, v, sub, svg]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(scoreText(v))}</div><div class="sub">${esc(sub || '')}</div>${svg || ''}</div>`)
         .join('');
-      const pointsCount = Number((((ns.history || {}).summary) || {}).count || history.length || 0);
+      const pointsCount = Number(historySummary.count || history.length || 0);
       const taskEmit = ns.task_emit || {};
       const calibration = ns.calibration || {};
       el('northstar-trend-summary').textContent =
-        `History points=${pointsCount}. Participating repos=${n((ns.counts || {}).participating_repos)}. Latent repos=${n((ns.counts || {}).latent_repos)}. Review tasks created=${n(taskEmit.created)} existing=${n(taskEmit.existing)} skipped=${n(taskEmit.skipped)}. Calibration=${Array.isArray(calibration.notes) ? calibration.notes.join(' | ') : 'n/a'}.`;
+        `History recent=${pointsCount}, daily=${n(historySummary.daily_count)}, weekly=${n(historySummary.weekly_count)}. Participating repos=${n((ns.counts || {}).participating_repos)}. Latent repos=${n((ns.counts || {}).latent_repos)}. Targets met=${n(targetSummary.met)} watch=${n(targetSummary.watch_gap)} critical=${n(targetSummary.critical_gap)}. Review tasks created=${n(taskEmit.created)} existing=${n(taskEmit.existing)} skipped=${n(taskEmit.skipped)}. Dirty policy=${esc(String((ns.config || {}).dirty_repo_review_task_mode || 'n/a'))}. Calibration=${Array.isArray(calibration.notes) ? calibration.notes.join(' | ') : 'n/a'}.`;
+      const windowRows = Object.values(windows || {});
+      el('northstar-window-deltas').innerHTML = windowRows.length
+        ? windowRows
+          .map((row) => `<li><strong>${esc(String(row.label || 'window'))}</strong>: ${esc(String(row.trend || 'flat'))} ${esc(signedScoreText(row.delta))} from ${esc(scoreText(row.baseline_score))} to ${esc(scoreText(row.latest_score))} (${esc(String(row.coverage || 'partial'))}, ${esc(String(row.point_count || 0))} pts)</li>`)
+          .join('')
+        : '<li>No window deltas available yet.</li>';
+      const priorityGaps = Array.isArray(targets.priority_gaps) ? targets.priority_gaps : [];
+      el('northstar-target-gaps').innerHTML = priorityGaps.length
+        ? priorityGaps
+          .map((row) => `<li><strong>${esc(String(row.name || 'metric'))}</strong>: ${esc(scoreText(row.score))} vs target ${esc(scoreText(row.target))} (${esc(String(row.status || 'gap'))}, ${esc(signedScoreText(row.gap))})</li>`)
+          .join('')
+        : '<li>All north-star targets are currently met.</li>';
+      el('northstar-weekly-rollups').innerHTML = weekly.length
+        ? weekly.slice(-4).reverse()
+          .map((row) => `<li><strong>${esc(String(row.week || 'week'))}</strong>: overall ${esc(scoreText(row.overall_score))} (${esc(String(row.trend || 'flat'))} ${esc(signedScoreText(row.delta))}) | samples=${esc(String(row.sample_count || 0))} | range=${esc(String(row.start_date || ''))} to ${esc(String(row.end_date || ''))}</li>`)
+          .join('')
+        : '<li>No weekly rollups available yet.</li>';
       const regressions = Array.isArray(ns.regressions) ? ns.regressions : [];
       const improvements = Array.isArray(ns.improvements) ? ns.improvements : [];
       el('northstar-regressions').innerHTML = regressions.length

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha1
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,19 @@ AXIS_WEIGHTS: dict[str, float] = {
 }
 
 
+def _default_targets_cfg() -> dict[str, Any]:
+    return {
+        "overall": 82.0,
+        "axes": {
+            "continuity": 85.0,
+            "autonomy": 82.0,
+            "quality": 80.0,
+            "coordination": 78.0,
+            "self_improvement": 76.0,
+        },
+    }
+
+
 def default_northstardrift_cfg() -> dict[str, Any]:
     return {
         "enabled": True,
@@ -43,7 +56,12 @@ def default_northstardrift_cfg() -> dict[str, Any]:
         "intervention_ledger_min_interval_seconds": 1800,
         "fresh_heartbeat_seconds": 21600,
         "history_points": 18,
+        "weekly_rollup_weeks": 8,
         "latent_repo_floor_score": 68.0,
+        "target_gap_watch": 5.0,
+        "target_gap_critical": 12.0,
+        "dirty_repo_review_task_mode": "workgraph-only",
+        "targets": _default_targets_cfg(),
     }
 
 
@@ -162,6 +180,198 @@ def _read_recent_jsonl(path: Path, *, limit: int) -> list[dict[str, Any]]:
     return out
 
 
+def _window_seconds(label: str) -> int:
+    raw = str(label or "").strip().lower()
+    if raw.endswith("h"):
+        try:
+            return max(1, int(float(raw[:-1]) * 3600))
+        except Exception:
+            return 0
+    if raw.endswith("d"):
+        try:
+            return max(1, int(float(raw[:-1]) * 86400))
+        except Exception:
+            return 0
+    return 0
+
+
+def _history_point(row: dict[str, Any]) -> dict[str, Any]:
+    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+    axes = row.get("axes") if isinstance(row.get("axes"), dict) else {}
+    return {
+        "generated_at": str(row.get("generated_at") or ""),
+        "overall_score": float(summary.get("overall_score") or row.get("overall_score") or 0.0),
+        "axes": {
+            name: {"score": float((axes.get(name) or {}).get("score") or ((row.get("axes") or {}).get(name) or {}).get("score") or 0.0)}
+            for name in AXIS_NAMES
+        },
+    }
+
+
+def _merge_history_points(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for group in groups:
+        for row in group:
+            if not isinstance(row, dict):
+                continue
+            ts = str(row.get("generated_at") or "").strip()
+            if not ts:
+                continue
+            merged[ts] = row
+    return sorted(merged.values(), key=lambda row: str(row.get("generated_at") or ""))
+
+
+def _read_daily_history(root: Path, *, limit: int) -> list[dict[str, Any]]:
+    daily_dir = root / "daily"
+    if not daily_dir.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(daily_dir.glob("*.json"))[-max(1, int(limit)) :]:
+        payload = _read_json(path)
+        if not payload:
+            continue
+        point = _history_point(payload)
+        point["day"] = path.stem
+        rows.append(point)
+    return rows
+
+
+def _aggregate_weekly_history(points: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    buckets: dict[str, list[tuple[datetime, dict[str, Any]]]] = {}
+    for row in points:
+        ts = _parse_iso(row.get("generated_at"))
+        if ts is None:
+            continue
+        iso = ts.isocalendar()
+        key = f"{iso.year}-W{iso.week:02d}"
+        buckets.setdefault(key, []).append((ts, row))
+
+    weekly_rows: list[dict[str, Any]] = []
+    for key in sorted(buckets):
+        entries = buckets[key]
+        if not entries:
+            continue
+        entries.sort(key=lambda item: item[0])
+        overall_values = [float((item[1] or {}).get("overall_score") or 0.0) for item in entries]
+        axis_values = {
+            name: [
+                float((((item[1] or {}).get("axes") or {}).get(name) or {}).get("score") or 0.0)
+                for item in entries
+            ]
+            for name in AXIS_NAMES
+        }
+        weekly_rows.append(
+            {
+                "week": key,
+                "start_date": entries[0][0].date().isoformat(),
+                "end_date": entries[-1][0].date().isoformat(),
+                "sample_count": len(entries),
+                "overall_score": _clamp_score(sum(overall_values) / max(1, len(overall_values))),
+                "axes": {
+                    name: {"score": _clamp_score(sum(values) / max(1, len(values)))}
+                    for name, values in axis_values.items()
+                },
+            }
+        )
+
+    weekly_rows = weekly_rows[-max(1, int(limit)) :]
+    for idx, row in enumerate(weekly_rows):
+        previous_score = float(weekly_rows[idx - 1].get("overall_score") or 0.0) if idx > 0 else None
+        trend, delta = _trend(float(row.get("overall_score") or 0.0), previous_score)
+        row["trend"] = trend
+        row["delta"] = delta
+    return weekly_rows
+
+
+def _compute_window_trends(points: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    dated: list[tuple[datetime, dict[str, Any]]] = []
+    for row in points:
+        ts = _parse_iso(row.get("generated_at"))
+        if ts is None:
+            continue
+        dated.append((ts, row))
+    dated.sort(key=lambda item: item[0])
+    if not dated:
+        return {}
+
+    latest_dt, latest_row = dated[-1]
+    out: dict[str, dict[str, Any]] = {}
+    for label in ("24h", "7d", "30d"):
+        seconds = _window_seconds(label)
+        cutoff = latest_dt - timedelta(seconds=seconds)
+        candidates = [(ts, row) for ts, row in dated if ts >= cutoff]
+        baseline_dt, baseline_row = (candidates[0] if len(candidates) >= 2 else dated[0])
+        latest_score = float(latest_row.get("overall_score") or 0.0)
+        baseline_score = float(baseline_row.get("overall_score") or 0.0)
+        trend, delta = _trend(latest_score, baseline_score)
+        out[label] = {
+            "label": label,
+            "trend": trend,
+            "delta": delta,
+            "coverage": "full" if baseline_dt <= cutoff else "partial",
+            "point_count": len(candidates) if candidates else len(dated),
+            "baseline_at": baseline_dt.isoformat(),
+            "latest_at": latest_dt.isoformat(),
+            "baseline_score": baseline_score,
+            "latest_score": latest_score,
+            "axis_deltas": {
+                name: round(
+                    float((((latest_row.get("axes") or {}).get(name) or {}).get("score") or 0.0))
+                    - float((((baseline_row.get("axes") or {}).get(name) or {}).get("score") or 0.0)),
+                    1,
+                )
+                for name in AXIS_NAMES
+            },
+        }
+    return out
+
+
+def _configured_targets(config: dict[str, Any]) -> dict[str, Any]:
+    defaults = _default_targets_cfg()
+    raw = config.get("targets") if isinstance(config.get("targets"), dict) else {}
+    axes_raw = raw.get("axes") if isinstance(raw.get("axes"), dict) else raw
+    targets = {
+        "overall": defaults["overall"],
+        "axes": dict(defaults["axes"]),
+    }
+    try:
+        targets["overall"] = float(raw.get("overall", targets["overall"]))
+    except Exception:
+        targets["overall"] = defaults["overall"]
+    for name in AXIS_NAMES:
+        try:
+            targets["axes"][name] = float(axes_raw.get(name, targets["axes"][name]))
+        except Exception:
+            targets["axes"][name] = defaults["axes"][name]
+    return targets
+
+
+def _evaluate_target(
+    name: str,
+    *,
+    score: float,
+    target: float,
+    watch_gap: float,
+    critical_gap: float,
+) -> dict[str, Any]:
+    gap = round(score - target, 1)
+    if gap >= 0.0:
+        status = "met"
+    elif gap <= (-1.0 * critical_gap):
+        status = "critical-gap"
+    elif gap <= (-1.0 * watch_gap):
+        status = "watch-gap"
+    else:
+        status = "near-target"
+    return {
+        "name": name,
+        "score": score,
+        "target": target,
+        "gap": gap,
+        "status": status,
+    }
+
+
 def _fingerprint(parts: list[str]) -> str:
     key = "|".join(str(part or "").strip().lower() for part in parts)
     return sha1(key.encode("utf-8")).hexdigest()  # noqa: S324 - non-crypto identity hash
@@ -207,6 +417,17 @@ def _run_cmd(
     except Exception as exc:
         return 1, "", str(exc)
     return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
+
+
+def _workgraph_review_mutation_allowed(repo_path: Path) -> bool:
+    rc, out, _ = _run_cmd(["git", "rev-parse", "--is-inside-work-tree"], cwd=repo_path, timeout=10.0)
+    if rc != 0 or str(out).strip() != "true":
+        return False
+    for candidate in (".workgraph/graph.jsonl", ".workgraph"):
+        rc, _, _ = _run_cmd(["git", "check-ignore", "-q", candidate], cwd=repo_path, timeout=10.0)
+        if rc == 0:
+            return True
+    return False
 
 
 def _is_participating_repo(repo: dict[str, Any]) -> bool:
@@ -394,6 +615,7 @@ def _build_narrative(
     strongest_axis: tuple[str, dict[str, Any]],
     worst_repo: dict[str, Any] | None,
     top_prompt: dict[str, Any] | None,
+    largest_gap: dict[str, Any] | None,
 ) -> str:
     weak_name, weak_axis = weakest_axis
     strong_name, strong_axis = strongest_axis
@@ -406,6 +628,12 @@ def _build_narrative(
         parts.append(
             f"Most pressured repo: {worst_repo['repo']} ({worst_repo.get('tier')}, {float(worst_repo.get('score') or 0.0):.1f}) because {worst_repo.get('reason') or 'pressure signals are elevated'}."
         )
+    if isinstance(largest_gap, dict) and str(largest_gap.get("name") or "").strip():
+        gap = float(largest_gap.get("gap") or 0.0)
+        if gap < 0.0:
+            parts.append(
+                f"Largest target gap: {largest_gap['name'].replace('_', ' ')} is {abs(gap):.1f} below target."
+            )
     if isinstance(top_prompt, dict) and str(top_prompt.get("repo") or "").strip():
         parts.append(f"Next operator focus: {top_prompt['repo']}.")
     return " ".join(parts)
@@ -621,6 +849,24 @@ def compute_northstardrift(
             "delta": delta,
         }
 
+    targets_cfg = _configured_targets(cfg)
+    watch_gap = max(1.0, float(cfg.get("target_gap_watch") or 5.0))
+    critical_gap = max(watch_gap, float(cfg.get("target_gap_critical") or 12.0))
+    axis_targets = {
+        name: _evaluate_target(
+            name,
+            score=float(axes[name].get("score") or 0.0),
+            target=float(targets_cfg["axes"][name]),
+            watch_gap=watch_gap,
+            critical_gap=critical_gap,
+        )
+        for name in AXIS_NAMES
+    }
+    for name in AXIS_NAMES:
+        axes[name]["target"] = axis_targets[name]["target"]
+        axes[name]["target_gap"] = axis_targets[name]["gap"]
+        axes[name]["target_status"] = axis_targets[name]["status"]
+
     overall_score = _clamp_score(sum(axis_raw[name] * AXIS_WEIGHTS[name] for name in AXIS_NAMES))
     previous_overall = None
     if isinstance(previous, dict):
@@ -630,6 +876,27 @@ def compute_northstardrift(
             previous_overall = None
     overall_trend, overall_delta = _trend(overall_score, previous_overall)
     overall_tier = _tier(overall_score)
+    overall_target = _evaluate_target(
+        "overall",
+        score=overall_score,
+        target=float(targets_cfg["overall"]),
+        watch_gap=watch_gap,
+        critical_gap=critical_gap,
+    )
+
+    target_rows = [overall_target, *[axis_targets[name] for name in AXIS_NAMES]]
+    priority_gaps = [
+        row
+        for row in sorted(target_rows, key=lambda item: (float(item.get("gap") or 0.0), str(item.get("name") or "")))
+        if float(row.get("gap") or 0.0) < 0.0
+    ][:4]
+    target_summary = {
+        "met": sum(1 for row in target_rows if str(row.get("status")) == "met"),
+        "near_target": sum(1 for row in target_rows if str(row.get("status")) == "near-target"),
+        "watch_gap": sum(1 for row in target_rows if str(row.get("status")) == "watch-gap"),
+        "critical_gap": sum(1 for row in target_rows if str(row.get("status")) == "critical-gap"),
+        "largest_gap": priority_gaps[0] if priority_gaps else None,
+    }
 
     regressions: list[dict[str, Any]] = []
     improvements: list[dict[str, Any]] = []
@@ -726,6 +993,7 @@ def compute_northstardrift(
         strongest_axis=strongest_axis,
         worst_repo=repo_scores[0] if repo_scores else None,
         top_prompt=operator_prompts[0] if operator_prompts else None,
+        largest_gap=priority_gaps[0] if priority_gaps else None,
     )
 
     return {
@@ -738,6 +1006,9 @@ def compute_northstardrift(
             "overall_tier": overall_tier,
             "overall_trend": overall_trend,
             "overall_delta": overall_delta,
+            "overall_target": overall_target["target"],
+            "overall_target_gap": overall_target["gap"],
+            "overall_target_status": overall_target["status"],
             "narrative": narrative,
         },
         "axes": axes,
@@ -758,6 +1029,12 @@ def compute_northstardrift(
         "improvements": improvements,
         "operator_prompts": operator_prompts,
         "recommended_reviews": recommended_reviews,
+        "targets": {
+            "overall": overall_target,
+            "axes": axis_targets,
+            "summary": target_summary,
+            "priority_gaps": priority_gaps,
+        },
         "calibration": {
             "quality_population": quality_population,
             "coordination_population": coordination_population,
@@ -769,6 +1046,7 @@ def compute_northstardrift(
         },
         "config": {
             "dirty_repo_blocks_auto_mutation": bool(cfg.get("dirty_repo_blocks_auto_mutation", True)),
+            "dirty_repo_review_task_mode": str(cfg.get("dirty_repo_review_task_mode") or "workgraph-only"),
             "require_metric_evidence": bool(cfg.get("require_metric_evidence", True)),
         },
     }
@@ -818,45 +1096,31 @@ def read_northstardrift_history(
     central_repo: Path | None,
     current: dict[str, Any] | None = None,
     limit: int = 18,
+    weekly_limit: int = 8,
 ) -> dict[str, Any]:
     root = artifacts_root(service_dir=service_dir, central_repo=central_repo)
     ledger = root / "ledgers" / "effectiveness.jsonl"
-    rows = _read_recent_jsonl(ledger, limit=max(1, int(limit)))
-    points: list[dict[str, Any]] = []
-    for row in rows:
-        summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
-        axes = row.get("axes") if isinstance(row.get("axes"), dict) else {}
-        points.append(
-            {
-                "generated_at": str(row.get("generated_at") or ""),
-                "overall_score": float(summary.get("overall_score") or 0.0),
-                "axes": {
-                    name: {"score": float((axes.get(name) or {}).get("score") or 0.0)}
-                    for name in AXIS_NAMES
-                },
-            }
-        )
+    rows = _read_recent_jsonl(ledger, limit=max(24, int(limit) * 12))
+    points = [_history_point(row) for row in rows if isinstance(row, dict)]
 
     current_row = current if isinstance(current, dict) else None
     current_ts = str((current_row or {}).get("generated_at") or "")
     if current_row and current_ts and (not points or str(points[-1].get("generated_at") or "") != current_ts):
-        summary = current_row.get("summary") if isinstance(current_row.get("summary"), dict) else {}
-        axes = current_row.get("axes") if isinstance(current_row.get("axes"), dict) else {}
-        points.append(
-            {
-                "generated_at": current_ts,
-                "overall_score": float(summary.get("overall_score") or 0.0),
-                "axes": {
-                    name: {"score": float((axes.get(name) or {}).get("score") or 0.0)}
-                    for name in AXIS_NAMES
-                },
-            }
-        )
-    points = points[-max(1, int(limit)) :]
+        points.append(_history_point(current_row))
+    daily_points = _read_daily_history(root, limit=max(14, int(limit) * 2))
+    merged_points = _merge_history_points(points, daily_points)
+    recent_points = merged_points[-max(1, int(limit)) :]
+    weekly_points = _aggregate_weekly_history(daily_points or merged_points, limit=max(4, int(weekly_limit)))
+    windows = _compute_window_trends(merged_points)
     return {
-        "points": points,
+        "points": recent_points,
+        "daily_points": daily_points,
+        "weekly_points": weekly_points,
+        "windows": windows,
         "summary": {
-            "count": len(points),
+            "count": len(recent_points),
+            "daily_count": len(daily_points),
+            "weekly_count": len(weekly_points),
             "window": "recent",
         },
     }
@@ -890,6 +1154,9 @@ def emit_northstar_review_tasks(
     review_rows = report.get("recommended_reviews") if isinstance(report.get("recommended_reviews"), list) else []
     per_repo_counts: dict[str, int] = {}
     per_repo_limit = max(1, int(cfg.get("max_review_tasks_per_repo") or 2))
+    dirty_mode = str(cfg.get("dirty_repo_review_task_mode") or "workgraph-only").strip().lower()
+    if dirty_mode not in {"block", "workgraph-only", "allow"}:
+        dirty_mode = "workgraph-only"
 
     for row in review_rows:
         if not isinstance(row, dict):
@@ -905,15 +1172,20 @@ def emit_northstar_review_tasks(
         if not isinstance(repo, dict):
             out["errors"].append(f"{repo_name}: repo missing from snapshot")
             continue
-        if bool(cfg.get("dirty_repo_blocks_auto_mutation", True)) and bool(repo.get("git_dirty")):
-            out["skipped"] = int(out["skipped"]) + 1
-            out["tasks"].append({"repo": repo_name, "task_id": "", "status": "skipped-dirty"})
-            continue
         repo_path = Path(str(repo.get("path") or "")).expanduser()
         wg_dir = repo_path / ".workgraph"
         if not wg_dir.exists():
             out["errors"].append(f"{repo_name}: .workgraph missing")
             continue
+        if bool(cfg.get("dirty_repo_blocks_auto_mutation", True)) and bool(repo.get("git_dirty")):
+            allow_dirty = dirty_mode == "allow" or (
+                dirty_mode == "workgraph-only" and _workgraph_review_mutation_allowed(repo_path)
+            )
+            if not allow_dirty:
+                out["skipped"] = int(out["skipped"]) + 1
+                status = "skipped-dirty-workgraph" if dirty_mode == "workgraph-only" else "skipped-dirty"
+                out["tasks"].append({"repo": repo_name, "task_id": "", "status": status})
+                continue
         fingerprint = str(row.get("fingerprint") or "").strip()
         if not fingerprint:
             out["skipped"] = int(out["skipped"]) + 1

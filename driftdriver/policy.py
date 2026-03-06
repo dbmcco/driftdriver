@@ -167,7 +167,21 @@ def _default_northstardrift_cfg() -> dict[str, Any]:
         "max_review_tasks_per_repo": 2,
         "require_metric_evidence": True,
         "history_points": 18,
+        "weekly_rollup_weeks": 8,
         "latent_repo_floor_score": 68.0,
+        "target_gap_watch": 5.0,
+        "target_gap_critical": 12.0,
+        "dirty_repo_review_task_mode": "workgraph-only",
+        "targets": {
+            "overall": 82.0,
+            "axes": {
+                "continuity": 85.0,
+                "autonomy": 82.0,
+                "quality": 80.0,
+                "coordination": 78.0,
+                "self_improvement": 76.0,
+            },
+        },
     }
 
 
@@ -356,7 +370,19 @@ def _default_policy_text() -> str:
         "max_review_tasks_per_repo = 2\n"
         "require_metric_evidence = true\n"
         "history_points = 18\n"
+        "weekly_rollup_weeks = 8\n"
         "latent_repo_floor_score = 68.0\n"
+        "target_gap_watch = 5.0\n"
+        "target_gap_critical = 12.0\n"
+        "dirty_repo_review_task_mode = \"workgraph-only\"\n"
+        "\n"
+        "[northstardrift.targets]\n"
+        "overall = 82.0\n"
+        "continuity = 85.0\n"
+        "autonomy = 82.0\n"
+        "quality = 80.0\n"
+        "coordination = 78.0\n"
+        "self_improvement = 76.0\n"
         "\n"
         "[autonomy.default]\n"
         "level = \"observe\"\n"
@@ -764,12 +790,56 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     northstardrift["history_points"] = max(
         6, int(northstardrift_raw.get("history_points", northstardrift["history_points"]))
     )
+    northstardrift["weekly_rollup_weeks"] = max(
+        4, int(northstardrift_raw.get("weekly_rollup_weeks", northstardrift["weekly_rollup_weeks"]))
+    )
     try:
         northstardrift["latent_repo_floor_score"] = float(
             northstardrift_raw.get("latent_repo_floor_score", northstardrift["latent_repo_floor_score"])
         )
     except Exception:
         northstardrift["latent_repo_floor_score"] = _default_northstardrift_cfg()["latent_repo_floor_score"]
+    try:
+        northstardrift["target_gap_watch"] = max(
+            1.0,
+            float(
+            northstardrift_raw.get("target_gap_watch", northstardrift["target_gap_watch"])
+            ),
+        )
+    except Exception:
+        northstardrift["target_gap_watch"] = _default_northstardrift_cfg()["target_gap_watch"]
+    try:
+        northstardrift["target_gap_critical"] = max(
+            1.0,
+            float(
+            northstardrift_raw.get("target_gap_critical", northstardrift["target_gap_critical"])
+            ),
+        )
+    except Exception:
+        northstardrift["target_gap_critical"] = _default_northstardrift_cfg()["target_gap_critical"]
+    dirty_review_mode = str(
+        northstardrift_raw.get("dirty_repo_review_task_mode", northstardrift["dirty_repo_review_task_mode"])
+        or northstardrift["dirty_repo_review_task_mode"]
+    ).strip().lower()
+    northstardrift["dirty_repo_review_task_mode"] = (
+        dirty_review_mode
+        if dirty_review_mode in {"block", "workgraph-only", "allow"}
+        else _default_northstardrift_cfg()["dirty_repo_review_task_mode"]
+    )
+    targets_raw = northstardrift_raw.get("targets") if isinstance(northstardrift_raw.get("targets"), dict) else {}
+    targets = _default_northstardrift_cfg()["targets"]
+    try:
+        targets["overall"] = float(targets_raw.get("overall", targets["overall"]))
+    except Exception:
+        targets["overall"] = _default_northstardrift_cfg()["targets"]["overall"]
+    axis_targets = {}
+    for axis_name, axis_default in _default_northstardrift_cfg()["targets"]["axes"].items():
+        try:
+            axis_targets[axis_name] = float(targets_raw.get(axis_name, targets["axes"][axis_name]))
+        except Exception:
+            axis_targets[axis_name] = axis_default
+    targets["axes"] = axis_targets
+    northstardrift["targets"] = targets
 
     autonomy_raw = data.get("autonomy") if isinstance(data.get("autonomy"), dict) else {}
     autonomy_default_raw = autonomy_raw.get("default") if isinstance(autonomy_raw.get("default"), dict) else {}

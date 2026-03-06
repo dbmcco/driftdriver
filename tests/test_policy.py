@@ -55,6 +55,10 @@ class PolicyTests(unittest.TestCase):
             self.assertTrue(p.plandrift["enabled"])
             self.assertEqual(p.plandrift["continuation_runtime"], "double-shot-latte")
             self.assertEqual(p.plandrift["orchestration_runtime"], "claude-session-driver")
+            self.assertEqual(p.northstardrift["weekly_rollup_weeks"], 8)
+            self.assertEqual(p.northstardrift["dirty_repo_review_task_mode"], "workgraph-only")
+            self.assertEqual(p.northstardrift["targets"]["overall"], 82.0)
+            self.assertEqual(p.northstardrift["targets"]["axes"]["quality"], 80.0)
             self.assertEqual(p.autonomy_default["level"], "observe")
             self.assertFalse(p.autonomy_default["can_push"])
             self.assertEqual(p.autonomy_repos, [])
@@ -183,6 +187,33 @@ class PolicyTests(unittest.TestCase):
                         "allow_tmux_fallback = false",
                         "hard_stop_on_critical = true",
                         "",
+                        "[northstardrift]",
+                        "enabled = false",
+                        "emit_review_tasks = false",
+                        "emit_operator_prompts = false",
+                        "daily_rollup = false",
+                        "weekly_trends = false",
+                        "score_window = \"2d\"",
+                        "comparison_window = \"14d\"",
+                        "dirty_repo_blocks_auto_mutation = false",
+                        "max_auto_interventions_per_cycle = -3",
+                        "max_review_tasks_per_repo = -2",
+                        "require_metric_evidence = false",
+                        "history_points = 2",
+                        "weekly_rollup_weeks = -4",
+                        "latent_repo_floor_score = \"bad\"",
+                        "target_gap_watch = \"oops\"",
+                        "target_gap_critical = \"oops\"",
+                        "dirty_repo_review_task_mode = \"wild\"",
+                        "",
+                        "[northstardrift.targets]",
+                        "overall = \"bad\"",
+                        "continuity = 91.0",
+                        "autonomy = \"bad\"",
+                        "quality = 79.0",
+                        "coordination = \"bad\"",
+                        "self_improvement = 75.0",
+                        "",
                         "[autonomy.default]",
                         "level = \"invalid-tier\"",
                         "can_push = true",
@@ -284,6 +315,29 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.plandrift["orchestration_runtime"], "claude-session-driver")
             self.assertFalse(p.plandrift["allow_tmux_fallback"])
             self.assertTrue(p.plandrift["hard_stop_on_critical"])
+            self.assertFalse(p.northstardrift["enabled"])
+            self.assertFalse(p.northstardrift["emit_review_tasks"])
+            self.assertFalse(p.northstardrift["emit_operator_prompts"])
+            self.assertFalse(p.northstardrift["daily_rollup"])
+            self.assertFalse(p.northstardrift["weekly_trends"])
+            self.assertEqual(p.northstardrift["score_window"], "2d")
+            self.assertEqual(p.northstardrift["comparison_window"], "14d")
+            self.assertFalse(p.northstardrift["dirty_repo_blocks_auto_mutation"])
+            self.assertEqual(p.northstardrift["max_auto_interventions_per_cycle"], 1)
+            self.assertEqual(p.northstardrift["max_review_tasks_per_repo"], 1)
+            self.assertFalse(p.northstardrift["require_metric_evidence"])
+            self.assertEqual(p.northstardrift["history_points"], 6)
+            self.assertEqual(p.northstardrift["weekly_rollup_weeks"], 4)
+            self.assertEqual(p.northstardrift["latent_repo_floor_score"], 68.0)
+            self.assertEqual(p.northstardrift["target_gap_watch"], 5.0)
+            self.assertEqual(p.northstardrift["target_gap_critical"], 12.0)
+            self.assertEqual(p.northstardrift["dirty_repo_review_task_mode"], "workgraph-only")
+            self.assertEqual(p.northstardrift["targets"]["overall"], 82.0)
+            self.assertEqual(p.northstardrift["targets"]["axes"]["continuity"], 91.0)
+            self.assertEqual(p.northstardrift["targets"]["axes"]["autonomy"], 82.0)
+            self.assertEqual(p.northstardrift["targets"]["axes"]["quality"], 79.0)
+            self.assertEqual(p.northstardrift["targets"]["axes"]["coordination"], 78.0)
+            self.assertEqual(p.northstardrift["targets"]["axes"]["self_improvement"], 75.0)
             self.assertEqual(p.autonomy_default["level"], "observe")
             self.assertTrue(p.autonomy_default["can_push"])
             self.assertTrue(p.autonomy_default["can_open_pr"])
