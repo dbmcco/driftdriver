@@ -390,8 +390,19 @@ def run_program_quality_scan(
         )
 
     if bool(cfg["include_workgraph_health"]):
-        if bool(snapshot.get("stalled")):
-            fp = _fingerprint([repo_name, "work-stalled", str(snapshot.get("stall_reasons") or "")])
+        # Filter out drift-generated in-progress tasks to avoid feedback loop:
+        # qadrift detects "stalled" → creates drift task → task sits idle → qadrift
+        # detects more "stalled" → creates another drift task → repeat forever.
+        in_progress = snapshot.get("in_progress") or []
+        non_drift_in_progress = [
+            t for t in in_progress
+            if not any(tag in ("drift", "qadrift", "secdrift", "plandrift", "northstardrift")
+                       for tag in (t.get("tags") or []))
+        ]
+        stalled_for_real = bool(snapshot.get("stalled")) and len(non_drift_in_progress) > 0
+        if stalled_for_real:
+            # Stable fingerprint: repo + category only, so dedup works across scans.
+            fp = _fingerprint([repo_name, "work-stalled"])
             reasons = snapshot.get("stall_reasons")
             reason_line = "; ".join(str(item) for item in reasons[:2]) if isinstance(reasons, list) else "no reason"
             findings.append(
@@ -407,7 +418,7 @@ def run_program_quality_scan(
         missing_deps = max(0, int(snapshot.get("missing_dependencies") or 0))
         blocked_open = max(0, int(snapshot.get("blocked_open") or 0))
         if missing_deps > 0 or blocked_open > 0:
-            fp = _fingerprint([repo_name, "dependency-gaps", str(missing_deps), str(blocked_open)])
+            fp = _fingerprint([repo_name, "dependency-gaps"])
             findings.append(
                 {
                     "fingerprint": fp,
@@ -418,7 +429,7 @@ def run_program_quality_scan(
                     "recommendation": "Repair task dependency integrity and verify ready queue transitions.",
                 }
             )
-        has_work = bool(snapshot.get("in_progress")) or bool(snapshot.get("ready"))
+        has_work = bool(non_drift_in_progress) or bool(snapshot.get("ready"))
         if has_work and bool(snapshot.get("workgraph_exists")) and not bool(snapshot.get("service_running")):
             fp = _fingerprint([repo_name, "executor-offline"])
             findings.append(
