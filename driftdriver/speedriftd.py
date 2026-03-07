@@ -14,21 +14,11 @@ from driftdriver.project_autopilot import get_ready_tasks
 from driftdriver.workgraph import load_workgraph
 from driftdriver.worker_monitor import check_worker_liveness
 
-# -- Re-export state management for backwards compatibility --
-from driftdriver.speedriftd_state import (  # noqa: F401
-    CONTROL_MODES,
-    _append_jsonl,
-    _default_control,
+from driftdriver.speedriftd_state import (
     _iso_now,
-    _normalize_control_state,
-    _parse_iso_timestamp,
-    _read_json,
     _safe_slug,
-    _write_json,
     load_control_state,
-    load_runtime_snapshot,
     runtime_paths,
-    write_control_state,
     write_runtime_snapshot,
 )
 

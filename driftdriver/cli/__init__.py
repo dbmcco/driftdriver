@@ -13,9 +13,11 @@ from typing import Any
 
 from driftdriver import wire
 from driftdriver.speedriftd import (
-    load_runtime_snapshot,
     run_runtime_cycle,
     run_runtime_loop,
+)
+from driftdriver.speedriftd_state import (
+    load_runtime_snapshot,
     write_control_state,
 )
 from driftdriver.workgraph import find_workgraph_dir

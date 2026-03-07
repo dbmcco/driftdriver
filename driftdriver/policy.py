@@ -1028,8 +1028,3 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         autonomy_default=autonomy_default,
         autonomy_repos=autonomy_repos,
     )
-
-
-# Re-export for backwards compatibility
-from driftdriver.policy_enforcement import evaluate_enforcement  # noqa: F401
-from driftdriver.policy_enforcement import SEVERITY_RANK as _SEVERITY_RANK  # noqa: F401

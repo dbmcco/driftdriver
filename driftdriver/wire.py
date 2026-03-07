@@ -1,5 +1,5 @@
-# ABOUTME: Wires standalone modules into the CLI pipeline
-# ABOUTME: Provides CLI subcommand entry points for all dead-code modules
+# ABOUTME: CLI subcommand dispatch for wire commands
+# ABOUTME: Provides entry points for knowledge priming, task recovery, scope checking, and reporting
 
 from __future__ import annotations
 

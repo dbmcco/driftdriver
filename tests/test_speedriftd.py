@@ -12,9 +12,11 @@ from unittest.mock import patch
 from driftdriver.project_autopilot import AutopilotConfig, AutopilotRun, WorkerContext
 from driftdriver.speedriftd import (
     collect_runtime_snapshot,
-    load_runtime_snapshot,
     run_runtime_cycle,
     run_runtime_loop,
+)
+from driftdriver.speedriftd_state import (
+    load_runtime_snapshot,
     runtime_paths,
     write_control_state,
 )

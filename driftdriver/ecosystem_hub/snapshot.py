@@ -450,7 +450,7 @@ def collect_repo_snapshot(
     snap.runtime = _read_json(wg_dir / "service" / "runtime" / "current.json")
     if not snap.runtime:
         try:
-            from driftdriver.speedriftd import load_control_state
+            from driftdriver.speedriftd_state import load_control_state
 
             snap.runtime = {"control": load_control_state(repo_path)}
         except Exception:

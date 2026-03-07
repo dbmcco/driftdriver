@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 from driftdriver.cli import _ordered_optional_plugins
-from driftdriver.policy import ensure_drift_policy, evaluate_enforcement, load_drift_policy
+from driftdriver.policy import ensure_drift_policy, load_drift_policy
+from driftdriver.policy_enforcement import evaluate_enforcement
 
 
 class PolicyTests(unittest.TestCase):
