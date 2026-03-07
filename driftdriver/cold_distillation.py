@@ -1,8 +1,10 @@
 # ABOUTME: Cold distillation engine for Lessons MCP data maintenance
 # ABOUTME: Compresses events→knowledge, identifies patterns, prunes low-confidence
 
+import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass
@@ -72,6 +74,43 @@ def prune_low_confidence(
     return surviving, pruned
 
 
+def apply_decay(
+    entries: list[dict],
+    reference_date: str = "",
+    half_life_days: int = 30,
+    min_confidence: float = 0.05,
+) -> list[dict]:
+    """Apply exponential decay to knowledge entries based on staleness.
+
+    Entries with a 'last_confirmed' date lose confidence exponentially.
+    At half_life_days since last confirmation, confidence drops to 50%.
+    Entries without last_confirmed are treated as very old (2020-01-01).
+    Minimum confidence is clamped to min_confidence.
+    """
+    if not reference_date:
+        reference_date = datetime.now().strftime("%Y-%m-%d")
+    ref = datetime.strptime(reference_date, "%Y-%m-%d")
+
+    result = []
+    for entry in entries:
+        entry = dict(entry)  # copy, don't mutate
+        last = entry.get("last_confirmed", "2020-01-01")
+        try:
+            last_dt = datetime.strptime(last, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            last_dt = datetime(2020, 1, 1)
+
+        days_since = (ref - last_dt).days
+        if days_since <= 0:
+            result.append(entry)
+            continue
+
+        decay_factor = math.pow(0.5, days_since / half_life_days)
+        entry["confidence"] = max(min_confidence, round(entry.get("confidence", 0.5) * decay_factor, 4))
+        result.append(entry)
+    return result
+
+
 def distill(
     events: list[dict],
     existing_knowledge: list[dict],
@@ -98,6 +137,7 @@ def distill(
     patterns_identified = len(patterns)
 
     surviving, entries_pruned = prune_low_confidence(all_knowledge, threshold=prune_threshold)
+    surviving = apply_decay(surviving)
     entries_remaining = len(surviving)
 
     return DistillationResult(

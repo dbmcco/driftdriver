@@ -3,6 +3,7 @@
 
 from driftdriver.cold_distillation import (
     DistillationResult,
+    apply_decay,
     cluster_events,
     distill,
     identify_patterns,
@@ -198,3 +199,48 @@ def test_distill_full_pipeline():
     assert result.knowledge_created == 1
     # entries_pruned: the low-confidence prior entry gets pruned
     assert result.entries_pruned == 1
+
+
+# ---------------------------------------------------------------------------
+# test_apply_decay
+# ---------------------------------------------------------------------------
+
+
+def test_apply_decay_reduces_old_confidence():
+    """Entries not confirmed recently lose confidence."""
+    entries = [
+        {"category": "pattern", "content": "old finding", "confidence": 0.9, "last_confirmed": "2026-01-01"},
+        {"category": "pattern", "content": "recent finding", "confidence": 0.9, "last_confirmed": "2026-03-06"},
+    ]
+    decayed = apply_decay(entries, reference_date="2026-03-06", half_life_days=30)
+    assert decayed[0]["confidence"] < 0.9  # old entry decayed
+    assert decayed[1]["confidence"] == 0.9  # recent entry unchanged
+
+
+def test_apply_decay_no_last_confirmed_uses_default():
+    """Entries without last_confirmed get decayed from epoch."""
+    entries = [{"category": "x", "content": "y", "confidence": 0.8}]
+    decayed = apply_decay(entries, reference_date="2026-03-06", half_life_days=30)
+    assert decayed[0]["confidence"] < 0.8
+
+
+def test_apply_decay_preserves_minimum():
+    """Confidence never goes below min_confidence."""
+    entries = [{"category": "x", "content": "y", "confidence": 0.1, "last_confirmed": "2020-01-01"}]
+    decayed = apply_decay(entries, reference_date="2026-03-06", half_life_days=30)
+    assert decayed[0]["confidence"] >= 0.05
+
+
+def test_apply_decay_same_day_no_change():
+    """Entries confirmed on reference date are unchanged."""
+    entries = [{"category": "x", "content": "y", "confidence": 0.7, "last_confirmed": "2026-03-06"}]
+    decayed = apply_decay(entries, reference_date="2026-03-06", half_life_days=30)
+    assert decayed[0]["confidence"] == 0.7
+
+
+def test_apply_decay_does_not_mutate_originals():
+    """apply_decay returns new dicts, doesn't mutate input."""
+    entries = [{"category": "x", "content": "y", "confidence": 0.9, "last_confirmed": "2020-01-01"}]
+    decayed = apply_decay(entries, reference_date="2026-03-06", half_life_days=30)
+    assert entries[0]["confidence"] == 0.9  # original unchanged
+    assert decayed[0]["confidence"] < 0.9  # decayed copy changed
