@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from driftdriver.drift_task_guard import guarded_add_drift_task
 from driftdriver.outcome import DriftOutcome, write_outcome
 from driftdriver.plandrift import emit_plan_review_tasks, run_workgraph_plan_review
 from driftdriver.qadrift import emit_quality_review_tasks, run_program_quality_scan
@@ -1594,47 +1595,17 @@ def emit_factory_followups(
         desc = _followup_description(action, cycle)
 
         out["attempted"] = int(out["attempted"]) + 1
-        show_rc, _, show_err = _run_cmd(
-            ["wg", "--dir", str(wg_dir), "show", task_id, "--json"],
+        result = guarded_add_drift_task(
+            wg_dir=wg_dir,
+            task_id=task_id,
+            title=title,
+            description=desc,
+            lane_tag="factory",
+            extra_tags=[_slug(module)],
             cwd=repo_path,
-            timeout=20.0,
         )
 
-        if show_rc == 0:
-            out["existing"] = int(out["existing"]) + 1
-            per_repo_counts[repo] = per_repo_counts.get(repo, 0) + 1
-            out["tasks"].append(
-                {
-                    "repo": repo,
-                    "task_id": task_id,
-                    "status": "existing",
-                }
-            )
-            continue
-
-        add_rc, add_out, add_err = _run_cmd(
-            [
-                "wg",
-                "--dir",
-                str(wg_dir),
-                "add",
-                title,
-                "--id",
-                task_id,
-                "-d",
-                desc,
-                "-t",
-                "drift",
-                "-t",
-                "factory",
-                "-t",
-                _slug(module),
-            ],
-            cwd=repo_path,
-            timeout=30.0,
-        )
-
-        if add_rc == 0:
+        if result == "created":
             out["created"] = int(out["created"]) + 1
             per_repo_counts[repo] = per_repo_counts.get(repo, 0) + 1
             out["tasks"].append(
@@ -1644,9 +1615,27 @@ def emit_factory_followups(
                     "status": "created",
                 }
             )
+        elif result == "existing":
+            out["existing"] = int(out["existing"]) + 1
+            per_repo_counts[repo] = per_repo_counts.get(repo, 0) + 1
+            out["tasks"].append(
+                {
+                    "repo": repo,
+                    "task_id": task_id,
+                    "status": "existing",
+                }
+            )
+        elif result == "capped":
+            out["skipped"] = int(out.get("skipped") or 0) + 1
+            out["tasks"].append(
+                {
+                    "repo": repo,
+                    "task_id": task_id,
+                    "status": "capped",
+                }
+            )
         else:
-            err = (add_err or add_out or show_err or "").strip()
-            out["errors"].append(f"{repo}: could not create {task_id}: {err[:220]}")
+            out["errors"].append(f"{repo}: could not create {task_id}: {result}")
 
     out["tasks"] = list(out.get("tasks") or [])[:80]
     out["errors"] = list(out.get("errors") or [])[:80]

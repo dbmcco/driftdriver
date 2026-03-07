@@ -21,7 +21,8 @@ concrete workgraph tasks with dependencies.
    - A short `--id` (kebab-case, e.g., `feat-auth-login`)
    - A clear title
    - A `-d` description covering: what to do, which files to touch, acceptance criteria
-   - `--blocked-by` dependencies where appropriate
+   - `--after` dependencies where appropriate
+   - `--immediate` to bypass draft mode
 3. Keep tasks small — each should be completable in one focused session.
 4. After creating all tasks, run:
    ./.workgraph/coredrift ensure-contracts --apply

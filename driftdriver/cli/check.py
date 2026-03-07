@@ -562,18 +562,9 @@ def _ensure_breaker_task(*, wg_dir: Path, task_id: str) -> str:
     Create deterministic breaker escalation task if missing.
     Returns the task id.
     """
+    from driftdriver.drift_task_guard import guarded_add_drift_task
 
     breaker_id = f"drift-breaker-{task_id}"
-    try:
-        subprocess.check_output(
-            ["wg", "--dir", str(wg_dir), "show", breaker_id, "--json"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-        return breaker_id
-    except Exception:
-        pass
-
     ts = datetime.now(timezone.utc).isoformat()
     desc = (
         "Circuit-breaker escalation for repeated drift.\n\n"
@@ -587,24 +578,13 @@ def _ensure_breaker_task(*, wg_dir: Path, task_id: str) -> str:
         + task_id
         + " --write-log --create-followups`\n"
     )
-    subprocess.check_call(
-        [
-            "wg",
-            "--dir",
-            str(wg_dir),
-            "add",
-            f"breaker: {task_id}",
-            "--id",
-            breaker_id,
-            "--blocked-by",
-            task_id,
-            "-d",
-            desc,
-            "-t",
-            "drift",
-            "-t",
-            "breaker",
-        ]
+    guarded_add_drift_task(
+        wg_dir=wg_dir,
+        task_id=breaker_id,
+        title=f"breaker: {task_id}",
+        description=desc,
+        lane_tag="breaker",
+        after=task_id,
     )
     return breaker_id
 

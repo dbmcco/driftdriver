@@ -124,7 +124,7 @@ Review JSON: $JSON_OUT
 
 Decision needed: for each update, decide adopt/defer/skip and log reasoning."
 
-    wg add "$TASK_ID" --id "$TASK_ID" -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
+    wg add "$TASK_ID" --id "$TASK_ID" --immediate -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
   fi
 
   # New repos → eval task
@@ -158,7 +158,7 @@ Review JSON: $JSON_OUT
 
 Decision needed: for each repo, decide explore/watch/skip and log reasoning."
 
-    wg add "$TASK_ID" --id "$TASK_ID" -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
+    wg add "$TASK_ID" --id "$TASK_ID" --immediate -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
   fi
 
   # Repo activity → eval task
@@ -192,7 +192,7 @@ Review JSON: $JSON_OUT
 
 Decision needed: check what changed, decide if relevant to our work."
 
-    wg add "$TASK_ID" --id "$TASK_ID" -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
+    wg add "$TASK_ID" --id "$TASK_ID" --immediate -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
   fi
 
   # ── 5. Append notice to CLAUDE.md ──

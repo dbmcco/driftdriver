@@ -878,42 +878,40 @@ class TestWgLogMessage:
 
 
 class TestEnsureUpdateFollowupTask:
-    def test_returns_existing_task_id(
+    def test_returns_expected_task_id_existing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def fake_check_output(cmd: list[str], **kwargs: Any) -> str:
-            return '{"id": "drift-self-update-t-1"}'
-
-        monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+        monkeypatch.setattr(
+            "driftdriver.drift_task_guard.guarded_add_drift_task",
+            lambda **kw: "existing",
+        )
         result = _ensure_update_followup_task(
             wg_dir=tmp_path, task_id="t-1", summary="updates found"
         )
         assert result == "drift-self-update-t-1"
 
-    def test_creates_new_task_when_not_found(
+    def test_creates_new_task_via_guard(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        add_calls: list[list[str]] = []
+        guard_calls: list[dict[str, Any]] = []
 
-        def fake_check_output(cmd: list[str], **kwargs: Any) -> str:
-            raise subprocess.CalledProcessError(1, cmd)
+        def fake_guard(**kwargs: Any) -> str:
+            guard_calls.append(kwargs)
+            return "created"
 
-        def fake_check_call(cmd: list[str], **kwargs: Any) -> None:
-            add_calls.append(cmd)
-
-        monkeypatch.setattr(subprocess, "check_output", fake_check_output)
-        monkeypatch.setattr(subprocess, "check_call", fake_check_call)
+        monkeypatch.setattr(
+            "driftdriver.drift_task_guard.guarded_add_drift_task",
+            fake_guard,
+        )
         result = _ensure_update_followup_task(
             wg_dir=tmp_path, task_id="t-1", summary="updates found"
         )
         assert result == "drift-self-update-t-1"
-        assert len(add_calls) == 1
-        cmd = add_calls[0]
-        assert "wg" in cmd
-        assert "add" in cmd
-        assert "--id" in cmd
-        idx = cmd.index("--id")
-        assert cmd[idx + 1] == "drift-self-update-t-1"
+        assert len(guard_calls) == 1
+        call = guard_calls[0]
+        assert call["task_id"] == "drift-self-update-t-1"
+        assert call["lane_tag"] == "updates"
+        assert call["after"] == "t-1"
 
 
 # ---------------------------------------------------------------------------

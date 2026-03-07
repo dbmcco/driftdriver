@@ -354,18 +354,12 @@ class FactoryDriftTests(unittest.TestCase):
                 ],
             }
 
-            responses = [
-                subprocess.CompletedProcess(["wg"], 1, "", "not found"),
-                subprocess.CompletedProcess(["wg"], 0, "", ""),
-                subprocess.CompletedProcess(["wg"], 0, "{}", ""),
-            ]
-            calls: list[list[str]] = []
+            guard_results = iter(["created", "existing"])
 
-            def _fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-                calls.append(cmd)
-                return responses.pop(0)
+            def _fake_guard(**kwargs: object) -> str:
+                return next(guard_results)
 
-            with patch("driftdriver.factorydrift.subprocess.run", side_effect=_fake_run):
+            with patch("driftdriver.factorydrift.guarded_add_drift_task", side_effect=_fake_guard):
                 out = emit_factory_followups(cycle=cycle, snapshot=snapshot, max_followups_per_repo=2)
 
             self.assertEqual(out["attempted"], 2)
@@ -373,7 +367,6 @@ class FactoryDriftTests(unittest.TestCase):
             self.assertEqual(out["existing"], 1)
             self.assertEqual(out["skipped"], 0)
             self.assertEqual(len(out["errors"]), 0)
-            self.assertGreaterEqual(len(calls), 3)
 
     def test_emit_factory_followups_respects_per_repo_limit(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -390,15 +383,7 @@ class FactoryDriftTests(unittest.TestCase):
                 ],
             }
 
-            responses = [
-                subprocess.CompletedProcess(["wg"], 1, "", "not found"),
-                subprocess.CompletedProcess(["wg"], 0, "", ""),
-            ]
-
-            def _fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-                return responses.pop(0)
-
-            with patch("driftdriver.factorydrift.subprocess.run", side_effect=_fake_run):
+            with patch("driftdriver.factorydrift.guarded_add_drift_task", return_value="created"):
                 out = emit_factory_followups(cycle=cycle, snapshot=snapshot, max_followups_per_repo=1)
 
             self.assertEqual(out["attempted"], 1)

@@ -86,16 +86,12 @@ class PlanDriftTests(unittest.TestCase):
                     },
                 ]
             }
-            responses = [
-                subprocess.CompletedProcess(["wg"], 1, "", "not found"),
-                subprocess.CompletedProcess(["wg"], 0, "", ""),
-                subprocess.CompletedProcess(["wg"], 0, "{}", ""),
-            ]
+            guard_results = iter(["created", "existing"])
 
-            def _fake_run(_cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-                return responses.pop(0)
+            def _fake_guard(**kwargs: object) -> str:
+                return next(guard_results)
 
-            with patch("driftdriver.plandrift.subprocess.run", side_effect=_fake_run):
+            with patch("driftdriver.plandrift.guarded_add_drift_task", side_effect=_fake_guard):
                 out = emit_plan_review_tasks(repo_path=repo, report=report, max_tasks=2)
 
             self.assertEqual(out["attempted"], 2)

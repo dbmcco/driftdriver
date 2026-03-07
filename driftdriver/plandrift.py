@@ -10,6 +10,8 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
+from driftdriver.drift_task_guard import guarded_add_drift_task
+
 
 _SEVERITY_RANK = {
     "critical": 4,
@@ -615,45 +617,26 @@ def emit_plan_review_tasks(
         )
 
         out["attempted"] = int(out["attempted"]) + 1
-        show_rc, _, show_err = _run_cmd(
-            ["wg", "--dir", str(wg_dir), "show", task_id, "--json"],
+        result = guarded_add_drift_task(
+            wg_dir=wg_dir,
+            task_id=task_id,
+            title=title,
+            description=desc,
+            lane_tag="plandrift",
+            extra_tags=["planning", "review"],
             cwd=repo_path,
-            timeout=20.0,
         )
-        if show_rc == 0:
-            out["existing"] = int(out["existing"]) + 1
-            out["tasks"].append({"task_id": task_id, "status": "existing"})
-            continue
-
-        add_rc, add_out, add_err = _run_cmd(
-            [
-                "wg",
-                "--dir",
-                str(wg_dir),
-                "add",
-                title,
-                "--id",
-                task_id,
-                "-d",
-                desc,
-                "-t",
-                "drift",
-                "-t",
-                "plandrift",
-                "-t",
-                "planning",
-                "-t",
-                "review",
-            ],
-            cwd=repo_path,
-            timeout=30.0,
-        )
-        if add_rc == 0:
+        if result == "created":
             out["created"] = int(out["created"]) + 1
             out["tasks"].append({"task_id": task_id, "status": "created"})
+        elif result == "existing":
+            out["existing"] = int(out["existing"]) + 1
+            out["tasks"].append({"task_id": task_id, "status": "existing"})
+        elif result == "capped":
+            out["skipped"] = int(out["skipped"]) + 1
+            out["tasks"].append({"task_id": task_id, "status": "capped"})
         else:
-            err = (add_err or add_out or show_err or "").strip()
-            out["errors"].append(f"{repo_path.name}: could not create {task_id}: {err[:220]}")
+            out["errors"].append(f"{repo_path.name}: could not create {task_id}")
 
     out["tasks"] = list(out.get("tasks") or [])[:80]
     out["errors"] = list(out.get("errors") or [])[:80]

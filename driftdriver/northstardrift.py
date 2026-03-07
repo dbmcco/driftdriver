@@ -7,6 +7,8 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
+from driftdriver.drift_task_guard import guarded_add_drift_task
+
 
 AXIS_NAMES = (
     "continuity",
@@ -1272,45 +1274,28 @@ def emit_northstar_review_tasks(
             f"Suggested Codex prompt:\n{codex_prompt}\n"
         )
         out["attempted"] = int(out["attempted"]) + 1
-        show_rc, _, show_err = _run_cmd(
-            ["wg", "--dir", str(wg_dir), "show", task_id, "--json"],
+        result = guarded_add_drift_task(
+            wg_dir=wg_dir,
+            task_id=task_id,
+            title=title,
+            description=desc,
+            lane_tag="northstardrift",
+            extra_tags=["review"],
             cwd=repo_path,
-            timeout=20.0,
         )
-        if show_rc == 0:
-            out["existing"] = int(out["existing"]) + 1
-            per_repo_counts[repo_name] = per_repo_counts.get(repo_name, 0) + 1
-            out["tasks"].append({"repo": repo_name, "task_id": task_id, "status": "existing"})
-            continue
-
-        add_rc, add_out, add_err = _run_cmd(
-            [
-                "wg",
-                "--dir",
-                str(wg_dir),
-                "add",
-                title,
-                "--id",
-                task_id,
-                "-d",
-                desc,
-                "-t",
-                "drift",
-                "-t",
-                "northstardrift",
-                "-t",
-                "review",
-            ],
-            cwd=repo_path,
-            timeout=30.0,
-        )
-        if add_rc == 0:
+        if result == "created":
             out["created"] = int(out["created"]) + 1
             per_repo_counts[repo_name] = per_repo_counts.get(repo_name, 0) + 1
             out["tasks"].append({"repo": repo_name, "task_id": task_id, "status": "created"})
+        elif result == "existing":
+            out["existing"] = int(out["existing"]) + 1
+            per_repo_counts[repo_name] = per_repo_counts.get(repo_name, 0) + 1
+            out["tasks"].append({"repo": repo_name, "task_id": task_id, "status": "existing"})
+        elif result == "capped":
+            out["skipped"] = int(out.get("skipped", 0)) + 1
+            out["tasks"].append({"repo": repo_name, "task_id": task_id, "status": "capped"})
         else:
-            err = (add_err or add_out or show_err or "").strip()
-            out["errors"].append(f"{repo_name}: could not create {task_id}: {err[:220]}")
+            out["errors"].append(f"{repo_name}: could not create {task_id}: {result}")
 
     out["tasks"] = list(out.get("tasks") or [])[:80]
     out["errors"] = list(out.get("errors") or [])[:80]

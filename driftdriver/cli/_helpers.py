@@ -191,17 +191,9 @@ def _wg_log_message(*, wg_dir: Path, task_id: str, message: str) -> None:
 
 
 def _ensure_update_followup_task(*, wg_dir: Path, task_id: str, summary: str) -> str:
-    followup_id = f"drift-self-update-{task_id}"
-    try:
-        subprocess.check_output(
-            ["wg", "--dir", str(wg_dir), "show", followup_id, "--json"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-        return followup_id
-    except Exception:
-        pass
+    from driftdriver.drift_task_guard import guarded_add_drift_task
 
+    followup_id = f"drift-self-update-{task_id}"
     ts = datetime.now(timezone.utc).isoformat()
     desc = (
         "Speedrift ecosystem updates were detected during driftdriver preflight.\n\n"
@@ -217,24 +209,13 @@ def _ensure_update_followup_task(*, wg_dir: Path, task_id: str, summary: str) ->
         "Preflight summary:\n"
         f"{summary}\n"
     )
-    subprocess.check_call(
-        [
-            "wg",
-            "--dir",
-            str(wg_dir),
-            "add",
-            f"self-update decision: {task_id}",
-            "--id",
-            followup_id,
-            "--blocked-by",
-            task_id,
-            "-d",
-            desc,
-            "-t",
-            "drift",
-            "-t",
-            "updates",
-        ]
+    guarded_add_drift_task(
+        wg_dir=wg_dir,
+        task_id=followup_id,
+        title=f"self-update decision: {task_id}",
+        description=desc,
+        lane_tag="updates",
+        after=task_id,
     )
     return followup_id
 
