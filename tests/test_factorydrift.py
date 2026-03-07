@@ -17,6 +17,7 @@ from driftdriver.factorydrift import (
     execute_factory_cycle,
     record_task_outcome,
     resolve_repo_autonomy,
+    run_as_lane,
     summarize_factory_cycle,
     write_factory_ledger,
 )
@@ -990,6 +991,49 @@ class TestClassifyDriftOutcome:
         from driftdriver.factorydrift import classify_drift_outcome
 
         assert classify_drift_outcome(drift_score="", findings=["something"]) == "deferred"
+
+
+class TestRunAsLane(unittest.TestCase):
+    """Tests for the run_as_lane adapter on factorydrift."""
+
+    def test_run_as_lane_returns_lane_result(self) -> None:
+        """run_as_lane returns a valid LaneResult that passes contract validation."""
+        from driftdriver.lane_contract import LaneResult, validate_lane_output
+
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            result = run_as_lane(project_dir)
+
+            self.assertIsInstance(result, LaneResult)
+            self.assertEqual(result.lane, "factorydrift")
+            self.assertIsInstance(result.findings, list)
+            self.assertIsInstance(result.exit_code, int)
+            self.assertIsInstance(result.summary, str)
+
+            # Verify it validates through the contract
+            raw = json.dumps({
+                "lane": result.lane,
+                "findings": [
+                    {"message": f.message, "severity": f.severity, "file": f.file, "line": f.line, "tags": f.tags}
+                    for f in result.findings
+                ],
+                "exit_code": result.exit_code,
+                "summary": result.summary,
+            })
+            validated = validate_lane_output(raw)
+            self.assertIsNotNone(validated)
+            self.assertEqual(validated.lane, "factorydrift")
+
+    def test_run_as_lane_handles_exception(self) -> None:
+        """run_as_lane returns an error LaneResult if build_factory_cycle raises."""
+        with patch("driftdriver.factorydrift.build_factory_cycle", side_effect=RuntimeError("boom")):
+            result = run_as_lane(Path("/nonexistent"))
+
+        self.assertEqual(result.lane, "factorydrift")
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(len(result.findings), 1)
+        self.assertEqual(result.findings[0].severity, "error")
+        self.assertIn("boom", result.findings[0].message)
 
 
 if __name__ == "__main__":

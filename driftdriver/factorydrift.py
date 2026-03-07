@@ -7,6 +7,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from driftdriver.outcome import DriftOutcome, write_outcome
@@ -1688,3 +1689,131 @@ def write_factory_ledger(
     out["central_history"] = str(central_history)
     out["central_written"] = True
     return out
+
+
+def _lane_severity_from_priority(priority: int) -> str:
+    """Map factory action priority to lane contract severity."""
+    if priority >= 95:
+        return "critical"
+    if priority >= 85:
+        return "warning"
+    return "info"
+
+
+def _minimal_snapshot(project_dir: Path) -> dict[str, Any]:
+    """Build a lightweight snapshot for a single project directory."""
+    repo_name = project_dir.name
+    wg_dir = project_dir / ".workgraph"
+    wg_exists = wg_dir.is_dir()
+
+    return {
+        "overview": {"attention_repos": [{"repo": repo_name, "score": 10}]},
+        "repos": [
+            {
+                "name": repo_name,
+                "path": str(project_dir),
+                "exists": True,
+                "workgraph_exists": wg_exists,
+                "service_running": False,
+                "activity_state": "unknown",
+                "missing_dependencies": 0,
+                "blocked_open": 0,
+                "stale_open": [],
+                "stale_in_progress": [],
+                "behind": 0,
+                "git_dirty": False,
+                "ready": [],
+                "in_progress": [],
+            }
+        ],
+        "upstream_candidates": [],
+        "updates": {},
+    }
+
+
+def _minimal_policy() -> Any:
+    """Build a lightweight policy for run_as_lane scanning."""
+    return SimpleNamespace(
+        factory={
+            "enabled": True,
+            "plan_only": True,
+            "max_repos_per_cycle": 1,
+            "max_actions_per_cycle": 20,
+        },
+        model={},
+        sourcedrift={"enabled": False},
+        syncdrift={"enabled": False},
+        stalledrift={"enabled": False},
+        servicedrift={"enabled": False},
+        federatedrift={"enabled": False},
+        secdrift={"enabled": True, "emit_review_tasks": False},
+        qadrift={"enabled": True, "emit_review_tasks": False},
+        plandrift={"enabled": True, "emit_review_tasks": False},
+        sessiondriver={"enabled": False},
+        autonomy_default={
+            "level": "observe",
+            "can_push": False,
+            "can_open_pr": False,
+            "can_merge": False,
+            "max_actions_per_cycle": 20,
+        },
+        autonomy_repos=[],
+    )
+
+
+def run_as_lane(project_dir: Path) -> "LaneResult":
+    """Run factorydrift and return results in the standard lane contract format.
+
+    Wraps ``build_factory_cycle`` so that factorydrift can be invoked through
+    the unified ``LaneResult`` interface used by all drift lanes.  The adapter
+    builds a plan-only cycle from a minimal snapshot of *project_dir* and
+    converts the planned actions into ``LaneFinding`` objects.
+    """
+    from driftdriver.lane_contract import LaneFinding, LaneResult
+
+    try:
+        snapshot = _minimal_snapshot(project_dir)
+        policy = _minimal_policy()
+        cycle = build_factory_cycle(
+            snapshot=snapshot,
+            policy=policy,
+            project_name=project_dir.name,
+            plan_only_override=True,
+        )
+    except Exception as exc:
+        return LaneResult(
+            lane="factorydrift",
+            findings=[LaneFinding(message=f"factorydrift error: {exc}", severity="error")],
+            exit_code=1,
+            summary=f"factorydrift failed: {exc}",
+        )
+
+    findings: list[LaneFinding] = []
+    actions = cycle.get("action_plan")
+    if isinstance(actions, list):
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            module = str(action.get("module") or "factorydrift")
+            kind = str(action.get("kind") or "unknown")
+            reason = str(action.get("reason") or "")
+            priority = int(action.get("priority") or 0)
+            findings.append(LaneFinding(
+                message=f"[{module}] {kind}: {reason}" if reason else f"[{module}] {kind}",
+                severity=_lane_severity_from_priority(priority),
+                file="",
+                line=0,
+                tags=[module, kind],
+            ))
+
+    summary_data = summarize_factory_cycle(cycle)
+    planned = int(summary_data.get("planned_actions") or 0)
+    summary_text = f"{planned} planned actions across {summary_data.get('selected_repos', 0)} repos"
+
+    exit_code = 1 if findings else 0
+    return LaneResult(
+        lane="factorydrift",
+        findings=findings,
+        exit_code=exit_code,
+        summary=summary_text,
+    )
