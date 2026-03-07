@@ -775,23 +775,206 @@ scripts/e2e_smoke.sh
 scripts/ecosystem_hub_smoke.sh .
 ```
 
-## Quick Start for Agents
+## Agent Operations Guide
+
+This section is for AI agents (Claude Code, Codex, Amplifier) working in repos that use Speedrift.
+
+### Bootstrap a Repo
 
 ```bash
-# 1. Install into any repo
+# Install driftdriver wrappers into any repo with .workgraph/
 driftdriver install
 
-# 2. Run drift check on a task
-./.workgraph/drifts check --task <id> --write-log --create-followups
+# With optional lanes
+driftdriver install --with-uxdrift --with-therapydrift --with-yagnidrift --with-redrift
 
-# 3. Check ecosystem health (if hub is running)
-curl -s http://127.0.0.1:8777/api/overview | python3 -m json.tool
-
-# 4. Full autopilot loop
-driftdriver autopilot --goal "Your goal here"
+# Update CLAUDE.md/AGENTS.md instruction blocks across all repos
+python3 /Users/braydon/projects/experiments/driftdriver/scripts/push_agent_instructions.py
 ```
 
-Key flags for `wg` task creation:
+### Per-Task Workflow
+
+Run drift checks at task start and before `wg done`:
+
+```bash
+# Check a task for drift (advisory — never blocks)
+./.workgraph/drifts check --task <id> --write-log --create-followups
+
+# Complete a task (--verify gates are checked automatically)
+wg done <id>
+```
+
+Follow-up tasks are created automatically when drift is found. They are:
+- Deduped (won't recreate an existing task)
+- Capped at 3 per lane per repo
+- Created with `--immediate` (bypass draft mode)
+
+### Task Creation
+
+```bash
+# Create a task with dependency
+wg add "Implement feature X" --after <dep-id> --immediate
+
+# Create a task with a verification gate
+wg add "Fix auth bug" --verify "pytest tests/test_auth.py" --immediate
+
+# Full form with description
+wg add "Title" --after <dep> --immediate --verify "test command" \
+  -d "## Description
+What to do.
+
+## Validation
+- [ ] Tests pass
+- [ ] No regressions"
+```
+
+Key flags:
 - `--after <dep-id>` — dependency (replaces old `--blocked-by`)
 - `--immediate` — bypass draft mode (required for drift follow-ups)
 - `--verify "command"` — hard gate checked by `wg done`
+- `--id <kebab-case>` — explicit task ID
+
+### Runtime Control
+
+Agents default to `observe` mode — read state but don't dispatch work.
+
+```bash
+# Refresh repo state (always safe)
+driftdriver --dir "$PWD" --json speedriftd status --refresh
+
+# Arm repo for supervised work
+driftdriver --dir "$PWD" speedriftd status \
+  --set-mode supervise --lease-owner <agent-name> \
+  --reason "explicit repo supervision requested"
+
+# Arm for autonomous execution
+driftdriver --dir "$PWD" speedriftd status \
+  --set-mode autonomous --lease-owner <agent-name> \
+  --reason "explicit autonomous execution requested"
+
+# Return to passive observation when done
+driftdriver --dir "$PWD" speedriftd status \
+  --set-mode observe --release-lease \
+  --reason "return repo to observation"
+```
+
+Control modes:
+| Mode | Behavior |
+|------|----------|
+| `manual` | No automatic dispatch; human-driven |
+| `observe` | Refresh/report state only (default for interactive sessions) |
+| `supervise` | Services run under explicit supervisor lease |
+| `autonomous` | Daemon-led dispatch and supervision |
+
+### Ecosystem Dashboard
+
+```bash
+# Dashboard URLs
+# Local:     http://127.0.0.1:8777/
+# Tailscale: http://100.77.214.44:8777/
+
+# Key API endpoints
+curl -s localhost:8777/api/overview      # ecosystem summary
+curl -s localhost:8777/api/next-work     # prioritized action queue
+curl -s localhost:8777/api/pressure      # per-repo pressure scores
+curl -s localhost:8777/api/repos         # all repo snapshots
+curl -s localhost:8777/api/status        # daemon status
+
+# Manage the hub daemon
+scripts/ecosystem_hub_daemon.sh status
+scripts/ecosystem_hub_daemon.sh restart
+scripts/ecosystem_hub_daemon.sh url      # print current URLs
+```
+
+### Configure Notifications
+
+Edit `.workgraph/drift-policy.toml` in any repo:
+
+```toml
+[notifications]
+enabled = true          # turn on proactive alerts
+terminal = true         # macOS osascript desktop notifications
+webhook_url = ""        # Slack/Discord webhook URL (JSON POST)
+min_severity = "error"  # minimum severity to notify: info|warning|error|critical
+cooldown_seconds = 3600 # suppress duplicate alerts for this long
+```
+
+Notifications are significance-scored: findings with >50% historical resolution rate
+always notify regardless of severity. Consistently ignored findings get demoted.
+
+### Configure Drift Policy
+
+Edit `.workgraph/drift-policy.toml`:
+
+```toml
+schema = 1
+mode = "redirect"  # observe|advise|redirect|heal|breaker
+
+[contracts]
+auto_ensure = true  # ensure wg-contract blocks before checks
+
+[loop_safety]
+max_ready_drift_followups = 20   # cap total drift follow-ups
+block_followup_creation = true   # hard-stop new follow-ups when cap reached
+```
+
+### Update Your Environment
+
+```bash
+# Pull latest driftdriver
+cd /Users/braydon/projects/experiments/driftdriver && git pull
+
+# Re-install wrappers in your repo (idempotent)
+driftdriver install
+
+# Re-push CLAUDE.md/AGENTS.md blocks to all workgraph repos
+python3 scripts/push_agent_instructions.py
+
+# Restart the ecosystem hub to pick up code changes
+scripts/ecosystem_hub_daemon.sh restart
+
+# Check ecosystem health after updates
+driftdriver doctor
+driftdriver doctor --fix  # auto-fix common issues
+```
+
+### Lifecycle Hooks (if available in repo)
+
+```bash
+# Session start
+./.workgraph/handlers/session-start.sh --cli claude-code  # or --cli codex
+
+# Task claimed
+./.workgraph/handlers/task-claimed.sh --cli claude-code
+
+# Before completing
+./.workgraph/handlers/task-completing.sh --cli claude-code
+
+# On error
+./.workgraph/handlers/agent-error.sh --cli claude-code
+```
+
+### Autopilot (Full Autonomous Loop)
+
+```bash
+# Decompose + execute + drift-check + review
+driftdriver autopilot --goal "Build user authentication system"
+
+# Use existing tasks, skip decomposition
+driftdriver autopilot --goal "Complete remaining tasks" --skip-decompose
+
+# Dry run (plan only, no execution)
+driftdriver autopilot --goal "Add API pagination" --dry-run
+
+# Control parallelism
+driftdriver autopilot --goal "Refactor data layer" --max-parallel 2 --worker-timeout 3600
+```
+
+The autopilot:
+1. Decomposes goals into workgraph tasks
+2. Dispatches parallel workers respecting dependencies
+3. Drift-checks after each task (guarded: dedup + 3/lane cap)
+4. Detects recurring patterns → triggers `wg evolve` for prompt evolution
+5. Escalates to human when drift failures exceed threshold
+6. Notifies via configured channels when findings cross significance thresholds
+7. Writes report to `.workgraph/.autopilot/latest-report.md`
