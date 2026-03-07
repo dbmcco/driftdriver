@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/session-start.sh --cli claude-code"
+      }
+    ],
+    "PreCompact": [
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/pre-compact.sh --cli claude-code"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/progress-check.sh --cli claude-code",
+        "matcher": "Bash"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/agent-stop.sh --cli claude-code"
+      },
+      {
+        "type": "command",
+        "command": ".workgraph/handlers/session-report.sh --cli claude-code",
+        "timeout": 30
+      }
+    ]
+  }
+}

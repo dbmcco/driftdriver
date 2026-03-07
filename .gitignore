@@ -5,6 +5,10 @@ __pycache__/
 # Local workgraph (dogfood)
 .workgraph/
 
+# Test artifacts
+.coverage
+test-results/
+
 # Packaging / env
 .venv/
 dist/
