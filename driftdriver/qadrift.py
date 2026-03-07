@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha1
@@ -603,48 +602,6 @@ def run_as_lane(project_dir: Path) -> "LaneResult":
         exit_code=exit_code,
         summary=report.summary or f"{len(findings)} findings",
     )
-
-
-def _run_cmd(
-    cmd: list[str],
-    *,
-    cwd: Path | None = None,
-    timeout: float = 40.0,
-) -> tuple[int, str, str]:
-    def _invoke(actual_cmd: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            actual_cmd,
-            cwd=str(cwd) if cwd else None,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-    try:
-        proc = _invoke(cmd)
-    except FileNotFoundError as exc:
-        if cmd and str(cmd[0]) == "wg":
-            candidates = [
-                str(Path.home() / ".cargo" / "bin" / "wg"),
-                "/opt/homebrew/bin/wg",
-                "/usr/local/bin/wg",
-            ]
-            seen: set[str] = set()
-            for candidate in candidates:
-                if candidate in seen:
-                    continue
-                seen.add(candidate)
-                if not Path(candidate).exists():
-                    continue
-                try:
-                    proc = _invoke([candidate, *cmd[1:]])
-                    return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
-                except FileNotFoundError:
-                    continue
-        return 127, "", str(exc)
-    except Exception as exc:
-        return 1, "", str(exc)
-    return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
 
 
 def emit_quality_review_tasks(

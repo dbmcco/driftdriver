@@ -123,6 +123,23 @@ def notify_webhook(url: str, payload: dict[str, Any]) -> None:
         pass
 
 
+def notify_wg(task_id: str, message: str, *, wg_dir: Path | None = None) -> bool:
+    """Delegate notification to wg notify (uses wg's configured channels).
+
+    Returns True if wg notify succeeded. wg notify currently supports Matrix
+    and will gain more channels as Erik's NotificationRouter is exposed via CLI.
+    """
+    cmd = ["wg"]
+    if wg_dir:
+        cmd.extend(["--dir", str(wg_dir)])
+    cmd.extend(["notify", task_id, "-m", message])
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=15)
+        return True
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 class NotificationDispatcher:
     """Manages notification dispatch with cooldown tracking."""
 
@@ -136,10 +153,16 @@ class NotificationDispatcher:
         *,
         outcome_history: list[dict[str, Any]],
         repo_name: str = "",
+        wg_dir: Path | None = None,
     ) -> dict[str, Any]:
         """Check if finding warrants notification, dispatch if so.
 
         Returns a result dict with keys: notified, channel, reason, finding_kind, repo.
+
+        When a finding has a ``task_id`` key and a ``.workgraph`` exists, the
+        dispatcher also forwards the notification through ``wg notify`` so it
+        reaches whatever channels the user has configured in workgraph (Matrix,
+        Telegram, Slack, etc.).
         """
         finding_kind = str(finding.get("kind") or "").strip()
         result: dict[str, Any] = {
@@ -176,10 +199,20 @@ class NotificationDispatcher:
         title = f"Drift: {repo_name}" if repo_name else "Drift Alert"
         body = f"[{severity}] {message_text}"
 
+        channels_used: list[str] = []
+
+        # Channel 1: wg notify (delegates to workgraph's notification router)
+        task_id = str(finding.get("task_id") or "").strip()
+        if task_id:
+            if notify_wg(task_id, body, wg_dir=wg_dir):
+                channels_used.append("wg")
+
+        # Channel 2: terminal (macOS osascript)
         webhook_url = str(self._config.get("webhook_url") or "").strip()
         if self._config.get("terminal"):
             notify_terminal(title, body)
-            result["channel"] = "terminal"
+            channels_used.append("terminal")
+        # Channel 3: webhook
         elif webhook_url:
             notify_webhook(webhook_url, {
                 "title": title,
@@ -188,13 +221,15 @@ class NotificationDispatcher:
                 "finding_kind": finding_kind,
                 "severity": severity,
             })
-            result["channel"] = "webhook"
-        else:
+            channels_used.append("webhook")
+
+        if not channels_used:
             result["reason"] = "no_channel"
             return result
 
         self._last_notified[cooldown_key] = now
         result["notified"] = True
+        result["channel"] = "+".join(channels_used)
         return result
 
 

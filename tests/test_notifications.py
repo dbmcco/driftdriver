@@ -17,6 +17,7 @@ from driftdriver.notifications import (
     load_notification_config,
     notify_terminal,
     notify_webhook,
+    notify_wg,
     should_notify,
 )
 
@@ -292,6 +293,44 @@ class TestNotificationDispatcher:
         assert result["notified"] is False
         assert result["reason"] == "below_threshold"
         mock_term.assert_not_called()
+
+    def test_wg_notify_used_when_task_id_present(self) -> None:
+        config = {**DEFAULT_NOTIFICATION_CONFIG, "enabled": True, "terminal": True}
+        dispatcher = NotificationDispatcher(config)
+        finding = {**_make_finding(severity="error"), "task_id": "task-42"}
+        with (
+            patch("driftdriver.notifications.notify_terminal") as mock_term,
+            patch("driftdriver.notifications.notify_wg", return_value=True) as mock_wg,
+        ):
+            result = dispatcher.check_and_notify(finding, outcome_history=[], repo_name="test-repo")
+        assert result["notified"] is True
+        assert "wg" in result["channel"]
+        assert "terminal" in result["channel"]
+        mock_wg.assert_called_once()
+        mock_term.assert_called_once()
+
+    def test_wg_notify_not_called_without_task_id(self) -> None:
+        config = {**DEFAULT_NOTIFICATION_CONFIG, "enabled": True, "terminal": True}
+        dispatcher = NotificationDispatcher(config)
+        finding = _make_finding(severity="error")
+        with (
+            patch("driftdriver.notifications.notify_terminal"),
+            patch("driftdriver.notifications.notify_wg") as mock_wg,
+        ):
+            result = dispatcher.check_and_notify(finding, outcome_history=[], repo_name="test-repo")
+        assert result["notified"] is True
+        assert result["channel"] == "terminal"
+        mock_wg.assert_not_called()
+
+    def test_wg_only_channel_when_terminal_disabled(self) -> None:
+        config = {**DEFAULT_NOTIFICATION_CONFIG, "enabled": True, "terminal": False}
+        dispatcher = NotificationDispatcher(config)
+        finding = {**_make_finding(severity="error"), "task_id": "task-99"}
+        with patch("driftdriver.notifications.notify_wg", return_value=True) as mock_wg:
+            result = dispatcher.check_and_notify(finding, outcome_history=[], repo_name="test-repo")
+        assert result["notified"] is True
+        assert result["channel"] == "wg"
+        mock_wg.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
