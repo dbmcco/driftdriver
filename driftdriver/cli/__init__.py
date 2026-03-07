@@ -29,8 +29,10 @@ from .check import (
     ExitCode,
     FULL_SUITE_TRIGGER_FENCES,
     FULL_SUITE_TRIGGER_PHRASES,
+    INTERNAL_LANES,
     LANE_STRATEGIES,
     OPTIONAL_PLUGINS,
+    _count_contract_compliance,
     _ensure_breaker_task,
     _ensure_wg_init,
     _extract_contract_int,
@@ -40,6 +42,7 @@ from .check import (
     _plugin_cmd,
     _plugin_supports_json,
     _run,
+    _run_internal_lane,
     _run_optional_plugin_json,
     _run_optional_plugin_text,
     _select_optional_plugins,
@@ -122,6 +125,21 @@ def cmd_wire_rollback_eval(args: argparse.Namespace) -> int:
     result = wire.cmd_rollback_eval(args.drift_score, args.task_id, project_dir)
     print(json.dumps(result))
     return 0
+
+
+def cmd_wire_outcome(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    result = wire.cmd_outcome(
+        project_dir,
+        args.task_id,
+        args.lane,
+        args.finding_key,
+        args.recommendation,
+        args.action_taken,
+        args.outcome,
+    )
+    print(json.dumps(result))
+    return 0 if result.get("recorded") else 1
 
 
 def cmd_wire_record_event(args: argparse.Namespace) -> int:
@@ -768,6 +786,20 @@ def _build_parser() -> argparse.ArgumentParser:
     record_event_p.add_argument("--session-id", default="", help="Session ID")
     record_event_p.add_argument("--project", default="", help="Project name")
     record_event_p.set_defaults(func=cmd_wire_record_event)
+
+    outcome_p = sub.add_parser("outcome", help="Record a drift outcome to the outcomes ledger")
+    outcome_p.add_argument("--task-id", required=True, help="Task ID the outcome belongs to")
+    outcome_p.add_argument("--lane", required=True, help="Drift lane (e.g. coredrift, specdrift)")
+    outcome_p.add_argument("--finding-key", required=True, help="Key identifying the drift finding")
+    outcome_p.add_argument("--recommendation", required=True, help="What driftdriver recommended")
+    outcome_p.add_argument("--action-taken", required=True, help="What action was actually taken")
+    outcome_p.add_argument(
+        "--outcome",
+        required=True,
+        choices=["resolved", "ignored", "worsened", "deferred"],
+        help="Outcome of the drift finding",
+    )
+    outcome_p.set_defaults(func=cmd_wire_outcome)
 
     profile_p = sub.add_parser("profile", help="Build and display a project profile report")
     profile_p.set_defaults(func=cmd_profile)

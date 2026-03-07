@@ -41,4 +41,15 @@ if command -v driftdriver >/dev/null 2>&1; then
   fi
 fi
 
+# Record drift outcomes for any findings from the pre-task check
+if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]]; then
+  driftdriver --dir "$PROJECT_DIR" outcome \
+    --task-id "$TASK_ID" \
+    --lane "coredrift" \
+    --finding-key "auto" \
+    --recommendation "pre-task drift check" \
+    --action-taken "task-completed" \
+    --outcome "resolved" 2>/dev/null || true
+fi
+
 wg_log "$TASK_ID" "task-completing: cli=$CLI_TOOL files_changed=$CHANGED_FILES"

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -104,6 +105,14 @@ OPTIONAL_PLUGINS = [
     "yagnidrift",
     "redrift",
 ]
+
+INTERNAL_LANES: dict[str, str] = {
+    "qadrift": "driftdriver.qadrift",
+    "secdrift": "driftdriver.secdrift",
+    "plandrift": "driftdriver.plandrift",
+    "factorydrift": "driftdriver.factorydrift",
+    "northstardrift": "driftdriver.northstardrift",
+}
 
 LANE_STRATEGIES = ("auto", "fences", "all", "smart")
 FULL_SUITE_TRIGGER_FENCES = {"redrift"}
@@ -369,6 +378,20 @@ def _run_optional_plugin_json(
                 report: Any = json.loads(proc.stdout or "{}")
             except Exception:
                 report = {"raw": proc.stdout}
+            # Validate against lane plugin contract
+            from driftdriver.lane_contract import validate_lane_output
+
+            validated = validate_lane_output(proc.stdout or "")
+            if validated is not None:
+                report["_contract_valid"] = True
+                report["_lane_result"] = {
+                    "lane": validated.lane,
+                    "findings_count": len(validated.findings),
+                    "exit_code": validated.exit_code,
+                    "summary": validated.summary,
+                }
+            else:
+                report["_contract_valid"] = False
             return {"ran": True, "exit_code": rc, "report": report}
         return {"ran": True, "exit_code": rc, "report": None}
 
@@ -415,6 +438,101 @@ def _run_optional_plugin_text(
         return rc
     print(f"note: {plugin} failed (exit {rc}); continuing", file=sys.stderr)
     return 0
+
+
+def _run_internal_lane(
+    *,
+    lane: str,
+    project_dir: Path,
+    wg_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Run an internal drift lane via its run_as_lane() function.
+
+    Returns the same dict shape as _run_optional_plugin_json so that
+    internal lanes integrate seamlessly into the combined JSON output.
+    Gated: only runs if the lane wrapper exists in wg_dir (when provided).
+    Gracefully degrades: if the import or execution fails, returns
+    a non-blocking error report.
+    """
+    module_path = INTERNAL_LANES.get(lane)
+    if not module_path:
+        return {"ran": False, "exit_code": 0, "report": None}
+
+    # Gate: only run if the lane wrapper exists in .workgraph/
+    if wg_dir is not None:
+        lane_wrapper = wg_dir / lane
+        if not lane_wrapper.exists():
+            return {"ran": False, "exit_code": 0, "report": None}
+
+    try:
+        mod = importlib.import_module(module_path)
+        result = mod.run_as_lane(project_dir)
+    except Exception as exc:
+        print(f"note: internal lane {lane} failed: {exc}", file=sys.stderr)
+        return {
+            "ran": True,
+            "exit_code": 0,
+            "report": {
+                "error": f"{lane} internal invocation failed",
+                "detail": str(exc)[:4000],
+            },
+        }
+
+    # Convert LaneResult to the same report dict shape that external
+    # plugins produce after JSON parsing + contract validation.
+    findings_dicts = [
+        {
+            "message": f.message,
+            "severity": f.severity,
+            "file": f.file,
+            "line": f.line,
+            "tags": list(f.tags),
+        }
+        for f in result.findings
+    ]
+    exit_code = result.exit_code
+    # Map lane exit codes: non-zero with findings → ExitCode.findings
+    if exit_code != 0 and result.findings:
+        exit_code = ExitCode.findings
+
+    report: dict[str, Any] = {
+        "lane": result.lane,
+        "findings": findings_dicts,
+        "exit_code": exit_code,
+        "summary": result.summary,
+        "_contract_valid": True,
+        "_lane_result": {
+            "lane": result.lane,
+            "findings_count": len(result.findings),
+            "exit_code": exit_code,
+            "summary": result.summary,
+        },
+    }
+    return {"ran": True, "exit_code": exit_code, "report": report}
+
+
+def _count_contract_compliance(plugins_json: dict) -> dict[str, Any]:
+    """Count contract compliance across all plugins."""
+    total = 0
+    valid = 0
+    invalid_lanes: list[str] = []
+    for name, data in plugins_json.items():
+        report = data.get("report")
+        if not isinstance(report, dict):
+            continue
+        if not data.get("ran"):
+            continue
+        total += 1
+        if report.get("_contract_valid"):
+            valid += 1
+        else:
+            invalid_lanes.append(name)
+    return {
+        "total_checked": total,
+        "contract_valid": valid,
+        "contract_invalid": len(invalid_lanes),
+        "invalid_lanes": invalid_lanes,
+    }
 
 
 def _mode_flags(*, mode: str, plugin: str) -> tuple[bool, bool]:
@@ -578,6 +696,14 @@ def cmd_check(args: argparse.Namespace) -> int:
             plugin_results[plugin] = result
             rc_by_plugin[plugin] = int(result.get("exit_code", 0))
 
+        # Run internal lanes via direct Python invocation (no subprocess).
+        internal_results: dict[str, dict[str, Any]] = {}
+        for lane in INTERNAL_LANES:
+            il_result = _run_internal_lane(lane=lane, project_dir=project_dir, wg_dir=wg_dir)
+            internal_results[lane] = il_result
+            if il_result.get("ran"):
+                rc_by_plugin[lane] = int(il_result.get("exit_code", 0))
+
         out_rc = (
             ExitCode.findings
             if any(rc == ExitCode.findings for rc in rc_by_plugin.values())
@@ -601,6 +727,15 @@ def cmd_check(args: argparse.Namespace) -> int:
                     "report": result.get("report"),
                 }
 
+        # Add internal lane results into combined plugins dict.
+        for lane in INTERNAL_LANES:
+            il_result = internal_results.get(lane, {"ran": False, "exit_code": 0, "report": None})
+            plugins_json[lane] = {
+                "ran": bool(il_result.get("ran")),
+                "exit_code": int(il_result.get("exit_code", 0)),
+                "report": il_result.get("report"),
+            }
+
         combined = {
             "task_id": task_id,
             "exit_code": out_rc,
@@ -614,6 +749,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             "policy_order": ordered_plugins,
             "plugins": plugins_json,
             "action_plan": _normalize_actions(plugins_json),
+            "contract_compliance": _count_contract_compliance(plugins_json),
         }
         if mode == "breaker" and out_rc == ExitCode.findings:
             breaker_id = _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
@@ -646,6 +782,23 @@ def cmd_check(args: argparse.Namespace) -> int:
             force_write_log=force_write_log,
             force_create_followups=effective_force_create_followups,
         )
+
+    # Run internal lanes (text path — print summary lines).
+    for lane in INTERNAL_LANES:
+        il_result = _run_internal_lane(lane=lane, project_dir=project_dir, wg_dir=wg_dir)
+        if not il_result.get("ran"):
+            continue
+        il_rc = int(il_result.get("exit_code", 0))
+        if il_rc == ExitCode.findings:
+            rc_by_plugin[lane] = il_rc
+            report = il_result.get("report")
+            summary = report.get("summary", "") if isinstance(report, dict) else ""
+            print(f"{lane}: {summary}" if summary else f"{lane}: findings detected")
+        elif il_result.get("ran"):
+            rc_by_plugin[lane] = 0
+            report = il_result.get("report")
+            if isinstance(report, dict) and report.get("error"):
+                print(f"note: {lane}: {report['error']}", file=sys.stderr)
 
     has_findings = any(rc == ExitCode.findings for rc in rc_by_plugin.values())
     if has_findings:

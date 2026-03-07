@@ -224,6 +224,34 @@ def cmd_peer_health(project_dir: Path) -> list[dict]:
     return reports
 
 
+def cmd_outcome(
+    project_dir: Path,
+    task_id: str,
+    lane: str,
+    finding_key: str,
+    recommendation: str,
+    action_taken: str,
+    outcome: str,
+    evidence: list[str] | None = None,
+) -> dict:
+    """Record a drift outcome to the outcomes ledger. Returns result dict."""
+    from driftdriver.outcome import DriftOutcome, write_outcome
+
+    o = DriftOutcome(
+        task_id=task_id,
+        lane=lane,
+        finding_key=finding_key,
+        recommendation=recommendation,
+        action_taken=action_taken,
+        outcome=outcome,
+        evidence=evidence or [],
+    )
+    ledger = project_dir / ".workgraph" / "outcomes.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    write_outcome(ledger, o)
+    return {"recorded": True, "task_id": task_id, "lane": lane, "outcome": outcome}
+
+
 def cmd_health_workers(project_dir: Path) -> list[dict]:
     """Check liveness of all autopilot workers from saved state."""
     import json
