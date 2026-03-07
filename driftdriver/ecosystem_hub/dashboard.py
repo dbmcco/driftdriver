@@ -386,12 +386,23 @@ def render_dashboard_html() -> str:
     }
     #repo-dep-graph {
       width: 100%;
-      height: 280px;
+      height: 520px;
       border: 1px solid #e2dacb;
       border-radius: 8px;
       background: #fffcf8;
       display: block;
-      overflow: visible;
+      overflow: hidden;
+      touch-action: none;
+      cursor: grab;
+    }
+    #repo-dep-graph.dragging {
+      cursor: grabbing;
+    }
+    .repo-dep-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      margin-bottom: 0.35rem;
     }
     .repo-dep-node .repo-pulse {
       display: none;
@@ -664,8 +675,13 @@ def render_dashboard_html() -> str:
         <span class="meta" id="graph-meta"></span>
       </div>
       <div class="repo-dep-wrap">
-        <div class="repo-dep-meta" id="repo-dep-meta">Loading repo dependency overview…</div>
-        <svg id="repo-dep-graph" viewBox="0 0 1200 280" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="repo-dep-toolbar">
+          <div class="repo-dep-meta" id="repo-dep-meta">Loading repo dependency overview…</div>
+          <button id="repo-dep-zoom-out" type="button">-</button>
+          <button id="repo-dep-zoom-in" type="button">+</button>
+          <button id="repo-dep-zoom-reset" type="button">reset</button>
+        </div>
+        <svg id="repo-dep-graph" viewBox="0 0 1200 520" preserveAspectRatio="xMidYMid meet"></svg>
         <div class="cmd" id="repo-dep-note">Edge A -> B means repo A has dependency signals pointing to repo B. Pulsing repo nodes have in-progress tasks. Click a repo to focus its task graph.</div>
       </div>
       <div class="graph-wrap">
@@ -1206,22 +1222,96 @@ def render_dashboard_html() -> str:
           Number(b.inbound_weight || 0) - Number(a.inbound_weight || 0) ||
           String(a.id || '').localeCompare(String(b.id || ''))
         ));
-      const width = Math.max(1000, 260 + rankedNodes.length * 54);
-      const height = 320;
+      const width = Math.max(1200, 300 + rankedNodes.length * 48);
+      const height = 520;
       const centerX = width / 2;
       const centerY = height / 2;
-      const radius = rankedNodes.length <= 1 ? 0 : Math.max(78, Math.min(width, height) * 0.34);
+
+      // Force-directed layout: start with circle, then simulate springs
       const pos = {};
+      const nodeCount = Math.max(1, rankedNodes.length);
+      const initRadius = Math.max(100, Math.min(width, height) * 0.38);
       rankedNodes.forEach((node, idx) => {
         const id = String(node.id || '');
         if (!id) return;
-        const theta = (Math.PI * 2 * idx) / Math.max(1, rankedNodes.length);
+        const theta = (Math.PI * 2 * idx) / nodeCount;
         pos[id] = {
-          x: centerX + radius * Math.cos(theta),
-          y: centerY + radius * Math.sin(theta),
+          x: centerX + initRadius * Math.cos(theta),
+          y: centerY + initRadius * Math.sin(theta),
+          vx: 0, vy: 0,
           node,
         };
       });
+
+      // Build edge lookup for spring forces
+      const edgeLookup = {};
+      edges.forEach((edge) => {
+        const s = String(edge.source || '');
+        const t = String(edge.target || '');
+        if (pos[s] && pos[t]) {
+          edgeLookup[s] = edgeLookup[s] || [];
+          edgeLookup[s].push(t);
+          edgeLookup[t] = edgeLookup[t] || [];
+          edgeLookup[t].push(s);
+        }
+      });
+
+      // Run force simulation (simple: repulsion between all nodes, attraction along edges)
+      const iterations = 80;
+      const repulsion = 8000;
+      const attraction = 0.008;
+      const damping = 0.88;
+      const padding = 40;
+      const ids = Object.keys(pos);
+      for (let iter = 0; iter < iterations; iter++) {
+        // Repulsion: all pairs
+        for (let i = 0; i < ids.length; i++) {
+          for (let j = i + 1; j < ids.length; j++) {
+            const a = pos[ids[i]];
+            const b = pos[ids[j]];
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const force = repulsion / (dist * dist);
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            a.vx += fx; a.vy += fy;
+            b.vx -= fx; b.vy -= fy;
+          }
+        }
+        // Attraction: connected pairs
+        edges.forEach((edge) => {
+          const s = String(edge.source || '');
+          const t = String(edge.target || '');
+          if (!pos[s] || !pos[t]) return;
+          const a = pos[s];
+          const b = pos[t];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const force = attraction * dist;
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
+          a.vx += fx; a.vy += fy;
+          b.vx -= fx; b.vy -= fy;
+        });
+        // Gravity toward center
+        ids.forEach((id) => {
+          const p = pos[id];
+          p.vx += (centerX - p.x) * 0.002;
+          p.vy += (centerY - p.y) * 0.002;
+        });
+        // Apply velocities with damping and bounds
+        ids.forEach((id) => {
+          const p = pos[id];
+          p.vx *= damping;
+          p.vy *= damping;
+          p.x += p.vx;
+          p.y += p.vy;
+          p.x = Math.max(padding, Math.min(width - padding, p.x));
+          p.y = Math.max(padding, Math.min(height - padding, p.y));
+        });
+      }
 
       const related = new Set();
       if (selectedRepo && selectedRepo !== "__all__") {
@@ -1243,8 +1333,12 @@ def render_dashboard_html() -> str:
           const b = pos[target];
           const mx = (a.x + b.x) / 2;
           const my = (a.y + b.y) / 2;
-          const cx = mx + (centerX - mx) * 0.35;
-          const cy = my + (centerY - my) * 0.35;
+          // Gentle curve perpendicular to edge direction
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const cx = mx + (-dy / dist) * 18;
+          const cy = my + (dx / dist) * 18;
           const weight = Number(edge.weight || 1);
           const emphasis = selectedRepo && related.size ? (source === selectedRepo || target === selectedRepo) : false;
           const opacity = selectedRepo && related.size ? (emphasis ? 0.96 : 0.25) : 0.8;
@@ -2452,12 +2546,59 @@ def render_dashboard_html() -> str:
     el('graph-zoom-out').addEventListener('click', () => zoomGraph(1 / 1.18));
     el('graph-zoom-reset').addEventListener('click', () => resetGraphView());
 
+    // Repo dependency graph zoom/pan state
+    const repoDepView = { scale: 1, tx: 0, ty: 0, drag: false, dragStartX: 0, dragStartY: 0, dragBaseX: 0, dragBaseY: 0 };
+    function applyRepoDepZoom() {
+      const depSvg = el('repo-dep-graph');
+      if (!depSvg) return;
+      const baseW = 1200, baseH = 520;
+      const w = baseW / repoDepView.scale;
+      const h = baseH / repoDepView.scale;
+      const ox = (baseW - w) / 2 - repoDepView.tx / repoDepView.scale;
+      const oy = (baseH - h) / 2 - repoDepView.ty / repoDepView.scale;
+      depSvg.setAttribute('viewBox', `${ox} ${oy} ${w} ${h}`);
+    }
+    el('repo-dep-zoom-in').addEventListener('click', () => {
+      repoDepView.scale = Math.min(4, repoDepView.scale * 1.25);
+      applyRepoDepZoom();
+    });
+    el('repo-dep-zoom-out').addEventListener('click', () => {
+      repoDepView.scale = Math.max(0.3, repoDepView.scale / 1.25);
+      applyRepoDepZoom();
+    });
+    el('repo-dep-zoom-reset').addEventListener('click', () => {
+      repoDepView.scale = 1; repoDepView.tx = 0; repoDepView.ty = 0;
+      applyRepoDepZoom();
+    });
+    const repoDepSvg = el('repo-dep-graph');
+    repoDepSvg.addEventListener('pointerdown', (event) => {
+      const nodeEl = event.target && event.target.closest ? event.target.closest('[data-focus-repo]') : null;
+      if (nodeEl) return; // Let click handler handle node clicks
+      repoDepView.drag = true;
+      repoDepView.dragStartX = event.clientX;
+      repoDepView.dragStartY = event.clientY;
+      repoDepView.dragBaseX = repoDepView.tx;
+      repoDepView.dragBaseY = repoDepView.ty;
+      repoDepSvg.classList.add('dragging');
+      try { repoDepSvg.setPointerCapture(event.pointerId); } catch (_err) {}
+    });
+    repoDepSvg.addEventListener('pointermove', (event) => {
+      if (!repoDepView.drag) return;
+      repoDepView.tx = repoDepView.dragBaseX + (event.clientX - repoDepView.dragStartX);
+      repoDepView.ty = repoDepView.dragBaseY + (event.clientY - repoDepView.dragStartY);
+      applyRepoDepZoom();
+    });
+    function endRepoDepDrag(event) {
+      if (!repoDepView.drag) return;
+      repoDepView.drag = false;
+      repoDepSvg.classList.remove('dragging');
+      try { repoDepSvg.releasePointerCapture(event.pointerId); } catch (_err) {}
+    }
+    repoDepSvg.addEventListener('pointerup', endRepoDepDrag);
+    repoDepSvg.addEventListener('pointercancel', endRepoDepDrag);
+
     const svg = el('graph');
-    svg.addEventListener('wheel', (event) => {
-      event.preventDefault();
-      const delta = event.deltaY < 0 ? 1.08 : 0.92;
-      zoomGraph(delta);
-    }, { passive: false });
+    // No wheel zoom on task graph — use +/- buttons only to avoid scroll hijacking
 
     svg.addEventListener('pointerdown', (event) => {
       const nodeEl = event.target && event.target.closest ? event.target.closest('[data-node-id]') : null;
