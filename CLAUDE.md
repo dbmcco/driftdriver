@@ -1,33 +1,39 @@
 # CLAUDE.md
 
 <!-- driftdriver-claude:start -->
-## Speedrift Ecosystem Protocol
+## Speedrift Ecosystem
 
-Use Speedrift as an ecosystem, not as disconnected repo-local hooks:
+**Speedrift** is the development quality system across this workspace. It combines
+[Workgraph](https://github.com/graphwork/workgraph) (task spine) with
+[Driftdriver](https://github.com/dbmcco/driftdriver) (drift orchestrator) to keep
+code, specs, and intent in sync without hard-blocking work.
 
-### Session Lifecycle
-- At session start, run: `./.workgraph/handlers/session-start.sh --cli claude-code`
-- When claiming a task, run: `./.workgraph/handlers/task-claimed.sh --cli claude-code`
-- Before completing a task, run: `./.workgraph/handlers/task-completing.sh --cli claude-code`
-- On error, run: `./.workgraph/handlers/agent-error.sh --cli claude-code`
+Use `/speedrift` (or `/rifts`) to invoke the full protocol skill.
+
+### Quick Reference
+
+```bash
+# Drift-check a task (run at start + before completion)
+./.workgraph/drifts check --task <id> --write-log --create-followups
+
+# Ecosystem dashboard (40+ repos, pressure scores, action queue)
+# Local:     http://127.0.0.1:8777/
+# Tailscale: http://100.77.214.44:8777/
+
+# Create tasks with current wg flags
+wg add "Title" --after <dep-id> --immediate --verify "test command"
+```
 
 ### Runtime Authority
-- Workgraph is the task and dependency source of truth.
-- `speedriftd` is the repo-local runtime supervisor.
-- Interactive sessions default to `observe`; they should refresh/report state, not silently take scheduler authority.
-- Do not use `wg service start` as the default way to kick off background work.
+- Workgraph is the task/dependency source of truth. `speedriftd` is the repo-local supervisor.
+- Sessions default to `observe`. Do not use `wg service start` as a generic kickoff.
+- Refresh state: `driftdriver --dir "$PWD" --json speedriftd status --refresh`
+- Arm repo: `driftdriver --dir "$PWD" speedriftd status --set-mode supervise --lease-owner <agent> --reason "reason"`
+- Disarm: `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "done"`
 
-### Arming This Repo
-- Refresh repo runtime state: `driftdriver --dir "$PWD" --json speedriftd status --refresh`
-- If the user wants explicit supervision in this repo:
-  - `driftdriver --dir "$PWD" speedriftd status --set-mode supervise --lease-owner <agent-name> --reason "explicit repo supervision requested"`
-- If the user wants autonomous background execution:
-  - `driftdriver --dir "$PWD" speedriftd status --set-mode autonomous --lease-owner <agent-name> --reason "explicit autonomous execution requested"`
-- When handing the repo back, return it to passive mode:
-  - `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "return repo to observation"`
-
-### Ecosystem Visibility
-- The central Speedrift hub is codified on port `8777`.
-- To print current local and Tailscale URLs:
-  - `cd /Users/braydon/projects/experiments/driftdriver && scripts/ecosystem_hub_daemon.sh url`
+### What Happens Automatically
+- **Drift task guard**: follow-up tasks are deduped + capped at 3 per lane per repo
+- **Notifications**: significant findings alert via terminal/webhook/wg-notify
+- **Prompt evolution**: recurring drift patterns trigger `wg evolve` to teach agents
+- **Outcome learning**: resolution rates feed back into notification significance scoring
 <!-- driftdriver-claude:end -->
