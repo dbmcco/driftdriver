@@ -8,6 +8,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from driftdriver.actor import Actor
+from driftdriver.authority import can_do, check_budget, load_authority_policy
+
 # Maximum non-terminal drift tasks allowed per lane per repo.
 # Once this cap is hit, no new tasks are created for that lane.
 DEFAULT_CAP_PER_LANE = 3
@@ -136,3 +139,56 @@ def guarded_add_drift_task(
 
     add_rc, _, _ = _run_wg(cmd, cwd=cwd, timeout=30.0)
     return "created" if add_rc == 0 else "error"
+
+
+def guarded_add_drift_task_with_authority(
+    *,
+    wg_dir: Path,
+    task_id: str,
+    title: str,
+    description: str,
+    lane_tag: str,
+    actor: Actor | None = None,
+    extra_tags: list[str] | None = None,
+    after: str | None = None,
+    cwd: Path | None = None,
+    policy_path: Path | None = None,
+) -> str:
+    """Create a drift follow-up task using actor authority budgets.
+
+    If no actor is provided, defaults to a lane actor for backward compat.
+    Returns: "created", "existing", "capped", "unauthorized", or "error"
+    """
+    if actor is None:
+        actor = Actor(id=f"lane-{lane_tag}", actor_class="lane", name=lane_tag)
+
+    # Load policy if path provided
+    policy = load_authority_policy(policy_path) if policy_path else None
+
+    # Check authority
+    if not can_do(actor, "create", policy=policy):
+        return "unauthorized"
+
+    # Check budget — use active drift task count as current_count
+    active = count_active_drift_tasks(wg_dir, lane_tag, cwd=cwd)
+    allowed, reason = check_budget(
+        actor, "create",
+        current_count=active,
+        recent_count=0,  # TODO: track hourly creates
+        policy=policy,
+    )
+    if not allowed:
+        return "capped"
+
+    # Delegate to existing function with cap set high (budget already checked)
+    return guarded_add_drift_task(
+        wg_dir=wg_dir,
+        task_id=task_id,
+        title=title,
+        description=description,
+        lane_tag=lane_tag,
+        extra_tags=extra_tags,
+        after=after,
+        cwd=cwd,
+        cap=999,  # Already budget-checked above
+    )

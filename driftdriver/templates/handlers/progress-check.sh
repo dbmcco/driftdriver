@@ -26,3 +26,10 @@ if [[ "$OCCURRENCES" -ge 3 ]]; then
   echo "WARNING: Possible loop detected — '$TOOL_NAME' repeated $OCCURRENCES times in task $TASK_ID"
   wg_log "$TASK_ID" "loop-warning: tool=$TOOL_NAME occurrences=$OCCURRENCES"
 fi
+
+# Update presence heartbeat so the ecosystem hub knows this session is still alive
+if command -v driftdriver >/dev/null 2>&1; then
+  driftdriver --dir "$PROJECT_DIR" presence heartbeat \
+    --actor-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}" \
+    --task "$TASK_ID" 2>/dev/null || true
+fi

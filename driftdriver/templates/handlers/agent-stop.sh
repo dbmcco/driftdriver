@@ -40,4 +40,11 @@ if command -v driftdriver >/dev/null 2>&1; then
 fi
 
 wg_log "$TASK_ID" "agent-stop: decision=$DECISION reason=$REASON"
+
+# Deregister presence so the ecosystem hub no longer shows this session
+if command -v driftdriver >/dev/null 2>&1; then
+  driftdriver --dir "$PROJECT_DIR" presence deregister \
+    --actor-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}" 2>/dev/null || true
+fi
+
 echo "$DECISION"

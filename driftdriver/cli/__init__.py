@@ -202,6 +202,67 @@ def cmd_wire_record_event(args: argparse.Namespace) -> int:
     return 0 if result.get("recorded") else 1
 
 
+def cmd_presence(args: argparse.Namespace) -> int:
+    from driftdriver.actor import Actor
+    from driftdriver.presence import (
+        active_actors,
+        gc_stale_presence,
+        read_all_presence,
+        remove_presence,
+        write_heartbeat,
+    )
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    action = args.action
+
+    if action == "register":
+        actor_id = args.actor_id or f"session-{os.getpid()}"
+        actor = Actor(
+            id=actor_id,
+            actor_class=args.actor_class,
+            name=args.name or args.actor_class,
+            repo=project_dir.name,
+        )
+        rec = write_heartbeat(project_dir, actor, current_task=args.task)
+        print(json.dumps({"registered": True, "actor_id": actor.id, "started_at": rec.started_at}))
+        return 0
+
+    if action == "heartbeat":
+        actor_id = args.actor_id or f"session-{os.getpid()}"
+        actor = Actor(
+            id=actor_id,
+            actor_class=args.actor_class,
+            name=args.name or args.actor_class,
+            repo=project_dir.name,
+        )
+        rec = write_heartbeat(project_dir, actor, current_task=args.task)
+        print(json.dumps({"updated": True, "actor_id": actor.id, "last_heartbeat": rec.last_heartbeat}))
+        return 0
+
+    if action == "deregister":
+        actor_id = args.actor_id or f"session-{os.getpid()}"
+        removed = remove_presence(project_dir, actor_id)
+        print(json.dumps({"deregistered": removed, "actor_id": actor_id}))
+        return 0
+
+    if action == "list":
+        records = active_actors(project_dir, max_age_seconds=args.max_age)
+        entries = [
+            {"id": r.actor.id, "name": r.actor.name, "class": r.actor.actor_class,
+             "task": r.current_task, "status": r.status, "last_heartbeat": r.last_heartbeat}
+            for r in records
+        ]
+        print(json.dumps(entries, indent=2))
+        return 0
+
+    if action == "gc":
+        removed = gc_stale_presence(project_dir, max_age_seconds=args.max_age)
+        print(json.dumps({"removed": removed}))
+        return 0
+
+    return 1
+
+
 def cmd_profile(args: argparse.Namespace) -> int:
     print("Profile command will be rebuilt in the Learning service.")
     return 0
@@ -963,6 +1024,17 @@ def _build_parser() -> argparse.ArgumentParser:
     report_p.add_argument("--flush", action="store_true", help="Flush pending events to lessons DB")
     report_p.add_argument("--push", action="store_true", help="Push report to central repo")
     report_p.set_defaults(func=cmd_report_cli)
+
+    # -- Presence commands --
+    presence_p = sub.add_parser("presence", help="Manage actor presence heartbeats")
+    presence_p.add_argument("action", choices=["register", "heartbeat", "deregister", "list", "gc"],
+                            help="Presence action")
+    presence_p.add_argument("--actor-id", default="", help="Actor ID (session ID)")
+    presence_p.add_argument("--actor-class", default="interactive", help="Actor class (default: interactive)")
+    presence_p.add_argument("--name", default="", help="Actor display name")
+    presence_p.add_argument("--task", default="", help="Current task ID (for heartbeat)")
+    presence_p.add_argument("--max-age", type=int, default=600, help="Max heartbeat age in seconds (for gc/list)")
+    presence_p.set_defaults(func=cmd_presence)
 
     ecosystem_hub_p = sub.add_parser("ecosystem-hub", help="Proxy to the ecosystem hub service manager")
     ecosystem_hub_p.add_argument("ecosystem_hub_args", nargs=argparse.REMAINDER, help="Arguments for ecosystem hub")

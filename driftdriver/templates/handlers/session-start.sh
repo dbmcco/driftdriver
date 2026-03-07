@@ -46,4 +46,10 @@ if command -v driftdriver >/dev/null 2>&1; then
     --content "Session started for $(basename "$PROJECT_DIR") via $CLI_TOOL" \
     --session-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-}}" \
     --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
+
+  # Register presence so the ecosystem hub sees this session as active
+  driftdriver --dir "$PROJECT_DIR" presence register \
+    --actor-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}" \
+    --actor-class interactive \
+    --name "$CLI_TOOL" 2>/dev/null || true
 fi

@@ -116,6 +116,10 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
     control_mode = str(control.get("mode") or "").strip().lower()
     service_agents_alive = _service_agents_alive(snap.service_status)
     service_warning = _service_warning(snap.service_status)
+    presence_actors = getattr(snap, 'presence_actors', None) or []
+    if presence_actors:
+        actor_names = [a.get("name", a.get("id", "?")) for a in presence_actors]
+        parts.append(f"{len(presence_actors)} active via presence ({', '.join(actor_names[:3])})")
     if active_workers:
         parts.append(f"{len(active_workers)} runtime workers active")
     elif in_progress > 0 and snap.service_running and service_agents_alive == 0:
@@ -169,6 +173,12 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
         return "error", [f"errors present ({reason})"]
     if not snap.workgraph_exists:
         return "untracked", ["no .workgraph/graph.jsonl detected"]
+
+    # Presence-based activity detection: if any actor has a live heartbeat,
+    # the repo is active regardless of wg service state.
+    presence_actors = getattr(snap, 'presence_actors', None) or []
+    if presence_actors:
+        return "active", []
 
     in_progress = len(snap.in_progress)
     ready = len(snap.ready)
@@ -452,6 +462,24 @@ def collect_repo_snapshot(
     snap.workgraph_exists = True
     snap.reporting = True
     snap.heartbeat_age_seconds = _path_age_seconds(wg_dir / "graph.jsonl")
+
+    # Read presence heartbeat records for activity detection.
+    try:
+        from driftdriver.presence import active_actors as _active_actors
+
+        presence_records = _active_actors(repo_path)
+        snap.presence_actors = [
+            {
+                "id": r.actor.id,
+                "name": r.actor.name,
+                "class": r.actor.actor_class,
+                "task": r.current_task,
+                "status": r.status,
+            }
+            for r in presence_records
+        ]
+    except Exception:
+        snap.presence_actors = []
     snap.runtime = _read_json(wg_dir / "service" / "runtime" / "current.json")
     if not snap.runtime:
         try:

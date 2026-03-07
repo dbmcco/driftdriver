@@ -55,6 +55,7 @@ class RepoSnapshot:
     northstar: dict[str, Any] = field(default_factory=dict)
     runtime: dict[str, Any] = field(default_factory=dict)
     service_status: dict[str, Any] = field(default_factory=dict)
+    presence_actors: list[dict[str, Any]] = field(default_factory=list)
 
     def top_next_work(self, limit: int = 3) -> list[NextWorkItem]:
         out: list[NextWorkItem] = []
