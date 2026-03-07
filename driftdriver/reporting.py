@@ -41,6 +41,46 @@ class SessionReport:
     pushed_to_central: bool = False
 
 
+def record_event_immediate(
+    event_type: str,
+    content: str,
+    *,
+    session_id: str = "",
+    project: str = "",
+    metadata: dict | None = None,
+    db_path: Path | None = None,
+) -> bool:
+    """Write a single event directly to lessons.db immediately.
+
+    Unlike flush_pending_events which batches from pending.jsonl,
+    this writes one event right now. Returns True on success.
+    """
+    if db_path is None:
+        db_path = Path.home() / ".claude" / "lessons-mcp" / "lessons.db"
+
+    if not db_path.exists():
+        return False
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    payload = json.dumps({"event_type": event_type, "content": content, **(metadata or {})})
+    dedupe_key = f"{session_id}:{event_type}:{now_iso}:{hashlib.md5(payload[:200].encode()).hexdigest()[:16]}"
+    event_id = str(uuid4())
+
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=5)
+        conn.execute(
+            "INSERT OR IGNORE INTO session_events "
+            "(id, session_id, cli_tool, project, event_type, payload, dedupe_key, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (event_id, session_id, "driftdriver", project, event_type, payload, dedupe_key, now_iso),
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
 def load_reporting_config(wg_dir: Path) -> ReportingConfig:
     """Read [reporting] section from drift-policy.toml, falling back to defaults."""
     from driftdriver.policy import load_drift_policy

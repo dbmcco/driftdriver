@@ -702,5 +702,70 @@ class TestDistillAndExportIntegration(unittest.TestCase):
             self.assertTrue((wg_dir / "knowledge.jsonl").exists())
 
 
+class TestRecordEventImmediate(unittest.TestCase):
+    def test_record_event_immediate_writes_to_db(self) -> None:
+        """record_event_immediate writes directly to lessons.db."""
+        from driftdriver.reporting import record_event_immediate
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            result = record_event_immediate(
+                "drift_finding",
+                "Found scope violation in auth.py",
+                session_id="test-session",
+                project="myproject",
+                db_path=db_path,
+            )
+            self.assertTrue(result)
+
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute("SELECT * FROM session_events").fetchall()
+            conn.close()
+            self.assertEqual(len(rows), 1)
+            # Column order: id, session_id, cli_tool, project, event_type, payload, dedupe_key, timestamp
+            self.assertEqual(rows[0][1], "test-session")  # session_id
+            self.assertEqual(rows[0][2], "driftdriver")   # cli_tool
+            self.assertEqual(rows[0][3], "myproject")     # project
+            self.assertEqual(rows[0][4], "drift_finding") # event_type
+
+    def test_record_event_immediate_missing_db_returns_false(self) -> None:
+        """Returns False when db doesn't exist."""
+        from driftdriver.reporting import record_event_immediate
+
+        result = record_event_immediate(
+            "test", "content", db_path=Path("/nonexistent/lessons.db")
+        )
+        self.assertFalse(result)
+
+    def test_record_event_immediate_with_metadata(self) -> None:
+        """Metadata is stored in the payload JSON."""
+        from driftdriver.reporting import record_event_immediate
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            result = record_event_immediate(
+                "task_completed",
+                "Task T-42 completed",
+                session_id="sess-1",
+                project="driftdriver",
+                metadata={"task_id": "T-42", "files_changed": 3},
+                db_path=db_path,
+            )
+            self.assertTrue(result)
+
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute("SELECT payload FROM session_events").fetchall()
+            conn.close()
+            payload = json.loads(rows[0][0])
+            self.assertEqual(payload["event_type"], "task_completed")
+            self.assertEqual(payload["content"], "Task T-42 completed")
+            self.assertEqual(payload["task_id"], "T-42")
+            self.assertEqual(payload["files_changed"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

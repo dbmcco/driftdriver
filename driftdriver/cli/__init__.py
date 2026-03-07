@@ -122,6 +122,17 @@ def cmd_wire_rollback_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_wire_record_event(args: argparse.Namespace) -> int:
+    result = wire.cmd_record_event(
+        args.event_type,
+        args.content,
+        session_id=args.session_id or "",
+        project=args.project or "",
+    )
+    print(json.dumps(result))
+    return 0 if result.get("recorded") else 1
+
+
 def cmd_profile(args: argparse.Namespace) -> int:
     print("Profile command will be rebuilt in the Learning service.")
     return 0
@@ -748,6 +759,13 @@ def _build_parser() -> argparse.ArgumentParser:
     rollback_p.add_argument("--drift-score", type=float, default=0.0, help="Drift score (0.0-1.0)")
     rollback_p.add_argument("--task-id", default="", help="Task ID")
     rollback_p.set_defaults(func=cmd_wire_rollback_eval)
+
+    record_event_p = sub.add_parser("record-event", help="Record a single event immediately to lessons.db")
+    record_event_p.add_argument("--event-type", required=True, help="Event type (e.g. task_completed, drift_finding)")
+    record_event_p.add_argument("--content", required=True, help="Event content/description")
+    record_event_p.add_argument("--session-id", default="", help="Session ID")
+    record_event_p.add_argument("--project", default="", help="Project name")
+    record_event_p.set_defaults(func=cmd_wire_record_event)
 
     profile_p = sub.add_parser("profile", help="Build and display a project profile report")
     profile_p.set_defaults(func=cmd_profile)

@@ -13,6 +13,29 @@ from driftdriver.scope_enforcement import get_changed_files, check_file_scope, f
 from driftdriver.self_reflect import self_reflect, format_learnings_for_review
 
 
+def cmd_record_event(
+    event_type: str,
+    content: str,
+    *,
+    session_id: str = "",
+    project: str = "",
+    metadata: dict | None = None,
+    db_path: Path | None = None,
+) -> dict:
+    """Record a single event immediately to lessons.db. Returns result dict."""
+    from driftdriver.reporting import record_event_immediate
+
+    ok = record_event_immediate(
+        event_type,
+        content,
+        session_id=session_id,
+        project=project,
+        metadata=metadata,
+        db_path=db_path,
+    )
+    return {"recorded": ok}
+
+
 def cmd_prime(project_dir: Path, changed_files: list[str] | None = None) -> str:
     """Prime knowledge context for current task scope."""
     kb_path = project_dir / ".workgraph" / "knowledge.jsonl"

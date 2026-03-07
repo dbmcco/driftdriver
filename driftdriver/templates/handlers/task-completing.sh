@@ -24,6 +24,15 @@ EVENT_JSON=$(jq -n --arg event "task_completing" --arg tid "$TASK_ID" --arg cli 
   '{event: $event, task_id: $tid, cli: $cli, files_changed: $changed}')
 lessons_mcp "record_event" "$EVENT_JSON"
 
+# Record task completion event immediately to lessons.db
+if command -v driftdriver >/dev/null 2>&1; then
+  driftdriver --dir "$PROJECT_DIR" record-event \
+    --event-type "task_completed" \
+    --content "Task $TASK_ID completed" \
+    --session-id "${WG_SESSION_ID:-}" \
+    --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
+fi
+
 # Extract learnings from task execution
 if command -v driftdriver >/dev/null 2>&1; then
   LEARNINGS=$(driftdriver --dir "$PROJECT_DIR" wire reflect 2>/dev/null || echo "")
