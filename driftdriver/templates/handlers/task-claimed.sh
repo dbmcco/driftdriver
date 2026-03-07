@@ -15,7 +15,9 @@ agentjj checkpoint "pre-task-$TASK_ID" 2>/dev/null || true
 # Run pre-task drift check in JSON mode and save snapshot for outcome feedback loop.
 # The snapshot is compared against the post-task check at task-completing time.
 if [[ -n "$TASK_ID" ]]; then
-  PRE_CHECK_JSON=$("$WG_DIR/drifts" check --task "$TASK_ID" --write-log --json 2>/dev/null || echo "")
+  ACTOR_ID="${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}"
+  PRE_CHECK_JSON=$("$WG_DIR/drifts" check --task "$TASK_ID" --write-log --json \
+    --actor-id "$ACTOR_ID" --actor-class "${WG_ACTOR_CLASS:-interactive}" 2>/dev/null || echo "")
   if command -v driftdriver >/dev/null 2>&1 && [[ -n "$PRE_CHECK_JSON" ]]; then
     printf '%s' "$PRE_CHECK_JSON" | \
       driftdriver --dir "$PROJECT_DIR" save-check-snapshot --task-id "$TASK_ID" 2>/dev/null || true

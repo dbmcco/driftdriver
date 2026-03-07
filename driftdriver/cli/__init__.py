@@ -800,6 +800,8 @@ def _build_parser() -> argparse.ArgumentParser:
     check.add_argument("--json", action="store_true", help="JSON output")
     check.add_argument("--write-log", action="store_true", help="Write summary into wg log")
     check.add_argument("--create-followups", action="store_true", help="Create follow-up tasks for findings")
+    check.add_argument("--actor-id", default="", help="Actor ID for authority-gated follow-up creation")
+    check.add_argument("--actor-class", default="", help="Actor class (human/interactive/worker/daemon/lane)")
     check.set_defaults(func=cmd_check)
 
     updates = sub.add_parser("updates", help="Check Speedrift ecosystem repos for upstream updates")

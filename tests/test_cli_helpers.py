@@ -481,8 +481,7 @@ class TestComputeLoopSafety:
 
         class FakePolicy:
             loop_max_redrift_depth = 2
-            loop_max_ready_drift_followups = 20
-            loop_block_followup_creation = True
+            pass  # Only loop_max_redrift_depth is consulted
 
         result = _compute_loop_safety(wg_dir=wg_dir, task_id="task-1", policy=FakePolicy())
         assert result["followups_blocked"] is False
@@ -497,8 +496,7 @@ class TestComputeLoopSafety:
 
         class FakePolicy:
             loop_max_redrift_depth = 2
-            loop_max_ready_drift_followups = 20
-            loop_block_followup_creation = True
+            pass  # Only loop_max_redrift_depth is consulted
 
         result = _compute_loop_safety(
             wg_dir=wg_dir,
@@ -518,8 +516,7 @@ class TestComputeLoopSafety:
 
         class FakePolicy:
             loop_max_redrift_depth = 2
-            loop_max_ready_drift_followups = 20
-            loop_block_followup_creation = True
+            pass  # Only loop_max_redrift_depth is consulted
 
         result = _compute_loop_safety(wg_dir=wg_dir, task_id="drift-a", policy=FakePolicy())
         assert result["blocked_by_cycle"] is True
@@ -534,16 +531,16 @@ class TestComputeLoopSafety:
 
         class FakePolicy:
             loop_max_redrift_depth = 2
-            loop_max_ready_drift_followups = 20
-            loop_block_followup_creation = True
+            pass  # Only loop_max_redrift_depth is consulted
 
         result = _compute_loop_safety(
             wg_dir=wg_dir, task_id="drift-scope-xyz", policy=FakePolicy()
         )
         assert result["observed_redrift_depth"] == 0
 
-    def test_ready_queue_exceeded(self, tmp_path: Path) -> None:
-        # Create enough ready drift tasks to exceed max_ready=2.
+    def test_ready_queue_is_diagnostic_only(self, tmp_path: Path) -> None:
+        # Ready drift queue count is tracked but does not block.
+        # Authority budgets in drift_task_guard handle creation limits.
         tasks = [
             {"id": "parent", "kind": "task", "status": "done"},
         ]
@@ -561,16 +558,14 @@ class TestComputeLoopSafety:
 
         class FakePolicy:
             loop_max_redrift_depth = 2
-            loop_max_ready_drift_followups = 2
-            loop_block_followup_creation = True
 
         result = _compute_loop_safety(wg_dir=wg_dir, task_id="parent", policy=FakePolicy())
         assert result["ready_drift_followups"] == 5
-        assert result["followups_blocked"] is True
-        assert any("ready_drift_queue_exceeded" in r for r in result["reasons"])
+        # Queue count is diagnostic — does not block.
+        assert result["followups_blocked"] is False
 
-    def test_block_disabled_by_policy(self, tmp_path: Path) -> None:
-        # Even with reasons, blocking can be disabled.
+    def test_structural_issues_always_block(self, tmp_path: Path) -> None:
+        # Depth and cycle issues always block — they're graph health, not budget.
         tasks = [
             {"id": "redrift-redrift-redrift-task", "kind": "task", "status": "open"},
         ]
@@ -578,16 +573,14 @@ class TestComputeLoopSafety:
 
         class FakePolicy:
             loop_max_redrift_depth = 1
-            loop_max_ready_drift_followups = 20
-            loop_block_followup_creation = False
 
         result = _compute_loop_safety(
             wg_dir=wg_dir,
             task_id="redrift-redrift-redrift-task",
             policy=FakePolicy(),
         )
-        assert result["reasons"]  # reasons exist
-        assert result["followups_blocked"] is False  # but blocking disabled
+        assert result["reasons"]  # depth exceeded
+        assert result["followups_blocked"] is True  # structural issues always block
 
 
 # ---------------------------------------------------------------------------
@@ -1029,8 +1022,6 @@ class TestParametrized:
 
         class FakePolicy:
             loop_max_redrift_depth = 100
-            loop_max_ready_drift_followups = 10000
-            loop_block_followup_creation = True
 
         result = _compute_loop_safety(wg_dir=wg_dir, task_id=task_id, policy=FakePolicy())
         assert result["observed_redrift_depth"] == expected_depth

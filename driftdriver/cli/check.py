@@ -557,7 +557,7 @@ def _mode_flags(*, mode: str, plugin: str) -> tuple[bool, bool]:
     return (True, True)
 
 
-def _ensure_breaker_task(*, wg_dir: Path, task_id: str) -> str:
+def _ensure_breaker_task(*, wg_dir: Path, task_id: str, actor: Any = None) -> str:
     """
     Create deterministic breaker escalation task if missing.
     Returns the task id.
@@ -585,6 +585,7 @@ def _ensure_breaker_task(*, wg_dir: Path, task_id: str) -> str:
         description=desc,
         lane_tag="breaker",
         after=task_id,
+        actor=actor,
     )
     return breaker_id
 
@@ -620,14 +621,24 @@ def cmd_check(args: argparse.Namespace) -> int:
     loop_safety = _compute_loop_safety(wg_dir=wg_dir, task_id=task_id, policy=policy)
     effective_force_create_followups = force_create_followups
 
+    # Resolve actor — always present. Authority budgets gate follow-up creation.
+    from driftdriver.actor import Actor
+    actor_id = getattr(args, "actor_id", "") or os.environ.get("DRIFT_ACTOR_ID", "")
+    actor_class = getattr(args, "actor_class", "") or os.environ.get("DRIFT_ACTOR_CLASS", "interactive")
+    if not actor_id:
+        actor_id = f"check-{os.getpid()}"
+    check_actor = Actor(id=actor_id, actor_class=actor_class, name=actor_id)
+
     mode = policy.mode
     effective_mode = mode
+    # Only block on structural graph problems (cycles, depth).
+    # Queue count is handled by authority budgets in drift_task_guard.
     if loop_safety["followups_blocked"] and mode not in {"observe", "advise"}:
         effective_mode = "advise"
         effective_force_create_followups = False
-        reason_text = ", ".join(loop_safety["reasons"]) or "loop safety guard"
+        reason_text = ", ".join(loop_safety["reasons"]) or "graph safety guard"
         print(
-            f"note: loop safety blocked follow-up creation ({reason_text}); running in advise mode for this check",
+            f"note: graph safety blocked follow-up creation ({reason_text}); running in advise mode",
             file=sys.stderr,
         )
 
@@ -746,7 +757,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             "enforcement": enforcement_result,
         }
         if mode == "breaker" and final_rc == ExitCode.findings:
-            breaker_id = _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
+            breaker_id = _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id, actor=check_actor)
             combined["breaker_task_id"] = breaker_id
 
         # Print enforcement warnings to stderr for visibility.
@@ -837,7 +848,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             project_dir=project_dir,
         )
         if mode == "breaker":
-            _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
+            _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id, actor=check_actor)
         # Enforcement can escalate: blocked (2) overrides findings (3).
         if enforcement_result["exit_code"] == 2:
             return 2

@@ -1,8 +1,9 @@
-# ABOUTME: Shared guard for drift lane task creation — dedup, cap, and wg compatibility.
-# ABOUTME: Prevents feedback loops by capping drift tasks per lane and using --immediate.
+# ABOUTME: Authority-gated drift task creation — dedup, budgets, quality, escalation.
+# ABOUTME: Single path for all follow-up creation; actor identity always resolved.
 
 from __future__ import annotations
 
+import datetime
 import json
 import subprocess
 from pathlib import Path
@@ -12,9 +13,9 @@ from driftdriver.actor import Actor
 from driftdriver.authority import Budget, can_do, check_budget, get_budget, load_authority_policy
 from driftdriver.budget_ledger import recent_count, record_operation
 
-# Maximum non-terminal drift tasks allowed per lane per repo.
-# Once this cap is hit, no new tasks are created for that lane.
-DEFAULT_CAP_PER_LANE = 3
+# Default global ceiling — hard safety net across all lanes.
+# Authority budgets handle per-actor limits; this prevents runaway across lanes.
+DEFAULT_GLOBAL_CEILING = 50
 
 
 def _record_escalation(
@@ -31,7 +32,6 @@ def _record_escalation(
     instead of silently evaporating. The ecosystem hub can surface these.
     """
     escalation_path = wg_dir / "escalations.jsonl"
-    import datetime
     entry = {
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "actor_id": actor.id,
@@ -88,28 +88,33 @@ def _run_wg(
     return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
 
 
-def count_active_drift_tasks(
-    wg_dir: Path,
-    lane_tag: str,
-    *,
-    cwd: Path | None = None,
-) -> int:
-    """Count non-terminal tasks tagged with 'drift' and the given lane tag."""
+def _load_task_list(wg_dir: Path, *, cwd: Path | None = None) -> list[dict[str, Any]]:
+    """Load the full task list from wg, returning [] on failure."""
     rc, out, _ = _run_wg(
         ["wg", "--dir", str(wg_dir), "--json", "list"],
         cwd=cwd,
         timeout=30.0,
     )
     if rc != 0:
-        return 0
+        return []
     try:
         tasks = json.loads(out)
     except (json.JSONDecodeError, TypeError):
-        return 0
-    if not isinstance(tasks, list):
-        return 0
-    count = 0
+        return []
+    return tasks if isinstance(tasks, list) else []
+
+
+def count_active_drift_tasks(
+    wg_dir: Path,
+    lane_tag: str,
+    *,
+    cwd: Path | None = None,
+    _tasks: list[dict[str, Any]] | None = None,
+) -> int:
+    """Count non-terminal tasks tagged with 'drift' and the given lane tag."""
+    tasks = _tasks if _tasks is not None else _load_task_list(wg_dir, cwd=cwd)
     terminal = {"done", "abandoned", "failed"}
+    count = 0
     for t in tasks:
         status = str(t.get("status", "")).lower()
         if status in terminal:
@@ -122,88 +127,34 @@ def count_active_drift_tasks(
     return count
 
 
-def guarded_add_drift_task(
-    *,
+def count_all_active_drift_tasks(
     wg_dir: Path,
-    task_id: str,
-    title: str,
-    description: str,
-    lane_tag: str,
-    extra_tags: list[str] | None = None,
-    after: str | None = None,
-    cwd: Path | None = None,
-    cap: int = DEFAULT_CAP_PER_LANE,
-) -> str:
-    """Create a drift follow-up task with dedup, cap enforcement, and --immediate.
-
-    Returns:
-        "created"  - new task added
-        "existing" - task_id already exists (dedup hit)
-        "capped"   - lane has >= cap active drift tasks
-        "error"    - wg add failed
-    """
-    # 1. Exact-ID dedup: if this task_id already exists in any state, skip.
-    show_rc, _, _ = _run_wg(
-        ["wg", "--dir", str(wg_dir), "show", task_id, "--json"],
-        cwd=cwd,
-        timeout=20.0,
-    )
-    if show_rc == 0:
-        return "existing"
-
-    # 2. Cap check: count active (non-terminal) drift tasks for this lane.
-    active = count_active_drift_tasks(wg_dir, lane_tag, cwd=cwd)
-    if active >= cap:
-        return "capped"
-
-    # 3. Build wg add command with --immediate (skip draft-by-default).
-    cmd: list[str] = [
-        "wg", "--dir", str(wg_dir),
-        "add", title,
-        "--id", task_id,
-        "-d", description,
-        "--immediate",
-        "-t", "drift",
-        "-t", lane_tag,
-    ]
-    for tag in (extra_tags or []):
-        cmd.extend(["-t", tag])
-    if after:
-        cmd.extend(["--after", after])
-
-    add_rc, _, _ = _run_wg(cmd, cwd=cwd, timeout=30.0)
-    return "created" if add_rc == 0 else "error"
-
-
-def guarded_add_drift_task_with_authority(
     *,
-    wg_dir: Path,
-    task_id: str,
-    title: str,
-    description: str,
-    lane_tag: str,
-    actor: Actor | None = None,
-    extra_tags: list[str] | None = None,
-    after: str | None = None,
     cwd: Path | None = None,
-    policy_path: Path | None = None,
-) -> str:
-    """Create a drift follow-up task using actor authority budgets.
+    _tasks: list[dict[str, Any]] | None = None,
+) -> int:
+    """Count all non-terminal drift tasks across all lanes."""
+    tasks = _tasks if _tasks is not None else _load_task_list(wg_dir, cwd=cwd)
+    terminal = {"done", "abandoned", "failed"}
+    count = 0
+    for t in tasks:
+        status = str(t.get("status", "")).lower()
+        if status in terminal:
+            continue
+        tags = t.get("tags") or []
+        if not isinstance(tags, list):
+            continue
+        if "drift" in tags:
+            count += 1
+    return count
 
-    If no actor is provided, defaults to a lane actor for backward compat.
-    Returns: "created", "existing", "capped", "unauthorized", or "error"
-    """
-    if actor is None:
-        actor = Actor(id=f"lane-{lane_tag}", actor_class="lane", name=lane_tag)
 
-    # Load policy if path provided
-    policy = load_authority_policy(policy_path) if policy_path else None
-
-    # Check authority
-    if not can_do(actor, "create", policy=policy):
-        return "unauthorized"
-
-    # Apply quality-based budget adjustment (only when outcome history exists)
+def _apply_quality_modifier(
+    wg_dir: Path,
+    actor: Actor,
+    policy: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Apply quality-based budget adjustment. Returns effective policy."""
     effective_policy = dict(policy) if policy else {}
     try:
         from driftdriver.quality_signal import compute_actor_quality, quality_budget_modifier
@@ -222,43 +173,123 @@ def guarded_add_drift_task_with_authority(
             effective_policy["budgets"] = effective_budgets
     except Exception:
         pass  # Quality signal unavailable — use base budgets
+    return effective_policy or None
 
-    # Check budget — use active drift task count as current_count
-    active = count_active_drift_tasks(wg_dir, lane_tag, cwd=cwd)
+
+def get_global_ceiling(policy: dict[str, Any] | None) -> int:
+    """Get the global drift task ceiling from authority policy."""
+    if policy and "global_ceiling" in policy:
+        return max(1, int(policy["global_ceiling"]))
+    return DEFAULT_GLOBAL_CEILING
+
+
+def guarded_add_drift_task(
+    *,
+    wg_dir: Path,
+    task_id: str,
+    title: str,
+    description: str,
+    lane_tag: str,
+    actor: Actor | None = None,
+    extra_tags: list[str] | None = None,
+    after: str | None = None,
+    cwd: Path | None = None,
+    policy_path: Path | None = None,
+    cap: int = 0,  # Deprecated — ignored. Authority budgets handle limits.
+) -> str:
+    """Create a drift follow-up task with authority-gated budgets.
+
+    Single path for all follow-up creation. Actor defaults to a lane actor
+    when not provided. Authority budgets (quality-adjusted) enforce limits.
+    Global ceiling prevents runaway across all lanes.
+
+    Returns:
+        "created"      - new task added
+        "existing"     - task_id already exists (dedup hit)
+        "capped"       - budget exhausted or global ceiling hit
+        "unauthorized" - actor lacks create permission
+        "error"        - wg add failed
+    """
+    # 1. Resolve actor — always present.
+    if actor is None:
+        actor = Actor(id=f"lane-{lane_tag}", actor_class="lane", name=lane_tag)
+
+    # 2. Load authority policy.
+    if policy_path is None:
+        candidate = wg_dir / "drift-policy.toml"
+        if candidate.exists():
+            policy_path = candidate
+    policy = load_authority_policy(policy_path) if policy_path else None
+
+    # 3. Check authority — does this actor class have 'create' permission?
+    if not can_do(actor, "create", policy=policy):
+        return "unauthorized"
+
+    # 4. Dedup — if this exact task_id already exists in any state, skip.
+    show_rc, _, _ = _run_wg(
+        ["wg", "--dir", str(wg_dir), "show", task_id, "--json"],
+        cwd=cwd,
+        timeout=20.0,
+    )
+    if show_rc == 0:
+        return "existing"
+
+    # 5. Load task list once (used for per-lane and global counts).
+    tasks = _load_task_list(wg_dir, cwd=cwd)
+
+    # 6. Quality-adjusted budget check.
+    effective_policy = _apply_quality_modifier(wg_dir, actor, policy)
+    active_in_lane = count_active_drift_tasks(wg_dir, lane_tag, _tasks=tasks)
     ledger_path = wg_dir / "budget-ledger.jsonl"
     hourly_creates = recent_count(ledger_path, actor.id, "create", window_seconds=3600)
     allowed, reason = check_budget(
         actor, "create",
-        current_count=active,
+        current_count=active_in_lane,
         recent_count=hourly_creates,
-        policy=effective_policy or None,
+        policy=effective_policy,
     )
     if not allowed:
         _record_escalation(wg_dir, actor, lane_tag, task_id, title, reason)
         return "capped"
 
-    # Delegate to existing function with cap set high (budget already checked)
-    result = guarded_add_drift_task(
-        wg_dir=wg_dir,
-        task_id=task_id,
-        title=title,
-        description=description,
-        lane_tag=lane_tag,
-        extra_tags=extra_tags,
-        after=after,
-        cwd=cwd,
-        cap=999,  # Already budget-checked above
+    # 7. Global ceiling — safety net against runaway across all lanes.
+    total_active_drift = count_all_active_drift_tasks(wg_dir, _tasks=tasks)
+    ceiling = get_global_ceiling(effective_policy)
+    if total_active_drift >= ceiling:
+        reason = f"global_ceiling exceeded: {total_active_drift} >= {ceiling}"
+        _record_escalation(wg_dir, actor, lane_tag, task_id, title, reason)
+        return "capped"
+
+    # 8. Create the task.
+    cmd: list[str] = [
+        "wg", "--dir", str(wg_dir),
+        "add", title,
+        "--id", task_id,
+        "-d", description,
+        "--immediate",
+        "-t", "drift",
+        "-t", lane_tag,
+    ]
+    for tag in (extra_tags or []):
+        cmd.extend(["-t", tag])
+    if after:
+        cmd.extend(["--after", after])
+
+    add_rc, _, _ = _run_wg(cmd, cwd=cwd, timeout=30.0)
+    if add_rc != 0:
+        return "error"
+
+    # 9. Record in budget ledger.
+    record_operation(
+        ledger_path,
+        actor_id=actor.id,
+        actor_class=actor.actor_class,
+        operation="create",
+        repo=actor.repo,
+        detail=task_id,
     )
+    return "created"
 
-    # Record the create in the budget ledger
-    if result == "created":
-        record_operation(
-            ledger_path,
-            actor_id=actor.id,
-            actor_class=actor.actor_class,
-            operation="create",
-            repo=actor.repo,
-            detail=task_id,
-        )
 
-    return result
+# Backward-compatible alias — callers that imported this name still work.
+guarded_add_drift_task_with_authority = guarded_add_drift_task

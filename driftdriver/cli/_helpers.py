@@ -343,6 +343,11 @@ def _maybe_auto_ensure_contracts(*, wg_dir: Path, project_dir: Path, policy: Any
 
 
 def _compute_loop_safety(*, wg_dir: Path, task_id: str, policy: Any) -> dict[str, Any]:
+    """Check graph-health guards: cycle detection and redrift depth.
+
+    Budget/queue gating is handled by authority budgets in drift_task_guard.
+    This function only blocks on structural graph problems.
+    """
     wg = load_workgraph(wg_dir)
     tasks = list(wg.tasks.values())
     tasks_by_id = {str(t.get("id") or ""): t for t in tasks}
@@ -352,26 +357,22 @@ def _compute_loop_safety(*, wg_dir: Path, task_id: str, policy: Any) -> dict[str
     if max_depth < 0:
         max_depth = 0
 
+    # Ready queue count is diagnostic only — authority budgets gate creation.
     ready_queue = rank_ready_drift_queue(tasks, limit=10_000)
     ready_count = len(ready_queue)
-    max_ready = int(getattr(policy, "loop_max_ready_drift_followups", 20))
-    if max_ready < 0:
-        max_ready = 0
 
     has_cycle = detect_cycle_from(task_id, tasks_by_id)
     reasons: list[str] = []
     if depth > max_depth:
         reasons.append(f"redrift_depth_exceeded ({depth} > {max_depth})")
-    if ready_count > max_ready:
-        reasons.append(f"ready_drift_queue_exceeded ({ready_count} > {max_ready})")
     if has_cycle:
         reasons.append("blocked_by_cycle_detected")
 
-    block = bool(getattr(policy, "loop_block_followup_creation", True)) and bool(reasons)
+    # Only block on structural problems (cycle, depth), not queue count.
+    block = bool(reasons)
     return {
         "max_redrift_depth": max_depth,
         "observed_redrift_depth": depth,
-        "max_ready_drift_followups": max_ready,
         "ready_drift_followups": ready_count,
         "blocked_by_cycle": has_cycle,
         "followups_blocked": block,

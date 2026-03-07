@@ -12,7 +12,9 @@ TASK_ID="$(current_task_id)"
 # Run post-task drift check in JSON mode and capture output for outcome comparison
 POST_CHECK_JSON=""
 if [[ -n "$TASK_ID" ]]; then
-  POST_CHECK_JSON=$("$WG_DIR/drifts" check --task "$TASK_ID" --write-log --create-followups --json 2>/dev/null || echo "")
+  ACTOR_ID="${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}"
+  POST_CHECK_JSON=$("$WG_DIR/drifts" check --task "$TASK_ID" --write-log --create-followups --json \
+    --actor-id "$ACTOR_ID" --actor-class "${WG_ACTOR_CLASS:-interactive}" 2>/dev/null || echo "")
 fi
 
 # Basic verification: did any files change?

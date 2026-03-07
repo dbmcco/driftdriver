@@ -177,11 +177,11 @@ class TestRecentCountByClass(unittest.TestCase):
 
 
 class TestGuardIntegration(unittest.TestCase):
-    """Integration: guarded_add_drift_task_with_authority records creates and respects hourly limit."""
+    """Integration: guarded_add_drift_task records creates and respects hourly limit."""
 
     def test_records_create_and_respects_hourly_limit(self) -> None:
         """After enough creates, the hourly budget should deny further creation."""
-        from driftdriver.drift_task_guard import guarded_add_drift_task_with_authority
+        from driftdriver.drift_task_guard import guarded_add_drift_task
 
         with TemporaryDirectory() as tmp:
             wg_dir = Path(tmp) / ".workgraph"
@@ -220,7 +220,7 @@ class TestGuardIntegration(unittest.TestCase):
 
             # 10th create should succeed (9 recent + this one = check sees 9 < 10)
             with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run):
-                result = guarded_add_drift_task_with_authority(
+                result = guarded_add_drift_task(
                     wg_dir=wg_dir,
                     task_id="qadrift-ten",
                     title="tenth task",
@@ -236,7 +236,7 @@ class TestGuardIntegration(unittest.TestCase):
 
             # 11th create should be capped (recent_count=10 >= max_creates_per_hour=10)
             with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run):
-                result = guarded_add_drift_task_with_authority(
+                result = guarded_add_drift_task(
                     wg_dir=wg_dir,
                     task_id="qadrift-eleven",
                     title="eleventh task",

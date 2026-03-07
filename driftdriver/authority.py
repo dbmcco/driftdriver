@@ -93,10 +93,13 @@ def check_budget(
 
 
 def load_authority_policy(toml_path: Path) -> dict[str, Any]:
-    """Load [authority] section from drift-policy.toml.
+    """Load authority configuration from drift-policy.toml.
 
-    Returns merged dict with defaults. If the file does not exist or has no
-    [authority] section, returns an empty dict.
+    Reads [authority] section for grants, budgets, and global_ceiling.
+    Falls back to [loop_safety].max_ready_drift_followups for global_ceiling
+    when [authority] doesn't set it (backward compat).
+
+    Returns merged dict. Empty dict if file missing or no relevant sections.
     """
     if not toml_path.exists():
         return {}
@@ -106,37 +109,45 @@ def load_authority_policy(toml_path: Path) -> dict[str, Any]:
     except Exception:
         return {}
 
-    authority_section = data.get("authority")
-    if not isinstance(authority_section, dict):
-        return {}
-
     result: dict[str, Any] = {}
 
-    # Parse grants overrides
-    grants_raw = authority_section.get("grants")
-    if isinstance(grants_raw, dict):
-        grants: dict[str, frozenset[str]] = {}
-        for actor_class, ops in grants_raw.items():
-            if isinstance(ops, list):
-                grants[actor_class] = frozenset(str(op) for op in ops)
-        if grants:
-            result["grants"] = grants
+    authority_section = data.get("authority")
+    if isinstance(authority_section, dict):
+        # Parse grants overrides
+        grants_raw = authority_section.get("grants")
+        if isinstance(grants_raw, dict):
+            grants: dict[str, frozenset[str]] = {}
+            for actor_class, ops in grants_raw.items():
+                if isinstance(ops, list):
+                    grants[actor_class] = frozenset(str(op) for op in ops)
+            if grants:
+                result["grants"] = grants
 
-    # Parse budget overrides
-    budgets_raw = authority_section.get("budgets")
-    if isinstance(budgets_raw, dict):
-        budgets: dict[str, Budget] = {}
-        for actor_class, budget_data in budgets_raw.items():
-            if isinstance(budget_data, dict):
-                default = DEFAULT_BUDGETS.get(actor_class, Budget())
-                budgets[actor_class] = Budget(
-                    max_active_tasks=int(budget_data.get("max_active_tasks", default.max_active_tasks)),
-                    max_creates_per_hour=int(budget_data.get("max_creates_per_hour", default.max_creates_per_hour)),
-                    max_dispatches_per_hour=int(
-                        budget_data.get("max_dispatches_per_hour", default.max_dispatches_per_hour)
-                    ),
-                )
-        if budgets:
-            result["budgets"] = budgets
+        # Parse budget overrides
+        budgets_raw = authority_section.get("budgets")
+        if isinstance(budgets_raw, dict):
+            budgets: dict[str, Budget] = {}
+            for actor_class, budget_data in budgets_raw.items():
+                if isinstance(budget_data, dict):
+                    default = DEFAULT_BUDGETS.get(actor_class, Budget())
+                    budgets[actor_class] = Budget(
+                        max_active_tasks=int(budget_data.get("max_active_tasks", default.max_active_tasks)),
+                        max_creates_per_hour=int(budget_data.get("max_creates_per_hour", default.max_creates_per_hour)),
+                        max_dispatches_per_hour=int(
+                            budget_data.get("max_dispatches_per_hour", default.max_dispatches_per_hour)
+                        ),
+                    )
+            if budgets:
+                result["budgets"] = budgets
+
+        # Global ceiling from [authority]
+        if "global_ceiling" in authority_section:
+            result["global_ceiling"] = max(1, int(authority_section["global_ceiling"]))
+
+    # Backward compat: read global ceiling from [loop_safety] if not set in [authority]
+    if "global_ceiling" not in result:
+        loop_safety = data.get("loop_safety")
+        if isinstance(loop_safety, dict) and "max_ready_drift_followups" in loop_safety:
+            result["global_ceiling"] = max(1, int(loop_safety["max_ready_drift_followups"]))
 
     return result
