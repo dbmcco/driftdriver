@@ -11,12 +11,14 @@ from unittest.mock import patch
 from driftdriver.qadrift import (
     QAFinding,
     QAReport,
+    _map_severity,
     check_false_confidence,
     check_integration_coverage,
     check_mock_usage,
     emit_quality_review_tasks,
     find_untested_modules,
     format_report,
+    run_as_lane,
     run_program_quality_scan,
     run_qa_check,
 )
@@ -233,6 +235,91 @@ class ProgramQADriftTests(unittest.TestCase):
             self.assertEqual(out["created"], 1)
             self.assertEqual(out["existing"], 1)
             self.assertEqual(len(out["errors"]), 0)
+
+
+class RunAsLaneTests(unittest.TestCase):
+    def test_run_as_lane_returns_lane_result(self) -> None:
+        """run_as_lane returns a valid LaneResult."""
+        import json
+        from driftdriver.lane_contract import LaneResult, validate_lane_output
+
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            result = run_as_lane(project_dir)
+
+            self.assertIsInstance(result, LaneResult)
+            self.assertEqual(result.lane, "qadrift")
+            self.assertIsInstance(result.findings, list)
+            self.assertIsInstance(result.exit_code, int)
+
+            # Verify it validates through the contract
+            raw = json.dumps({
+                "lane": result.lane,
+                "findings": [
+                    {"message": f.message, "severity": f.severity, "file": f.file, "line": f.line, "tags": f.tags}
+                    for f in result.findings
+                ],
+                "exit_code": result.exit_code,
+                "summary": result.summary,
+            })
+            validated = validate_lane_output(raw)
+            self.assertIsNotNone(validated)
+            self.assertEqual(validated.lane, "qadrift")
+
+    def test_run_as_lane_with_findings(self) -> None:
+        """run_as_lane reports findings for a repo with untested modules."""
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            src_dir = project_dir / "src"
+            src_dir.mkdir()
+            (src_dir / "mymodule.py").write_text("def hello(): pass\n")
+
+            result = run_as_lane(project_dir)
+
+            self.assertEqual(result.lane, "qadrift")
+            self.assertGreater(len(result.findings), 0)
+            self.assertEqual(result.exit_code, 1)
+
+            # Check severity mapping: QAFinding HIGH -> lane "error"
+            severities = {f.severity for f in result.findings}
+            self.assertTrue(severities.issubset({"info", "warning", "error", "critical"}))
+
+            # Check tags contain category
+            for f in result.findings:
+                self.assertIsInstance(f.tags, list)
+
+    def test_run_as_lane_clean_repo(self) -> None:
+        """run_as_lane returns exit_code 0 for a clean repo with no findings."""
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            # Empty project — no src dir, no test files, no findings expected
+
+            result = run_as_lane(project_dir)
+
+            self.assertEqual(result.lane, "qadrift")
+            self.assertEqual(len(result.findings), 0)
+            self.assertEqual(result.exit_code, 0)
+
+    def test_run_as_lane_severity_mapping(self) -> None:
+        """Verify severity mapping from QAFinding to LaneFinding."""
+        high = QAFinding(file="a.py", category="x", severity="HIGH", description="d")
+        medium = QAFinding(file="a.py", category="x", severity="MEDIUM", description="d")
+        low = QAFinding(file="a.py", category="x", severity="LOW", description="d")
+
+        self.assertEqual(_map_severity(high), "error")
+        self.assertEqual(_map_severity(medium), "warning")
+        self.assertEqual(_map_severity(low), "info")
+
+    def test_run_as_lane_handles_exception(self) -> None:
+        """run_as_lane returns an error LaneResult if run_qa_check raises."""
+        with patch("driftdriver.qadrift.run_qa_check", side_effect=RuntimeError("boom")):
+            result = run_as_lane(Path("/nonexistent"))
+
+        self.assertEqual(result.lane, "qadrift")
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(len(result.findings), 1)
+        self.assertEqual(result.findings[0].severity, "error")
+        self.assertIn("boom", result.findings[0].message)
 
 
 if __name__ == "__main__":

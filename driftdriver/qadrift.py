@@ -542,6 +542,56 @@ def run_program_quality_scan(
     }
 
 
+_LANE_SEVERITY_MAP = {
+    "HIGH": "error",
+    "MEDIUM": "warning",
+    "LOW": "info",
+    "CRITICAL": "critical",
+}
+
+
+def _map_severity(finding: QAFinding) -> str:
+    """Map QAFinding severity (HIGH/MEDIUM/LOW) to lane contract level."""
+    return _LANE_SEVERITY_MAP.get(finding.severity.upper(), "info")
+
+
+def run_as_lane(project_dir: Path) -> "LaneResult":
+    """Run qadrift and return results in the standard lane contract format.
+
+    Wraps ``run_qa_check`` so that qadrift can be invoked through the
+    unified ``LaneResult`` interface used by all drift lanes.
+    """
+    from driftdriver.lane_contract import LaneFinding, LaneResult
+
+    try:
+        report = run_qa_check(project_dir)
+    except Exception as exc:
+        return LaneResult(
+            lane="qadrift",
+            findings=[LaneFinding(message=f"qadrift error: {exc}", severity="error")],
+            exit_code=1,
+            summary=f"qadrift failed: {exc}",
+        )
+
+    findings = []
+    for f in report.findings:
+        findings.append(LaneFinding(
+            message=f.description,
+            severity=_map_severity(f),
+            file=f.file,
+            line=0,
+            tags=[f.category],
+        ))
+
+    exit_code = 1 if findings else 0
+    return LaneResult(
+        lane="qadrift",
+        findings=findings,
+        exit_code=exit_code,
+        summary=report.summary or f"{len(findings)} findings",
+    )
+
+
 def _run_cmd(
     cmd: list[str],
     *,
