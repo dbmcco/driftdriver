@@ -108,6 +108,47 @@ def parse_routing_response(
     )
 
 
+def rule_based_routing(evidence: EvidencePackage) -> RoutingDecision:
+    """Select lanes using evidence-based rules without model calls.
+
+    Priority order:
+    1. Auto-fenced lanes from task description (mandatory)
+    2. Pattern-matched lanes from file classifications
+    3. Escalated lanes (high ignored/worsened rate from outcome history)
+    4. Filter to only installed lanes
+    """
+    installed = set(evidence.installed_lanes)
+    auto_fenced = detect_fenced_lanes(evidence.task_description)
+
+    # Start with auto-fenced (mandatory)
+    selected: list[str] = [lane for lane in auto_fenced if lane in installed]
+    reasoning: dict[str, str] = {lane: "task fence (mandatory)" for lane in selected}
+
+    # Add pattern-matched lanes
+    suggested = evidence.suggest_lanes()
+    for lane in suggested:
+        if lane in installed and lane not in selected:
+            selected.append(lane)
+            reasoning[lane] = "file pattern match"
+
+    # Add escalated lanes (outcome history shows findings being ignored)
+    for lane, weight in evidence.lane_weights.items():
+        if weight > 1.1 and lane in installed and lane not in selected:
+            selected.append(lane)
+            reasoning[lane] = f"escalated (weight={weight:.2f}, findings often ignored)"
+
+    confidence = 0.7 if selected else 0.3
+
+    return RoutingDecision(
+        selected_lanes=selected,
+        reasoning=reasoning,
+        confidence=confidence,
+        auto_fenced=auto_fenced,
+        model_suggested=[],
+        evidence_summary=f"Rule-based: {len(auto_fenced)} fenced, {len(suggested)} pattern-matched, {len(evidence.lane_weights)} weighted",
+    )
+
+
 def _extract_json(text: str) -> dict | None:
     """Extract and parse JSON from a string, handling markdown code fences."""
     # Try stripping markdown fences: ```json ... ``` or ``` ... ```

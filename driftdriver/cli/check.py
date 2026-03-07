@@ -26,7 +26,7 @@ from driftdriver.health import (
     redrift_depth,
 )
 from driftdriver.policy import load_drift_policy
-from driftdriver.routing_models import parse_routing_response
+from driftdriver.routing_models import rule_based_routing
 from driftdriver.smart_routing import gather_evidence
 from driftdriver.updates import (
     ECOSYSTEM_REPOS,
@@ -260,9 +260,8 @@ def _select_optional_plugins(
             strategy = "auto"
         else:
             evidence = gather_evidence(wg_dir)
-            # Smart routing: use evidence-based pattern matching
-            # Model-mediated routing requires API integration (future work)
-            decision = parse_routing_response("", evidence)
+            # Smart routing: rule-based evidence routing
+            decision = rule_based_routing(evidence)
             selected = set(decision.selected_lanes)
             lane_plan = {
                 "strategy": "smart",

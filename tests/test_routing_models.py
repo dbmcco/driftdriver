@@ -8,6 +8,7 @@ from driftdriver.routing_models import (
     RoutingDecision,
     detect_fenced_lanes,
     parse_routing_response,
+    rule_based_routing,
 )
 
 
@@ -167,6 +168,101 @@ verify: spec is current
         assert "fakelane" not in decision.selected_lanes
         assert "notreal" not in decision.selected_lanes
         assert "coredrift" in decision.selected_lanes
+
+
+class TestRuleBasedRouting:
+    def test_rule_based_routing_uses_fences(self):
+        """Fenced lanes in task description are always selected."""
+        task = """
+Fix auth.
+
+```specdrift
+verify: spec matches
+```
+"""
+        evidence = make_evidence(
+            task_description=task,
+            installed_lanes=["coredrift", "specdrift", "datadrift"],
+        )
+        decision = rule_based_routing(evidence)
+        assert "specdrift" in decision.selected_lanes
+        assert "specdrift" in decision.auto_fenced
+        assert decision.reasoning["specdrift"] == "task fence (mandatory)"
+
+    def test_rule_based_routing_adds_pattern_matches(self):
+        """File pattern matches add lanes."""
+        evidence = make_evidence(installed_lanes=["coredrift", "specdrift"])
+        # pattern_hints has coredrift -> ["*.py"], and changed_files has .py files
+        decision = rule_based_routing(evidence)
+        assert "coredrift" in decision.selected_lanes
+        assert decision.reasoning["coredrift"] == "file pattern match"
+
+    def test_rule_based_routing_escalates_high_weight(self):
+        """Lanes with weight > 1.1 get included."""
+        evidence = make_evidence(installed_lanes=["coredrift", "specdrift", "datadrift"])
+        evidence.lane_weights = {"datadrift": 1.5}
+        decision = rule_based_routing(evidence)
+        assert "datadrift" in decision.selected_lanes
+        assert "escalated" in decision.reasoning["datadrift"]
+        assert "1.50" in decision.reasoning["datadrift"]
+
+    def test_rule_based_routing_filters_to_installed(self):
+        """Only installed lanes are returned."""
+        task = """
+Do work.
+
+```uxdrift
+check: layout
+```
+
+```archdrift
+check: architecture
+```
+"""
+        evidence = make_evidence(
+            task_description=task,
+            installed_lanes=["coredrift", "uxdrift"],  # archdrift NOT installed
+        )
+        decision = rule_based_routing(evidence)
+        assert "uxdrift" in decision.selected_lanes
+        assert "archdrift" not in decision.selected_lanes
+        # archdrift should still appear in auto_fenced (detected) but not selected
+        assert "archdrift" in decision.auto_fenced
+
+    def test_rule_based_routing_confidence_when_empty(self):
+        """Confidence is low when no lanes are selected."""
+        evidence = EvidencePackage(
+            changed_files={},
+            file_classifications={},
+            task_description="Nothing to check",
+            task_contract={},
+            project_context=[],
+            prior_drift_findings=[],
+            installed_lanes=[],
+            pattern_hints={},
+        )
+        decision = rule_based_routing(evidence)
+        assert decision.selected_lanes == []
+        assert decision.confidence == 0.3
+
+    def test_rule_based_routing_confidence_when_populated(self):
+        """Confidence is higher when lanes are selected."""
+        evidence = make_evidence(installed_lanes=["coredrift"])
+        decision = rule_based_routing(evidence)
+        assert len(decision.selected_lanes) > 0
+        assert decision.confidence == 0.7
+
+    def test_rule_based_routing_no_model_suggested(self):
+        """Rule-based routing never populates model_suggested."""
+        evidence = make_evidence()
+        decision = rule_based_routing(evidence)
+        assert decision.model_suggested == []
+
+    def test_rule_based_routing_evidence_summary(self):
+        """Evidence summary describes the rule-based inputs."""
+        evidence = make_evidence()
+        decision = rule_based_routing(evidence)
+        assert decision.evidence_summary.startswith("Rule-based:")
 
 
 class TestKnownLanes:
