@@ -477,6 +477,62 @@ def run_workgraph_plan_review(
     }
 
 
+_LANE_SEVERITY_MAP = {
+    "critical": "critical",
+    "high": "error",
+    "medium": "warning",
+    "low": "info",
+}
+
+
+def _map_severity(finding: dict[str, Any]) -> str:
+    """Map plandrift finding severity to lane contract level."""
+    raw = str(finding.get("severity") or "").lower()
+    return _LANE_SEVERITY_MAP.get(raw, "info")
+
+
+def run_as_lane(project_dir: Path) -> "LaneResult":
+    """Run plandrift and return results in the standard lane contract format.
+
+    Wraps ``run_workgraph_plan_review`` so that plandrift can be invoked
+    through the unified ``LaneResult`` interface used by all drift lanes.
+    """
+    from driftdriver.lane_contract import LaneFinding, LaneResult
+
+    try:
+        report = run_workgraph_plan_review(
+            repo_name=project_dir.name,
+            repo_path=project_dir,
+        )
+    except Exception as exc:
+        return LaneResult(
+            lane="plandrift",
+            findings=[LaneFinding(message=f"plandrift error: {exc}", severity="error")],
+            exit_code=1,
+            summary=f"plandrift failed: {exc}",
+        )
+
+    findings = []
+    for f in report.get("findings", []):
+        findings.append(LaneFinding(
+            message=str(f.get("title") or f.get("category") or "planning finding"),
+            severity=_map_severity(f),
+            file="",
+            line=0,
+            tags=[str(f.get("category") or "planning")],
+        ))
+
+    summary_data = report.get("summary", {})
+    summary_text = str(summary_data.get("narrative") or f"{len(findings)} findings")
+    exit_code = 1 if findings else 0
+    return LaneResult(
+        lane="plandrift",
+        findings=findings,
+        exit_code=exit_code,
+        summary=summary_text,
+    )
+
+
 def _run_cmd(
     cmd: list[str],
     *,
