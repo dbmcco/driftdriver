@@ -9,12 +9,45 @@ from pathlib import Path
 from typing import Any
 
 from driftdriver.actor import Actor
-from driftdriver.authority import can_do, check_budget, load_authority_policy
+from driftdriver.authority import Budget, can_do, check_budget, get_budget, load_authority_policy
 from driftdriver.budget_ledger import recent_count, record_operation
 
 # Maximum non-terminal drift tasks allowed per lane per repo.
 # Once this cap is hit, no new tasks are created for that lane.
 DEFAULT_CAP_PER_LANE = 3
+
+
+def _record_escalation(
+    wg_dir: Path,
+    actor: Actor,
+    lane_tag: str,
+    task_id: str,
+    title: str,
+    reason: str,
+) -> None:
+    """Record a capped finding to the escalation log for human visibility.
+
+    When a drift finding can't be created (budget exhausted), it goes here
+    instead of silently evaporating. The ecosystem hub can surface these.
+    """
+    escalation_path = wg_dir / "escalations.jsonl"
+    import datetime
+    entry = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "actor_id": actor.id,
+        "actor_class": actor.actor_class,
+        "lane": lane_tag,
+        "task_id": task_id,
+        "title": title,
+        "reason": reason,
+        "type": "budget_exhausted",
+    }
+    try:
+        escalation_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(escalation_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
 
 
 def _run_wg(
@@ -170,6 +203,26 @@ def guarded_add_drift_task_with_authority(
     if not can_do(actor, "create", policy=policy):
         return "unauthorized"
 
+    # Apply quality-based budget adjustment (only when outcome history exists)
+    effective_policy = dict(policy) if policy else {}
+    try:
+        from driftdriver.quality_signal import compute_actor_quality, quality_budget_modifier
+        outcomes_path = wg_dir / "drift-outcomes.jsonl"
+        quality = compute_actor_quality(outcomes_path, actor.id, actor.actor_class)
+        modifier = quality_budget_modifier(quality) if quality.total_outcomes > 0 else 1.0
+        if modifier != 1.0:
+            base_budget = get_budget(actor.actor_class, policy=policy)
+            adjusted = Budget(
+                max_active_tasks=max(1, int(base_budget.max_active_tasks * modifier)),
+                max_creates_per_hour=max(1, int(base_budget.max_creates_per_hour * modifier)),
+                max_dispatches_per_hour=max(0, int(base_budget.max_dispatches_per_hour * modifier)),
+            )
+            effective_budgets = dict(effective_policy.get("budgets", {}))
+            effective_budgets[actor.actor_class] = adjusted
+            effective_policy["budgets"] = effective_budgets
+    except Exception:
+        pass  # Quality signal unavailable — use base budgets
+
     # Check budget — use active drift task count as current_count
     active = count_active_drift_tasks(wg_dir, lane_tag, cwd=cwd)
     ledger_path = wg_dir / "budget-ledger.jsonl"
@@ -178,9 +231,10 @@ def guarded_add_drift_task_with_authority(
         actor, "create",
         current_count=active,
         recent_count=hourly_creates,
-        policy=policy,
+        policy=effective_policy or None,
     )
     if not allowed:
+        _record_escalation(wg_dir, actor, lane_tag, task_id, title, reason)
         return "capped"
 
     # Delegate to existing function with cap set high (budget already checked)
