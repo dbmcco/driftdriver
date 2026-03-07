@@ -27,6 +27,7 @@ from driftdriver.health import (
     redrift_depth,
 )
 from driftdriver.policy import load_drift_policy
+from driftdriver.policy_enforcement import collect_enforcement_findings, evaluate_enforcement
 from driftdriver.routing_models import rule_based_routing
 from driftdriver.smart_routing import gather_evidence
 from driftdriver.updates import (
@@ -736,9 +737,21 @@ def cmd_check(args: argparse.Namespace) -> int:
                 "report": il_result.get("report"),
             }
 
+        # Enforcement quality gates — evaluate severity-based thresholds.
+        enforcement_findings = collect_enforcement_findings(plugins_json)
+        enforcement_result = evaluate_enforcement(policy, enforcement_findings)
+
+        # Enforcement exit code can escalate but never downgrade the lane exit code.
+        # Lane findings (exit 3) remain as-is; enforcement adds exit 1 (warn) or 2 (block).
+        final_rc = out_rc
+        if enforcement_result["exit_code"] == 2:
+            final_rc = 2  # blocked
+        elif enforcement_result["exit_code"] == 1 and final_rc == ExitCode.ok:
+            final_rc = 1  # warnings only (no lane findings)
+
         combined = {
             "task_id": task_id,
-            "exit_code": out_rc,
+            "exit_code": final_rc,
             "mode": mode,
             "effective_mode": effective_mode,
             "contract_auto_ensure": contract_ensure,
@@ -750,10 +763,16 @@ def cmd_check(args: argparse.Namespace) -> int:
             "plugins": plugins_json,
             "action_plan": _normalize_actions(plugins_json),
             "contract_compliance": _count_contract_compliance(plugins_json),
+            "enforcement": enforcement_result,
         }
-        if mode == "breaker" and out_rc == ExitCode.findings:
+        if mode == "breaker" and final_rc == ExitCode.findings:
             breaker_id = _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
             combined["breaker_task_id"] = breaker_id
+
+        # Print enforcement warnings to stderr for visibility.
+        for warning_msg in enforcement_result.get("warnings", []):
+            print(warning_msg, file=sys.stderr)
+
         _record_check_findings(
             plugins_json=plugins_json,
             task_id=task_id,
@@ -766,7 +785,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         except Exception:
             pass
         print(json.dumps(combined, indent=2, sort_keys=False))
-        return out_rc
+        return final_rc
 
     speed_rc = _run(speed_cmd)
     if speed_rc not in (0, ExitCode.findings):
@@ -790,6 +809,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         )
 
     # Run internal lanes (text path — print summary lines).
+    # Collect structured results for enforcement evaluation.
+    internal_plugins_json: dict[str, Any] = {}
     for lane in INTERNAL_LANES:
         il_result = _run_internal_lane(lane=lane, project_dir=project_dir, wg_dir=wg_dir)
         if not il_result.get("ran"):
@@ -805,8 +826,21 @@ def cmd_check(args: argparse.Namespace) -> int:
             report = il_result.get("report")
             if isinstance(report, dict) and report.get("error"):
                 print(f"note: {lane}: {report['error']}", file=sys.stderr)
+        # Preserve structured result for enforcement regardless of exit code.
+        internal_plugins_json[lane] = {
+            "ran": bool(il_result.get("ran")),
+            "exit_code": il_rc,
+            "report": il_result.get("report"),
+        }
 
     has_findings = any(rc == ExitCode.findings for rc in rc_by_plugin.values())
+
+    # Enforcement quality gates (text path) — evaluate internal lane findings.
+    enforcement_findings = collect_enforcement_findings(internal_plugins_json)
+    enforcement_result = evaluate_enforcement(policy, enforcement_findings)
+    for warning_msg in enforcement_result.get("warnings", []):
+        print(warning_msg, file=sys.stderr)
+
     if has_findings:
         # Build minimal plugin info for recording (text mode has no structured reports)
         text_plugins: dict[str, Any] = {}
@@ -824,7 +858,16 @@ def cmd_check(args: argparse.Namespace) -> int:
         )
         if mode == "breaker":
             _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
+        # Enforcement can escalate: blocked (2) overrides findings (3).
+        if enforcement_result["exit_code"] == 2:
+            return 2
         return ExitCode.findings
+
+    # No lane findings, but enforcement might still warn or block.
+    if enforcement_result["exit_code"] == 2:
+        return 2
+    if enforcement_result["exit_code"] == 1:
+        return 1
     return ExitCode.ok
 
 

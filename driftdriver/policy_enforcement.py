@@ -11,6 +11,39 @@ if TYPE_CHECKING:
 SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "critical": 3}
 
 
+def collect_enforcement_findings(
+    plugins_json: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Extract all findings with severity from combined plugins output.
+
+    Walks every plugin entry in plugins_json, collects findings from
+    report.findings lists, and normalises severity (defaulting to 'info'
+    when absent or unrecognised).
+
+    Only includes plugins that actually ran (ran=True).
+    """
+    out: list[dict[str, Any]] = []
+    for _name, payload in plugins_json.items():
+        if not isinstance(payload, dict):
+            continue
+        if not payload.get("ran"):
+            continue
+        report = payload.get("report")
+        if not isinstance(report, dict):
+            continue
+        findings = report.get("findings")
+        if not isinstance(findings, list):
+            continue
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            sev = str(finding.get("severity", "info")).strip().lower()
+            if sev not in SEVERITY_RANK:
+                sev = "info"
+            out.append({**finding, "severity": sev})
+    return out
+
+
 def evaluate_enforcement(
     policy: "DriftPolicy",
     findings: list[dict[str, Any]],
