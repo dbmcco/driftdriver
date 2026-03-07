@@ -98,9 +98,9 @@ class FederateLearningsTests(unittest.TestCase):
             wg_dir.mkdir(parents=True)
             kb_file = wg_dir / "knowledge.jsonl"
             kb_file.write_text(
-                json.dumps({"content": "good entry", "confidence": 0.5}) + "\n"
+                json.dumps({"content": "good entry", "confidence": 0.7}) + "\n"
                 + "not valid json\n"
-                + json.dumps({"content": "another good", "confidence": 0.6}) + "\n"
+                + json.dumps({"content": "another good", "confidence": 0.8}) + "\n"
             )
 
             registry = _FakePeerRegistry([PeerInfo(name="p2", path=str(peer_dir))])

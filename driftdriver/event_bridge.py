@@ -84,6 +84,9 @@ def format_mcp_call(event: MappedEvent) -> dict:
 
 _CONFIDENCE_STR_TO_FLOAT = {"high": 0.9, "medium": 0.7, "low": 0.3}
 
+# Minimum word length for scope matching to avoid false positives on short words
+_SCOPE_MIN_WORD_LEN = 3
+
 
 def _parse_entry_date(entry: dict) -> datetime | None:
     """Extract the best available date from a knowledge entry.
@@ -110,17 +113,71 @@ def _parse_entry_date(entry: dict) -> datetime | None:
     return None
 
 
+def _extract_entry_words(entry: dict) -> set[str]:
+    """Extract lowercase words from an entry's content, category, fact_type, and tags.
+
+    Only includes words of length >= _SCOPE_MIN_WORD_LEN to reduce false positives.
+    """
+    parts: list[str] = []
+    for field in ("content", "category", "fact_type"):
+        val = entry.get(field, "")
+        if isinstance(val, str):
+            parts.append(val)
+    tags = entry.get("tags")
+    if isinstance(tags, list):
+        parts.extend(str(t) for t in tags)
+    text = " ".join(parts).lower()
+    return {w for w in text.split() if len(w) >= _SCOPE_MIN_WORD_LEN}
+
+
+def match_scope_relevance(entry: dict, scope_tags: list[str]) -> bool:
+    """Check if a knowledge entry is relevant to the receiving repo's scope.
+
+    Returns True if any scope tag appears as a whole word in the entry's
+    content, category, fact_type, or tags fields.  Empty scope_tags means
+    no filtering — accept everything.
+    """
+    if not scope_tags:
+        return True
+    entry_words = _extract_entry_words(entry)
+    # Also check category/fact_type/tags as exact tag matches (not just words)
+    exact_fields: set[str] = set()
+    for field in ("category", "fact_type"):
+        val = entry.get(field, "")
+        if isinstance(val, str) and val.strip():
+            exact_fields.add(val.strip().lower())
+    tags = entry.get("tags")
+    if isinstance(tags, list):
+        for t in tags:
+            if isinstance(t, str) and t.strip():
+                exact_fields.add(t.strip().lower())
+
+    for tag in scope_tags:
+        tag_lower = tag.lower()
+        if tag_lower in exact_fields:
+            return True
+        if tag_lower in entry_words:
+            return True
+    return False
+
+
 def filter_federated_knowledge(
     entries: list[dict],
     *,
-    min_confidence: float = 0.5,
+    min_confidence: float = 0.6,
     max_age_days: int = 90,
     max_per_peer: int = 50,
+    scope_tags: list[str] | None = None,
 ) -> list[dict]:
     """Filter federated knowledge entries for quality.
 
-    Removes low-confidence, stale, and duplicate entries.
-    Caps entries per source to prevent one peer from dominating.
+    Applies five gates before accepting a federated entry:
+    1. Confidence — rejects entries below min_confidence (default 0.6)
+    2. Scope relevance — if scope_tags provided, rejects entries that don't
+       match the receiving repo's tech stack / domain keywords
+    3. Staleness — rejects entries older than max_age_days
+    4. Deduplication — rejects duplicate content (MD5 of first 100 chars)
+    5. Per-peer cap — limits entries from any single source
     """
     cutoff = datetime.now() - timedelta(days=max_age_days)
     seen_hashes: set[str] = set()
@@ -133,6 +190,10 @@ def filter_federated_knowledge(
         if isinstance(conf, str):
             conf = _CONFIDENCE_STR_TO_FLOAT.get(conf, 0.0)
         if conf < min_confidence:
+            continue
+
+        # Scope relevance gate
+        if scope_tags is not None and not match_scope_relevance(entry, scope_tags):
             continue
 
         # Staleness gate

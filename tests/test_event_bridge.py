@@ -12,6 +12,7 @@ from driftdriver.event_bridge import (
     filter_federated_knowledge,
     format_mcp_call,
     map_event,
+    match_scope_relevance,
     parse_events_file,
 )
 
@@ -215,3 +216,107 @@ def test_filter_unknown_string_confidence_treated_as_zero():
 def test_filter_empty_input():
     result = filter_federated_knowledge([])
     assert result == []
+
+
+# --- Default confidence threshold tests ---
+
+
+def test_filter_default_confidence_is_0_6():
+    """Default min_confidence should be 0.6, rejecting entries at 0.55."""
+    entries = [
+        {"content": "borderline entry", "confidence": 0.55},
+        {"content": "above threshold", "confidence": 0.65},
+    ]
+    result = filter_federated_knowledge(entries)
+    assert len(result) == 1
+    assert result[0]["content"] == "above threshold"
+
+
+# --- Scope relevance matching tests ---
+
+
+def test_match_scope_relevance_keyword_in_content():
+    """Entry content containing a scope keyword should match."""
+    entry = {"content": "Use pytest fixtures for database testing", "category": "testing"}
+    assert match_scope_relevance(entry, ["pytest"]) is True
+
+
+def test_match_scope_relevance_keyword_in_category():
+    """Entry category matching a scope keyword should match."""
+    entry = {"content": "Always validate inputs", "category": "python"}
+    assert match_scope_relevance(entry, ["python"]) is True
+
+
+def test_match_scope_relevance_keyword_in_fact_type():
+    """Entry fact_type matching a scope keyword should match."""
+    entry = {"content": "Watch out for race conditions", "fact_type": "security"}
+    assert match_scope_relevance(entry, ["security"]) is True
+
+
+def test_match_scope_relevance_no_match():
+    """Entry with no overlapping keywords should not match."""
+    entry = {"content": "Use React hooks for state management", "category": "frontend"}
+    assert match_scope_relevance(entry, ["python", "pytest", "fastapi"]) is False
+
+
+def test_match_scope_relevance_case_insensitive():
+    """Matching should be case-insensitive."""
+    entry = {"content": "Always use TypeScript strict mode", "category": "Frontend"}
+    assert match_scope_relevance(entry, ["typescript"]) is True
+
+
+def test_match_scope_relevance_empty_tags_accepts_all():
+    """Empty scope tags means no filtering — accept everything."""
+    entry = {"content": "Anything goes", "category": "misc"}
+    assert match_scope_relevance(entry, []) is True
+
+
+def test_match_scope_relevance_checks_tags_field():
+    """Entry with explicit tags field should be checked."""
+    entry = {"content": "General advice", "tags": ["python", "testing"]}
+    assert match_scope_relevance(entry, ["python"]) is True
+
+
+def test_match_scope_relevance_partial_word_no_match():
+    """'type' should not match 'typescript' — require word boundaries or exact tag match."""
+    entry = {"content": "Check the type of variable", "category": "general"}
+    assert match_scope_relevance(entry, ["typescript"]) is False
+
+
+def test_filter_with_scope_tags():
+    """filter_federated_knowledge with scope_tags filters irrelevant entries."""
+    entries = [
+        {"content": "Use pytest fixtures for testing", "confidence": 0.8, "category": "python"},
+        {"content": "Use React hooks for components", "confidence": 0.8, "category": "frontend"},
+        {"content": "Always validate API inputs", "confidence": 0.8, "category": "security"},
+    ]
+    result = filter_federated_knowledge(entries, scope_tags=["python", "pytest"])
+    contents = {e["content"] for e in result}
+    assert "Use pytest fixtures for testing" in contents
+    assert "Use React hooks for components" not in contents
+
+
+def test_filter_scope_tags_none_skips_scope_check():
+    """When scope_tags is None, no scope filtering happens."""
+    entries = [
+        {"content": "Anything about javascript", "confidence": 0.8, "category": "js"},
+        {"content": "Anything about python", "confidence": 0.8, "category": "py"},
+    ]
+    result = filter_federated_knowledge(entries, scope_tags=None)
+    assert len(result) == 2
+
+
+def test_filter_combined_gates_with_scope():
+    """All gates (confidence, staleness, dedup, cap, scope) work together."""
+    recent = (datetime.now() - timedelta(days=5)).isoformat()
+    entries = [
+        # Passes all gates
+        {"content": "Use pytest for python testing", "confidence": 0.8, "category": "python", "created_at": recent},
+        # Fails confidence gate
+        {"content": "Low confidence python tip", "confidence": 0.3, "category": "python", "created_at": recent},
+        # Fails scope gate
+        {"content": "Use React hooks always", "confidence": 0.8, "category": "frontend", "created_at": recent},
+    ]
+    result = filter_federated_knowledge(entries, scope_tags=["python", "pytest"])
+    assert len(result) == 1
+    assert result[0]["content"] == "Use pytest for python testing"
