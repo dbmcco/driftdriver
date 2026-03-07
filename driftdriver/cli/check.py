@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -51,6 +52,39 @@ from ._helpers import (
     _wg_log_message,
     _wrapper_commands_available,
 )
+
+
+def _record_check_findings(
+    *,
+    plugins_json: dict[str, Any],
+    task_id: str,
+    project_dir: Path,
+) -> None:
+    """Record drift findings to lessons.db immediately. Non-blocking best-effort."""
+    try:
+        from driftdriver.reporting import record_event_immediate
+
+        findings = _collect_findings(plugins_json)
+        if not findings:
+            return
+
+        session_id = os.environ.get("WG_SESSION_ID", "")
+        project = project_dir.name
+
+        for lane, kind in findings:
+            record_event_immediate(
+                event_type="drift_finding",
+                content=f"{lane}: {kind}",
+                session_id=session_id,
+                project=project,
+                metadata={
+                    "lane": lane,
+                    "severity": kind,
+                    "task_id": task_id,
+                },
+            )
+    except Exception:
+        pass
 
 
 class ExitCode:
@@ -585,6 +619,11 @@ def cmd_check(args: argparse.Namespace) -> int:
         if mode == "breaker" and out_rc == ExitCode.findings:
             breaker_id = _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
             combined["breaker_task_id"] = breaker_id
+        _record_check_findings(
+            plugins_json=plugins_json,
+            task_id=task_id,
+            project_dir=project_dir,
+        )
         print(json.dumps(combined, indent=2, sort_keys=False))
         return out_rc
 
@@ -609,7 +648,22 @@ def cmd_check(args: argparse.Namespace) -> int:
             force_create_followups=effective_force_create_followups,
         )
 
-    if any(rc == ExitCode.findings for rc in rc_by_plugin.values()):
+    has_findings = any(rc == ExitCode.findings for rc in rc_by_plugin.values())
+    if has_findings:
+        # Build minimal plugin info for recording (text mode has no structured reports)
+        text_plugins: dict[str, Any] = {}
+        for plugin_name, rc in rc_by_plugin.items():
+            if rc == ExitCode.findings:
+                text_plugins[plugin_name] = {
+                    "ran": True,
+                    "exit_code": rc,
+                    "report": {"findings": [{"kind": "drift_detected"}]},
+                }
+        _record_check_findings(
+            plugins_json=text_plugins,
+            task_id=task_id,
+            project_dir=project_dir,
+        )
         if mode == "breaker":
             _ensure_breaker_task(wg_dir=wg_dir, task_id=task_id)
         return ExitCode.findings
