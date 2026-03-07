@@ -767,5 +767,78 @@ class TestRecordEventImmediate(unittest.TestCase):
             self.assertEqual(payload["files_changed"], 3)
 
 
+class TestRecordEcosystemSnapshot(unittest.TestCase):
+    def test_record_ecosystem_snapshot_writes_to_db(self) -> None:
+        """Ecosystem overview gets persisted to lessons.db."""
+        from driftdriver.reporting import record_ecosystem_snapshot
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            overview = {
+                "repos_total": 5,
+                "tasks_open": 42,
+                "tasks_in_progress": 3,
+                "tasks_done": 100,
+                "repos_stalled": 1,
+                "security_critical": 0,
+                "quality_critical": 2,
+            }
+            result = record_ecosystem_snapshot(overview, db_path=db_path)
+            self.assertTrue(result)
+
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute(
+                "SELECT event_type, project, payload FROM session_events"
+            ).fetchall()
+            conn.close()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][0], "ecosystem_snapshot")
+            self.assertEqual(rows[0][1], "ecosystem")
+
+            payload = json.loads(rows[0][2])
+            self.assertEqual(payload["repos_total"], 5)
+            self.assertEqual(payload["tasks_open"], 42)
+
+    def test_record_ecosystem_snapshot_missing_db(self) -> None:
+        """Returns False when DB does not exist."""
+        from driftdriver.reporting import record_ecosystem_snapshot
+
+        result = record_ecosystem_snapshot(
+            {"repos_total": 1}, db_path=Path("/nonexistent/lessons.db")
+        )
+        self.assertFalse(result)
+
+    def test_record_ecosystem_snapshot_content_field(self) -> None:
+        """The full overview JSON is stored in the content field of the payload."""
+        from driftdriver.reporting import record_ecosystem_snapshot
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = Path(td) / "lessons.db"
+            _create_lessons_db(db_path)
+
+            overview = {
+                "repos_total": 3,
+                "tasks_open": 10,
+                "tasks_in_progress": 2,
+                "tasks_done": 50,
+                "repos_stalled": 0,
+                "security_critical": 1,
+                "quality_critical": 0,
+                "attention_repos": [{"repo": "foo", "score": 5}],
+            }
+            record_ecosystem_snapshot(overview, db_path=db_path)
+
+            conn = sqlite3.connect(str(db_path))
+            row = conn.execute("SELECT payload FROM session_events").fetchone()
+            conn.close()
+            payload = json.loads(row[0])
+            # content field should contain the full overview JSON
+            inner = json.loads(payload["content"])
+            self.assertEqual(inner["repos_total"], 3)
+            self.assertEqual(inner["attention_repos"], [{"repo": "foo", "score": 5}])
+
+
 if __name__ == "__main__":
     unittest.main()

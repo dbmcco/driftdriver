@@ -1129,6 +1129,14 @@ def collect_ecosystem_snapshot(
         updates=updates,
         central_reports=central_reports,
     )
+    # Persist overview for trend analysis — never break the hub
+    try:
+        from driftdriver.reporting import record_ecosystem_snapshot
+
+        record_ecosystem_snapshot(overview)
+    except Exception:
+        pass
+
     repo_dependency_overview = build_repo_dependency_overview(repos)
     narrative = build_ecosystem_narrative(overview)
 

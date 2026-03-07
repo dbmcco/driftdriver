@@ -81,6 +81,33 @@ def record_event_immediate(
         return False
 
 
+def record_ecosystem_snapshot(
+    overview: dict,
+    *,
+    db_path: Path | None = None,
+) -> bool:
+    """Persist an ecosystem overview snapshot for trend analysis.
+
+    Called after build_ecosystem_overview() to retain aggregate stats
+    that would otherwise be transient dashboard data.
+    """
+    return record_event_immediate(
+        event_type="ecosystem_snapshot",
+        content=json.dumps(overview, default=str),
+        project="ecosystem",
+        metadata={
+            "repos_total": overview.get("repos_total", 0),
+            "tasks_open": overview.get("tasks_open", 0),
+            "tasks_in_progress": overview.get("tasks_in_progress", 0),
+            "tasks_done": overview.get("tasks_done", 0),
+            "repos_stalled": overview.get("repos_stalled", 0),
+            "security_critical": overview.get("security_critical", 0),
+            "quality_critical": overview.get("quality_critical", 0),
+        },
+        db_path=db_path,
+    )
+
+
 def load_reporting_config(wg_dir: Path) -> ReportingConfig:
     """Read [reporting] section from drift-policy.toml, falling back to defaults."""
     from driftdriver.policy import load_drift_policy
