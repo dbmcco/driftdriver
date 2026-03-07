@@ -181,11 +181,13 @@ def cmd_outcome_from_check(args: argparse.Namespace) -> int:
         print(json.dumps({"recorded": 0, "reason": "no pre-check snapshot found"}))
         return 0
 
+    actor_id = getattr(args, "actor_id", "") or ""
     results = record_outcomes_from_check(
         project_dir=project_dir,
         task_id=args.task_id,
         pre_check=pre_check,
         post_check=post_check,
+        actor_id=actor_id,
     )
     print(json.dumps({"recorded": len(results), "outcomes": results}))
     return 0
@@ -200,6 +202,58 @@ def cmd_wire_record_event(args: argparse.Namespace) -> int:
     )
     print(json.dumps(result))
     return 0 if result.get("recorded") else 1
+
+
+def cmd_quality(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    outcomes_path = project_dir / ".workgraph" / "drift-outcomes.jsonl"
+    action = args.action
+
+    try:
+        from driftdriver.quality_signal import (
+            compute_actor_quality,
+            compute_all_actor_qualities,
+            format_quality_briefing,
+        )
+    except ImportError:
+        print(json.dumps({"error": "quality_signal module not available"}))
+        return 1
+
+    if action == "briefing":
+        actor_id = args.actor_id or ""
+        quality = compute_actor_quality(outcomes_path, actor_id, window_days=args.window_days)
+        briefing = format_quality_briefing(quality)
+        if args.json if hasattr(args, "json") else False:
+            print(json.dumps({
+                "actor_id": quality.actor_id,
+                "score": quality.quality_score,
+                "trend": quality.trend,
+                "total_outcomes": quality.total_outcomes,
+                "briefing": briefing,
+            }))
+        else:
+            print(briefing)
+        return 0
+
+    if action in ("scores", "all"):
+        qualities = compute_all_actor_qualities(outcomes_path, window_days=args.window_days)
+        entries = [
+            {
+                "actor_id": q.actor_id,
+                "actor_class": q.actor_class,
+                "score": round(q.quality_score, 3),
+                "trend": q.trend,
+                "total_outcomes": q.total_outcomes,
+                "resolved": round(q.resolved_rate, 3),
+                "ignored": round(q.ignored_rate, 3),
+                "worsened": round(q.worsened_rate, 3),
+            }
+            for q in qualities
+        ]
+        print(json.dumps(entries, indent=2))
+        return 0
+
+    return 1
 
 
 def cmd_presence(args: argparse.Namespace) -> int:
@@ -923,7 +977,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Compare post-check JSON (stdin) against saved pre-check snapshot and record outcomes",
     )
     outcome_from_p.add_argument("--task-id", required=True, help="Task ID to compare findings for")
+    outcome_from_p.add_argument("--actor-id", default="", help="Actor ID to associate outcomes with")
     outcome_from_p.set_defaults(func=cmd_outcome_from_check)
+
+    # -- Quality signal commands --
+    quality_p = sub.add_parser("quality", help="Actor quality signal and briefings")
+    quality_p.add_argument("action", choices=["briefing", "scores", "all"],
+                           help="Quality action: briefing (for one actor), scores (all actors), all (full report)")
+    quality_p.add_argument("--actor-id", default="", help="Actor ID for briefing")
+    quality_p.add_argument("--window-days", type=int, default=30, help="Lookback window in days")
+    quality_p.set_defaults(func=cmd_quality)
 
     profile_p = sub.add_parser("profile", help="Build and display a project profile report")
     profile_p.set_defaults(func=cmd_profile)

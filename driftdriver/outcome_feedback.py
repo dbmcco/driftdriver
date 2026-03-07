@@ -96,6 +96,7 @@ def record_outcomes_from_check(
     task_id: str,
     pre_check: dict[str, Any],
     post_check: dict[str, Any],
+    actor_id: str = "",
 ) -> list[dict[str, str]]:
     """Compare pre-task and post-task check findings, record an outcome for each pre finding.
 
@@ -126,6 +127,7 @@ def record_outcomes_from_check(
             action_taken=f"task-completing ({outcome_value})",
             outcome=outcome_value,
             evidence=[f"pre-check finding: {kind}", f"post-check comparison"],
+            actor_id=actor_id,
         )
         write_outcome(ledger, drift_outcome)
 

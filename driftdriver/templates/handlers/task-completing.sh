@@ -40,7 +40,8 @@ fi
 # This replaces the naive blanket "resolved" with per-finding outcome classification.
 if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]] && [[ -n "$POST_CHECK_JSON" ]]; then
   OUTCOME_RESULT=$(printf '%s' "$POST_CHECK_JSON" | \
-    driftdriver --dir "$PROJECT_DIR" outcome-from-check --task-id "$TASK_ID" 2>/dev/null || echo "")
+    driftdriver --dir "$PROJECT_DIR" outcome-from-check --task-id "$TASK_ID" \
+    --actor-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}" 2>/dev/null || echo "")
   if [[ -n "$OUTCOME_RESULT" ]]; then
     RECORDED=$(printf '%s' "$OUTCOME_RESULT" | jq -r '.recorded // empty' 2>/dev/null) || RECORDED=0
     wg_log "$TASK_ID" "outcome-feedback: recorded=${RECORDED:-0} outcomes from check comparison"

@@ -43,6 +43,18 @@ if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]]; then
   fi
 fi
 
+# Inject quality briefing so the agent knows its track record
+if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]]; then
+  QUALITY=$(driftdriver --dir "$PROJECT_DIR" quality briefing \
+    --actor-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}" 2>/dev/null || echo "")
+  if [[ -n "$QUALITY" && "$QUALITY" != "{}" ]]; then
+    echo "=== Quality Briefing ==="
+    echo "$QUALITY"
+    echo "========================"
+    wg_log "$TASK_ID" "quality-briefing: $QUALITY"
+  fi
+fi
+
 # Record task claim event immediately to lessons.db (real-time learning)
 if command -v driftdriver >/dev/null 2>&1; then
   driftdriver --dir "$PROJECT_DIR" record-event \

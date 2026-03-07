@@ -10,6 +10,7 @@ from typing import Any
 
 from driftdriver.actor import Actor
 from driftdriver.authority import can_do, check_budget, load_authority_policy
+from driftdriver.budget_ledger import recent_count, record_operation
 
 # Maximum non-terminal drift tasks allowed per lane per repo.
 # Once this cap is hit, no new tasks are created for that lane.
@@ -171,17 +172,19 @@ def guarded_add_drift_task_with_authority(
 
     # Check budget — use active drift task count as current_count
     active = count_active_drift_tasks(wg_dir, lane_tag, cwd=cwd)
+    ledger_path = wg_dir / "budget-ledger.jsonl"
+    hourly_creates = recent_count(ledger_path, actor.id, "create", window_seconds=3600)
     allowed, reason = check_budget(
         actor, "create",
         current_count=active,
-        recent_count=0,  # TODO: track hourly creates
+        recent_count=hourly_creates,
         policy=policy,
     )
     if not allowed:
         return "capped"
 
     # Delegate to existing function with cap set high (budget already checked)
-    return guarded_add_drift_task(
+    result = guarded_add_drift_task(
         wg_dir=wg_dir,
         task_id=task_id,
         title=title,
@@ -192,3 +195,16 @@ def guarded_add_drift_task_with_authority(
         cwd=cwd,
         cap=999,  # Already budget-checked above
     )
+
+    # Record the create in the budget ledger
+    if result == "created":
+        record_operation(
+            ledger_path,
+            actor_id=actor.id,
+            actor_class=actor.actor_class,
+            operation="create",
+            repo=actor.repo,
+            detail=task_id,
+        )
+
+    return result
