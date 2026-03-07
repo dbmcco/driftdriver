@@ -6,19 +6,75 @@ Driftdriver is an orchestrator for **Workgraph-first** agent development.
 - **Driftdriver coordinates "drift" tools** (code drift, UX drift, data drift, etc.) without hard-blocking work.
 - Findings are written back into Workgraph via `wg log` and follow-up tasks, keeping the graph in sync.
 
-Today it supports:
-- `coredrift` (baseline, always-run)
-- `specdrift` (optional)
-- `datadrift` (optional)
-- `archdrift` (optional)
-- `depsdrift` (optional)
-- `uxdrift` (optional)
-- `therapydrift` (optional)
-- `fixdrift` (optional)
-- `yagnidrift` (optional)
-- `redrift` (optional)
+## Architecture (Six Services)
+
+```
+  Human
+    │
+  [Gate] ← dashboard (port 8777), UAT, proactive notifications
+    │
+  [Planner] → decomposes goals into task subgraphs
+    │
+  [Graph] ← single source of truth (workgraph)
+    │
+  [Dispatch] → assigns tasks to agent runtimes (claude, codex, amplifier)
+    │
+  [Quality] → drift checks via lane plugins
+    │
+  [Learn] → outcome feedback, activity-weighted decay, wg evolve
+```
+
+## Drift Lanes
+
+**Always-on:** `coredrift` (scope/contract checking)
+
+**Optional external lanes:** `specdrift`, `datadrift`, `archdrift`, `depsdrift`, `uxdrift`, `therapydrift`, `fixdrift`, `yagnidrift`, `redrift`
+
+**Internal lanes (model-mediated):** `secdrift` (security scanning), `qadrift` (program quality), `plandrift` (workgraph plan integrity), `factorydrift` (cross-repo factory cycles), `northstardrift` (goal alignment)
 
 Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
+
+## Key Mechanisms
+
+### Drift Task Guard
+
+All drift lanes create follow-up tasks through a centralized guard (`drift_task_guard.py`) that prevents feedback loops:
+- **Exact-ID dedup** — won't create a task that already exists
+- **Per-lane cap** (default 3) — at most 3 active drift tasks per lane per repo
+- **Immediate creation** — drift tasks bypass draft mode (`--immediate`)
+
+### Proactive Notifications
+
+Driftdriver scores finding significance using outcome history (resolution rate > 50% → always notify) and severity thresholds. Notifications dispatch through multiple channels:
+- **Terminal** — macOS osascript alerts
+- **Webhook** — JSON POST to any URL (Slack, Discord, etc.)
+- **wg notify** — delegates to Workgraph's multi-channel router (Matrix, Telegram, etc.) when findings have a `task_id`
+
+Configure in `drift-policy.toml`:
+```toml
+[notifications]
+enabled = true
+terminal = true
+webhook_url = ""
+min_severity = "error"
+cooldown_seconds = 3600
+```
+
+### Waiting Status
+
+Tasks in `waiting` status (set via `wg wait <task-id> --until <condition>`) are recognized across the ecosystem:
+- Not treated as stalled — won't trigger false alarms
+- Excluded from stale task lists and pressure scoring
+- Counted separately in dashboard and ecosystem overview
+- Narrative reports mention them as "waiting on conditions"
+
+### Prompt Evolution (wg evolve)
+
+The autopilot loop detects recurring drift patterns across tasks. When the same finding appears in 3+ distinct tasks, it triggers `wg evolve run` to evolve the coordinator prompt — teaching agents to avoid the pattern in future work.
+
+### Outcome Feedback Loop
+
+Per-finding pre/post comparison pipeline tracks what happened after drift recommendations. Findings with high resolution rates (>50% acted on) are auto-promoted to notify-worthy. Findings that are consistently ignored get demoted over time via activity-weighted decay.
 
 ## Evolution & External Integration
 
@@ -358,10 +414,12 @@ driftdriver autopilot --goal "Quick fix" --skip-decompose --skip-review
 The autopilot:
 1. **Decomposes** the goal into Workgraph tasks (via claude-session-driver worker or direct CLI)
 2. **Dispatches** workers for each ready task, respecting dependencies
-3. **Drift-checks** after each task completes; creates follow-up tasks on findings
-4. **Escalates** to human only when drift failures exceed threshold (default: 3)
-5. **Reviews** the milestone with an evidence-based verification worker, incorporating Workgraph agency evaluation scores when available
-6. **Reports** results to `.workgraph/.autopilot/latest-report.md`
+3. **Drift-checks** after each task completes; creates follow-up tasks on findings (guarded: dedup + 3/lane cap)
+4. **Learns** — detects recurring drift patterns across tasks and triggers `wg evolve` to evolve coordinator prompts
+5. **Escalates** to human only when drift failures exceed threshold (default: 3)
+6. **Reviews** the milestone with an evidence-based verification worker, incorporating Workgraph agency evaluation scores when available
+7. **Notifies** via terminal/webhook/wg-notify when findings cross significance thresholds
+8. **Reports** results to `.workgraph/.autopilot/latest-report.md`
 
 State is persisted to `.workgraph/.autopilot/` (run-state.json, workers.jsonl).
 
@@ -707,8 +765,33 @@ hard_stop_on_critical = false
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_*.py'
+# Run full test suite (1525+ tests)
+python3 -m pytest tests/ -x -q
+
+# E2E smoke test
 scripts/e2e_smoke.sh
-python3 -m unittest tests.test_ecosystem_hub
+
+# Ecosystem hub smoke test
 scripts/ecosystem_hub_smoke.sh .
 ```
+
+## Quick Start for Agents
+
+```bash
+# 1. Install into any repo
+driftdriver install
+
+# 2. Run drift check on a task
+./.workgraph/drifts check --task <id> --write-log --create-followups
+
+# 3. Check ecosystem health (if hub is running)
+curl -s http://127.0.0.1:8777/api/overview | python3 -m json.tool
+
+# 4. Full autopilot loop
+driftdriver autopilot --goal "Your goal here"
+```
+
+Key flags for `wg` task creation:
+- `--after <dep-id>` — dependency (replaces old `--blocked-by`)
+- `--immediate` — bypass draft mode (required for drift follow-ups)
+- `--verify "command"` — hard gate checked by `wg done`
