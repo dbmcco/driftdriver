@@ -10,6 +10,12 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
+from driftdriver.control_plane import (
+    build_chain_payload,
+    build_pressure_payload,
+    repos_from_snapshot,
+)
+
 from .dashboard import render_dashboard_html
 from .discovery import _read_json
 from .websocket import (
@@ -238,6 +244,18 @@ class _HubHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/repo-dependencies":
             self._send_json(snapshot.get("repo_dependency_overview") or {"nodes": [], "edges": [], "summary": {}})
+            return
+        if route == "/api/pressure":
+            repo_objects = repos_from_snapshot(snapshot)
+            self._send_json(build_pressure_payload(repo_objects))
+            return
+        if route.startswith("/api/pressure/chain/"):
+            target_repo = route[len("/api/pressure/chain/"):].strip("/")
+            if not target_repo:
+                self._send_json({"error": "missing_repo_name"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            repo_objects = repos_from_snapshot(snapshot)
+            self._send_json(build_chain_payload(target_repo, repo_objects))
             return
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
