@@ -223,6 +223,7 @@ def build_ecosystem_overview(
     total_open = 0
     total_ready = 0
     total_in_progress = 0
+    total_waiting = 0
     total_done = 0
     stale_open = 0
     stale_in_progress = 0
@@ -251,6 +252,7 @@ def build_ecosystem_overview(
         total_open += int(repo.task_counts.get("open", 0))
         total_ready += int(repo.task_counts.get("ready", 0))
         total_in_progress += int(repo.task_counts.get("in-progress", 0))
+        total_waiting += int(repo.task_counts.get("waiting", 0))
         total_done += int(repo.task_counts.get("done", 0))
         stale_open += len(repo.stale_open)
         stale_in_progress += len(repo.stale_in_progress)
@@ -312,6 +314,7 @@ def build_ecosystem_overview(
         "tasks_open": total_open,
         "tasks_ready": total_ready,
         "tasks_in_progress": total_in_progress,
+        "tasks_waiting": total_waiting,
         "tasks_done": total_done,
         "stale_open": stale_open,
         "stale_in_progress": stale_in_progress,

@@ -559,6 +559,73 @@ def should_escalate(worker: WorkerContext, threshold: int = 3) -> bool:
     return worker.drift_fail_count >= threshold
 
 
+def detect_recurring_findings(
+    run: AutopilotRun,
+    threshold: int = 3,
+) -> list[str]:
+    """Identify drift findings that recur across multiple tasks in a run.
+
+    Normalizes findings to short keys and counts how many distinct tasks
+    produced each key. Returns keys that appear in >= threshold tasks.
+    """
+    from collections import Counter
+
+    # Map: normalized finding -> set of task_ids that produced it
+    finding_tasks: dict[str, set[str]] = {}
+    for task_id, ctx in run.workers.items():
+        for finding in ctx.drift_findings:
+            key = _normalize_finding(finding)
+            if key:
+                finding_tasks.setdefault(key, set()).add(task_id)
+
+    return [
+        key for key, tasks in finding_tasks.items()
+        if len(tasks) >= threshold
+    ]
+
+
+def _normalize_finding(finding: str) -> str:
+    """Reduce a drift finding to a comparable key.
+
+    Strips line numbers, file paths, and whitespace so that structurally
+    similar findings from different tasks collapse to the same key.
+    """
+    text = finding.strip().lower()
+    # Remove common prefixes like "finding:" or "finding (yellow):"
+    for prefix in ("finding:", "finding (yellow):", "finding (red):"):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+    # Strip file paths (anything that looks like a/b/c.py:123)
+    text = re.sub(r"[a-z0-9_/\\\-]+\.[a-z]+:\d+", "", text)
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def trigger_evolve(
+    project_dir: Path,
+    *,
+    dry_run: bool = False,
+    strategy: str = "all",
+) -> dict:
+    """Invoke `wg evolve run` to trigger a coordinator prompt evolution cycle.
+
+    Returns a dict with 'triggered' (bool), 'exit_code', and 'output'.
+    """
+    cmd = ["wg", "evolve", "run"]
+    if dry_run:
+        cmd.append("--dry-run")
+    if strategy and strategy != "all":
+        cmd.extend(["--strategy", strategy])
+
+    result = _run_command(cmd, cwd=project_dir, timeout=120)
+    return {
+        "triggered": result.returncode == 0,
+        "exit_code": result.returncode,
+        "output": (result.stdout + "\n" + result.stderr).strip(),
+    }
+
+
 def dispatch_task(
     task: dict,
     project_dir: Path,
@@ -872,6 +939,26 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
             else:
                 run.completed_tasks.add(task["id"])
                 print(f"[autopilot] Completed: {task['id']}")
+
+        # After each batch, check for recurring drift patterns and trigger
+        # prompt evolution so agents learn from repeated findings.
+        if not run.config.dry_run:
+            recurring = detect_recurring_findings(
+                run, threshold=run.config.drift_failure_threshold,
+            )
+            if recurring:
+                print(
+                    f"[autopilot] Recurring drift patterns detected "
+                    f"({len(recurring)}), triggering wg evolve"
+                )
+                evolve_result = trigger_evolve(project_dir)
+                if evolve_result["triggered"]:
+                    print("[autopilot] Evolution cycle completed")
+                else:
+                    print(
+                        f"[autopilot] Evolution cycle failed "
+                        f"(exit {evolve_result['exit_code']})"
+                    )
 
     return run
 

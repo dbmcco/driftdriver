@@ -69,7 +69,7 @@ def _task_status_rank(status: str) -> int:
         return 0
     if norm in ("open", "ready"):
         return 1
-    if norm in ("blocked", "review"):
+    if norm in ("blocked", "review", "waiting"):
         return 2
     if norm == "done":
         return 4
@@ -122,8 +122,11 @@ def _build_repo_narrative(snap: RepoSnapshot) -> str:
         parts.append("workgraph service has no live agents")
     elif control_mode in {"manual", "observe"} and open_count > 0:
         parts.append(f"control mode {control_mode}")
+    waiting_count = int(snap.task_counts.get("waiting", 0))
     if ready > 0:
         parts.append(f"{ready} ready to start")
+    if waiting_count > 0:
+        parts.append(f"{waiting_count} waiting on conditions")
     if open_count > 0 and in_progress == 0:
         parts.append(f"{open_count} open without active execution")
     if snap.stalled and snap.stall_reasons:
@@ -170,6 +173,7 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
     in_progress = len(snap.in_progress)
     ready = len(snap.ready)
     open_count = int(snap.task_counts.get("open", 0)) + int(snap.task_counts.get("ready", 0))
+    waiting_count = int(snap.task_counts.get("waiting", 0))
     runtime = snap.runtime if isinstance(snap.runtime, dict) else {}
     active_workers = runtime.get("active_workers") if isinstance(runtime.get("active_workers"), list) else []
     stalled_task_ids = runtime.get("stalled_task_ids") if isinstance(runtime.get("stalled_task_ids"), list) else []
@@ -208,8 +212,10 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
         if service_warning:
             reasons.append(service_warning)
         return "stalled", reasons[:6]
-    if open_count <= 0:
+    if open_count <= 0 and waiting_count <= 0:
         return "idle", ["no open or ready tasks in graph"]
+    if open_count <= 0 and waiting_count > 0:
+        return "idle", [f"{waiting_count} task(s) parked in waiting status"]
 
     reasons: list[str] = [f"{open_count} open/ready tasks but none in-progress"]
     if control_mode in {"manual", "observe"}:
@@ -503,6 +509,11 @@ def collect_repo_snapshot(
                         "created_at": created_at,
                     }
                 )
+            continue
+
+        # Waiting tasks are intentionally parked — count them but skip
+        # stale/blocked analysis so they don't trigger false alarms.
+        if status == "waiting":
             continue
 
         if status in ("open", "ready"):

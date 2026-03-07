@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from driftdriver.project_autopilot import (
+    _normalize_finding,
     _run_command,
     _assistant_text_message_count,
     _last_assistant_text,
@@ -20,11 +21,13 @@ from driftdriver.project_autopilot import (
     build_decompose_prompt,
     build_review_prompt,
     build_worker_prompt,
+    detect_recurring_findings,
     discover_session_driver,
     generate_report,
     get_wg_eval_scores,
     run_autopilot_loop,
     should_escalate,
+    trigger_evolve,
 )
 
 
@@ -321,6 +324,187 @@ class TestDryRun(unittest.TestCase):
         result = run_autopilot_loop(run)
         self.assertIn("t1", result.completed_tasks)
         self.assertEqual(len(result.workers), 0)
+
+
+class TestNormalizeFinding(unittest.TestCase):
+    def test_strips_finding_prefix(self):
+        result = _normalize_finding("finding: scope violation detected")
+        self.assertEqual(result, "scope violation detected")
+
+    def test_strips_colored_prefix(self):
+        result = _normalize_finding("finding (yellow): missing contract block")
+        self.assertEqual(result, "missing contract block")
+
+    def test_strips_file_paths(self):
+        result = _normalize_finding("finding: issue in src/auth/login.py:42")
+        self.assertNotIn("src/auth/login.py:42", result)
+        self.assertIn("issue in", result)
+
+    def test_collapses_whitespace(self):
+        result = _normalize_finding("finding:   too   many   spaces  ")
+        self.assertEqual(result, "too many spaces")
+
+    def test_empty_string(self):
+        self.assertEqual(_normalize_finding(""), "")
+
+    def test_case_insensitive(self):
+        r1 = _normalize_finding("Finding: Scope Violation")
+        r2 = _normalize_finding("finding: scope violation")
+        self.assertEqual(r1, r2)
+
+
+class TestDetectRecurringFindings(unittest.TestCase):
+    def test_no_findings_returns_empty(self):
+        config = AutopilotConfig(project_dir=Path("/project"), goal="Test")
+        run = AutopilotRun(
+            config=config,
+            workers={
+                "t1": WorkerContext(task_id="t1", task_title="A", worker_name="w1"),
+            },
+        )
+        self.assertEqual(detect_recurring_findings(run, threshold=3), [])
+
+    def test_below_threshold_returns_empty(self):
+        config = AutopilotConfig(project_dir=Path("/project"), goal="Test")
+        run = AutopilotRun(
+            config=config,
+            workers={
+                "t1": WorkerContext(
+                    task_id="t1", task_title="A", worker_name="w1",
+                    drift_findings=["finding: scope violation"],
+                ),
+                "t2": WorkerContext(
+                    task_id="t2", task_title="B", worker_name="w2",
+                    drift_findings=["finding: scope violation"],
+                ),
+            },
+        )
+        self.assertEqual(detect_recurring_findings(run, threshold=3), [])
+
+    def test_at_threshold_returns_key(self):
+        config = AutopilotConfig(project_dir=Path("/project"), goal="Test")
+        run = AutopilotRun(
+            config=config,
+            workers={
+                "t1": WorkerContext(
+                    task_id="t1", task_title="A", worker_name="w1",
+                    drift_findings=["finding: scope violation"],
+                ),
+                "t2": WorkerContext(
+                    task_id="t2", task_title="B", worker_name="w2",
+                    drift_findings=["finding: scope violation"],
+                ),
+                "t3": WorkerContext(
+                    task_id="t3", task_title="C", worker_name="w3",
+                    drift_findings=["finding: scope violation"],
+                ),
+            },
+        )
+        result = detect_recurring_findings(run, threshold=3)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0], "scope violation")
+
+    def test_normalizes_across_files(self):
+        """Same finding from different files should collapse to one key."""
+        config = AutopilotConfig(project_dir=Path("/project"), goal="Test")
+        run = AutopilotRun(
+            config=config,
+            workers={
+                "t1": WorkerContext(
+                    task_id="t1", task_title="A", worker_name="w1",
+                    drift_findings=["finding: missing tests in src/a.py:10"],
+                ),
+                "t2": WorkerContext(
+                    task_id="t2", task_title="B", worker_name="w2",
+                    drift_findings=["finding: missing tests in src/b.py:20"],
+                ),
+                "t3": WorkerContext(
+                    task_id="t3", task_title="C", worker_name="w3",
+                    drift_findings=["finding: missing tests in src/c.py:30"],
+                ),
+            },
+        )
+        result = detect_recurring_findings(run, threshold=3)
+        self.assertEqual(len(result), 1)
+        self.assertIn("missing tests in", result[0])
+
+    def test_same_task_multiple_findings_counts_once(self):
+        """Multiple identical findings in one task should not inflate the count."""
+        config = AutopilotConfig(project_dir=Path("/project"), goal="Test")
+        run = AutopilotRun(
+            config=config,
+            workers={
+                "t1": WorkerContext(
+                    task_id="t1", task_title="A", worker_name="w1",
+                    drift_findings=[
+                        "finding: scope violation",
+                        "finding: scope violation",
+                        "finding: scope violation",
+                    ],
+                ),
+            },
+        )
+        # Only 1 task, so threshold=3 should not be met
+        self.assertEqual(detect_recurring_findings(run, threshold=3), [])
+
+
+class TestTriggerEvolve(unittest.TestCase):
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("driftdriver.project_autopilot._binary_candidates", return_value=["/tmp/fake-wg"])
+    def test_success(self, _mock_candidates, _mock_exists, mock_run):
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "Evolution applied", "stderr": "", "args": []}
+        )()
+        result = trigger_evolve(Path("/project"))
+        self.assertTrue(result["triggered"])
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("Evolution applied", result["output"])
+
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("driftdriver.project_autopilot._binary_candidates", return_value=["/tmp/fake-wg"])
+    def test_failure(self, _mock_candidates, _mock_exists, mock_run):
+        mock_run.return_value = type(
+            "R", (), {"returncode": 1, "stdout": "", "stderr": "no workgraph", "args": []}
+        )()
+        result = trigger_evolve(Path("/project"))
+        self.assertFalse(result["triggered"])
+        self.assertEqual(result["exit_code"], 1)
+
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("driftdriver.project_autopilot._binary_candidates", return_value=["/tmp/fake-wg"])
+    def test_dry_run_flag(self, _mock_candidates, _mock_exists, mock_run):
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "dry run ok", "stderr": "", "args": []}
+        )()
+        trigger_evolve(Path("/project"), dry_run=True)
+        cmd = mock_run.call_args.args[0]
+        self.assertIn("--dry-run", cmd)
+
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("driftdriver.project_autopilot._binary_candidates", return_value=["/tmp/fake-wg"])
+    def test_strategy_flag(self, _mock_candidates, _mock_exists, mock_run):
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "ok", "stderr": "", "args": []}
+        )()
+        trigger_evolve(Path("/project"), strategy="mutation")
+        cmd = mock_run.call_args.args[0]
+        self.assertIn("--strategy", cmd)
+        self.assertIn("mutation", cmd)
+
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("driftdriver.project_autopilot._binary_candidates", return_value=["/tmp/fake-wg"])
+    def test_default_strategy_omits_flag(self, _mock_candidates, _mock_exists, mock_run):
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": "ok", "stderr": "", "args": []}
+        )()
+        trigger_evolve(Path("/project"), strategy="all")
+        cmd = mock_run.call_args.args[0]
+        self.assertNotIn("--strategy", cmd)
 
 
 if __name__ == "__main__":
