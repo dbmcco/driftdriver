@@ -759,6 +759,12 @@ def cmd_check(args: argparse.Namespace) -> int:
             task_id=task_id,
             project_dir=project_dir,
         )
+        # Save check snapshot for outcome feedback loop comparison at task-completing.
+        try:
+            from driftdriver.outcome_feedback import save_check_snapshot
+            save_check_snapshot(wg_dir, task_id, combined)
+        except Exception:
+            pass
         print(json.dumps(combined, indent=2, sort_keys=False))
         return out_rc
 

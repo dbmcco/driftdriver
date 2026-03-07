@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ABOUTME: Handler invoked when an agent is about to complete a task
-# ABOUTME: Runs post-drift check, verifies basic changes, records completion to Lessons MCP
+# ABOUTME: Runs post-drift check, compares against pre-check snapshot, records per-finding outcomes
 
 set -euo pipefail
 
@@ -9,9 +9,10 @@ HANDLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TASK_ID="$(current_task_id)"
 
-# Run post-task drift check with follow-up creation
+# Run post-task drift check in JSON mode and capture output for outcome comparison
+POST_CHECK_JSON=""
 if [[ -n "$TASK_ID" ]]; then
-  "$WG_DIR/drifts" check --task "$TASK_ID" --write-log --create-followups 2>/dev/null || true
+  POST_CHECK_JSON=$("$WG_DIR/drifts" check --task "$TASK_ID" --write-log --create-followups --json 2>/dev/null || echo "")
 fi
 
 # Basic verification: did any files change?
@@ -35,15 +36,15 @@ if command -v driftdriver >/dev/null 2>&1; then
   fi
 fi
 
-# Record drift outcomes for any findings from the pre-task check
-if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]]; then
-  driftdriver --dir "$PROJECT_DIR" outcome \
-    --task-id "$TASK_ID" \
-    --lane "coredrift" \
-    --finding-key "auto" \
-    --recommendation "pre-task drift check" \
-    --action-taken "task-completed" \
-    --outcome "resolved" 2>/dev/null || true
+# Record drift outcomes by comparing pre-check snapshot against post-check findings.
+# This replaces the naive blanket "resolved" with per-finding outcome classification.
+if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]] && [[ -n "$POST_CHECK_JSON" ]]; then
+  OUTCOME_RESULT=$(printf '%s' "$POST_CHECK_JSON" | \
+    driftdriver --dir "$PROJECT_DIR" outcome-from-check --task-id "$TASK_ID" 2>/dev/null || echo "")
+  if [[ -n "$OUTCOME_RESULT" ]]; then
+    RECORDED=$(printf '%s' "$OUTCOME_RESULT" | jq -r '.recorded // empty' 2>/dev/null) || RECORDED=0
+    wg_log "$TASK_ID" "outcome-feedback: recorded=${RECORDED:-0} outcomes from check comparison"
+  fi
 fi
 
 wg_log "$TASK_ID" "task-completing: cli=$CLI_TOOL files_changed=$CHANGED_FILES"

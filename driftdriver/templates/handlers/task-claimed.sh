@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ABOUTME: Handler invoked when an agent claims a workgraph task
-# ABOUTME: Creates checkpoint, runs pre-task drift check, primes agent with relevant knowledge
+# ABOUTME: Creates checkpoint, runs pre-task drift check, saves snapshot for outcome feedback
 
 set -euo pipefail
 
@@ -12,9 +12,14 @@ TASK_ID="$(current_task_id)"
 # Create agentjj checkpoint for potential rollback
 agentjj checkpoint "pre-task-$TASK_ID" 2>/dev/null || true
 
-# Run pre-task drift check
+# Run pre-task drift check in JSON mode and save snapshot for outcome feedback loop.
+# The snapshot is compared against the post-task check at task-completing time.
 if [[ -n "$TASK_ID" ]]; then
-  "$WG_DIR/drifts" check --task "$TASK_ID" --write-log 2>/dev/null || true
+  PRE_CHECK_JSON=$("$WG_DIR/drifts" check --task "$TASK_ID" --write-log --json 2>/dev/null || echo "")
+  if command -v driftdriver >/dev/null 2>&1 && [[ -n "$PRE_CHECK_JSON" ]]; then
+    printf '%s' "$PRE_CHECK_JSON" | \
+      driftdriver --dir "$PROJECT_DIR" save-check-snapshot --task-id "$TASK_ID" 2>/dev/null || true
+  fi
 fi
 
 # Prime agent with relevant knowledge from distilled learnings

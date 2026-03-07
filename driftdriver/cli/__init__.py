@@ -142,6 +142,55 @@ def cmd_wire_outcome(args: argparse.Namespace) -> int:
     return 0 if result.get("recorded") else 1
 
 
+def cmd_save_check_snapshot(args: argparse.Namespace) -> int:
+    from driftdriver.outcome_feedback import save_check_snapshot
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    wg_dir = project_dir / ".workgraph"
+
+    raw = sys.stdin.read()
+    try:
+        check_data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(json.dumps({"error": f"invalid JSON on stdin: {exc}"}))
+        return 1
+
+    path = save_check_snapshot(wg_dir, args.task_id, check_data)
+    print(json.dumps({"saved": True, "task_id": args.task_id, "path": str(path)}))
+    return 0
+
+
+def cmd_outcome_from_check(args: argparse.Namespace) -> int:
+    from driftdriver.outcome_feedback import (
+        load_check_snapshot,
+        record_outcomes_from_check,
+    )
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    wg_dir = project_dir / ".workgraph"
+
+    raw = sys.stdin.read()
+    try:
+        post_check = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(json.dumps({"error": f"invalid JSON on stdin: {exc}"}))
+        return 1
+
+    pre_check = load_check_snapshot(wg_dir, args.task_id)
+    if pre_check is None:
+        print(json.dumps({"recorded": 0, "reason": "no pre-check snapshot found"}))
+        return 0
+
+    results = record_outcomes_from_check(
+        project_dir=project_dir,
+        task_id=args.task_id,
+        pre_check=pre_check,
+        post_check=post_check,
+    )
+    print(json.dumps({"recorded": len(results), "outcomes": results}))
+    return 0
+
+
 def cmd_wire_record_event(args: argparse.Namespace) -> int:
     result = wire.cmd_record_event(
         args.event_type,
@@ -800,6 +849,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Outcome of the drift finding",
     )
     outcome_p.set_defaults(func=cmd_wire_outcome)
+
+    save_snap_p = sub.add_parser(
+        "save-check-snapshot",
+        help="Save a check JSON result (stdin) for later outcome comparison",
+    )
+    save_snap_p.add_argument("--task-id", required=True, help="Task ID to associate the snapshot with")
+    save_snap_p.set_defaults(func=cmd_save_check_snapshot)
+
+    outcome_from_p = sub.add_parser(
+        "outcome-from-check",
+        help="Compare post-check JSON (stdin) against saved pre-check snapshot and record outcomes",
+    )
+    outcome_from_p.add_argument("--task-id", required=True, help="Task ID to compare findings for")
+    outcome_from_p.set_defaults(func=cmd_outcome_from_check)
 
     profile_p = sub.add_parser("profile", help="Build and display a project profile report")
     profile_p.set_defaults(func=cmd_profile)
