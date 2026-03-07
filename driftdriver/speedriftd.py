@@ -9,14 +9,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from driftdriver.dispatch import (
+    build_worker_snapshots as _build_worker_snapshots,
+    current_cycle_id as _current_cycle_id,
+    latest_worker_events as _latest_worker_events,
+)
 from driftdriver.policy import DriftPolicy, load_drift_policy
 from driftdriver.project_autopilot import get_ready_tasks
 from driftdriver.workgraph import load_workgraph
-from driftdriver.worker_monitor import check_worker_liveness
 
 from driftdriver.speedriftd_state import (
     _iso_now,
-    _safe_slug,
     load_control_state,
     runtime_paths,
     write_runtime_snapshot,
@@ -53,159 +56,6 @@ def load_worker_events(project_dir: Path) -> list[dict]:
             except json.JSONDecodeError:
                 continue
     return events
-
-
-def _latest_worker_events(project_dir: Path) -> dict[str, dict[str, Any]]:
-    latest: dict[str, dict[str, Any]] = {}
-    for row in load_worker_events(project_dir):
-        if not isinstance(row, dict):
-            continue
-        task_id = str(row.get("task_id") or "").strip()
-        if not task_id:
-            continue
-        ts = float(row.get("ts") or 0.0)
-        previous = latest.get(task_id)
-        if previous is None or float(previous.get("ts") or 0.0) <= ts:
-            latest[task_id] = row
-    return latest
-
-
-def _event_timestamp(row: dict[str, Any] | None) -> float:
-    if not isinstance(row, dict):
-        return 0.0
-    try:
-        return float(row.get("ts") or 0.0)
-    except Exception:
-        return 0.0
-
-
-def _worker_runtime(ctx: dict[str, Any], session_id: str) -> str:
-    if session_id:
-        return "claude"
-    name = str(ctx.get("worker_name") or "").strip().lower()
-    if "codex" in name:
-        return "codex"
-    if "tmux" in name:
-        return "tmux"
-    return "unknown"
-
-
-def _normalize_health_status(
-    *,
-    raw_status: str,
-    last_seen_ts: float,
-    heartbeat_stale_after_seconds: int,
-    output_stale_after_seconds: int,
-    worker_timeout_seconds: int,
-) -> str:
-    raw = str(raw_status or "").strip().lower()
-    if raw == "alive":
-        return "running"
-    if raw == "stale":
-        return "watch"
-    if raw == "dead":
-        return "stalled"
-    if raw == "finished":
-        return "done"
-
-    if last_seen_ts <= 0:
-        return "watch"
-
-    age = max(0.0, time.time() - last_seen_ts)
-    if age >= max(worker_timeout_seconds, heartbeat_stale_after_seconds):
-        return "stalled"
-    if age >= output_stale_after_seconds:
-        return "watch"
-    return "running"
-
-
-def _current_cycle_id() -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"speedriftd-{stamp}"
-
-
-def _worker_id(repo_name: str, task_id: str, session_id: str, worker_name: str) -> str:
-    seed = session_id or worker_name or task_id or "worker"
-    return f"{_safe_slug(repo_name)}-{_safe_slug(task_id)}-{_safe_slug(seed)}"
-
-
-def _build_worker_snapshots(
-    *,
-    repo_name: str,
-    project_dir: Path,
-    workers: dict[str, Any],
-    latest_events: dict[str, dict[str, Any]],
-    cfg: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    active_workers: list[dict[str, Any]] = []
-    terminal_workers: list[dict[str, Any]] = []
-
-    for task_id, raw_ctx in workers.items():
-        if not isinstance(raw_ctx, dict):
-            continue
-        task_id = str(task_id or raw_ctx.get("task_id") or "").strip()
-        if not task_id:
-            continue
-        task_title = str(raw_ctx.get("task_title") or "").strip()
-        session_id = str(raw_ctx.get("session_id") or "").strip()
-        worker_name = str(raw_ctx.get("worker_name") or "").strip()
-        started_at = float(raw_ctx.get("started_at") or 0.0)
-        stored_status = str(raw_ctx.get("status") or "pending").strip().lower()
-        last_event = latest_events.get(task_id) or {}
-        last_seen_ts = max(_event_timestamp(last_event), started_at)
-        health_status = ""
-        last_event_type = str(last_event.get("event") or "")
-        event_count = 0
-
-        if session_id:
-            health = check_worker_liveness(session_id)
-            health_status = health.status
-            if health.last_event_ts > 0:
-                last_seen_ts = max(last_seen_ts, health.last_event_ts)
-            last_event_type = health.last_event_type or last_event_type
-            event_count = int(health.event_count or 0)
-
-        state = stored_status
-        if stored_status in {"running", "pending"}:
-            state = _normalize_health_status(
-                raw_status=health_status,
-                last_seen_ts=last_seen_ts,
-                heartbeat_stale_after_seconds=int(cfg["heartbeat_stale_after_seconds"]),
-                output_stale_after_seconds=int(cfg["output_stale_after_seconds"]),
-                worker_timeout_seconds=int(cfg["worker_timeout_seconds"]),
-            )
-            if stored_status == "pending" and state == "running":
-                state = "starting"
-        elif stored_status in {"completed", "done"}:
-            state = "done"
-        elif stored_status in {"failed", "escalated"}:
-            state = stored_status
-
-        row = {
-            "worker_id": _worker_id(repo_name, task_id, session_id, worker_name),
-            "task_id": task_id,
-            "task_title": task_title,
-            "worker_name": worker_name,
-            "session_id": session_id,
-            "runtime": _worker_runtime(raw_ctx, session_id),
-            "state": state,
-            "started_at": _iso_now(started_at) if started_at > 0 else "",
-            "last_heartbeat_at": _iso_now(last_seen_ts) if last_seen_ts > 0 else "",
-            "last_output_at": _iso_now(last_seen_ts) if last_seen_ts > 0 else "",
-            "last_event_type": last_event_type,
-            "event_count": event_count,
-            "drift_fail_count": int(raw_ctx.get("drift_fail_count") or 0),
-            "drift_findings": list(raw_ctx.get("drift_findings") or []),
-            "project_dir": str(project_dir),
-        }
-        if state in {"running", "starting", "watch", "stalled"}:
-            active_workers.append(row)
-        else:
-            terminal_workers.append(row)
-
-    active_workers.sort(key=lambda row: (str(row["task_id"]), str(row["worker_id"])))
-    terminal_workers.sort(key=lambda row: (str(row["task_id"]), str(row["worker_id"])))
-    return active_workers, terminal_workers
 
 
 def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = None) -> dict[str, Any]:

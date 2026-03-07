@@ -100,7 +100,7 @@ class SpeedriftdTests(unittest.TestCase):
             )
             _write_run_state(repo, run)
 
-            with patch("driftdriver.speedriftd.check_worker_liveness") as fake_health:
+            with patch("driftdriver.dispatch.check_worker_liveness") as fake_health:
                 fake_health.return_value.status = "alive"
                 fake_health.return_value.last_event_ts = 200.0
                 fake_health.return_value.last_event_type = "pre_tool_use"
@@ -155,7 +155,7 @@ class SpeedriftdTests(unittest.TestCase):
             )
             _write_run_state(repo, run)
 
-            with patch("driftdriver.speedriftd.check_worker_liveness") as fake_health:
+            with patch("driftdriver.dispatch.check_worker_liveness") as fake_health:
                 fake_health.return_value.status = "dead"
                 fake_health.return_value.last_event_ts = 150.0
                 fake_health.return_value.last_event_type = "pre_tool_use"
@@ -277,7 +277,7 @@ class SpeedriftdTests(unittest.TestCase):
                 reason="test",
             )
 
-            with patch("driftdriver.speedriftd.check_worker_liveness") as fake_health:
+            with patch("driftdriver.dispatch.check_worker_liveness") as fake_health:
                 fake_health.return_value.status = "alive"
                 fake_health.return_value.last_event_ts = 200.0
                 fake_health.return_value.last_event_type = "pre_tool_use"
