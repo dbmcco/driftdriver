@@ -14,6 +14,11 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from driftdriver.notifications import (
+    NotificationDispatcher,
+    load_notification_config,
+    process_snapshot_notifications,
+)
 from driftdriver.factorydrift import (
     build_factory_cycle,
     emit_factory_followups,
@@ -210,6 +215,13 @@ def run_service_foreground(
     stop_event = threading.Event()
     live_hub = LiveStreamHub(stop_event)
 
+    # Notification dispatcher — persists across ticks for cooldown tracking.
+    wg_dir_for_notify = project_dir / ".workgraph"
+    policy_toml_path = wg_dir_for_notify / "drift-policy.toml"
+    notify_config = load_notification_config(policy_toml_path)
+    notify_dispatcher = NotificationDispatcher(notify_config)
+    outcome_ledger = wg_dir_for_notify / "drift-outcomes.jsonl"
+
     def _collector_loop() -> None:
         while not stop_event.is_set():
             try:
@@ -383,6 +395,18 @@ def run_service_foreground(
                     execute_draft_prs=execute_draft_prs,
                 )
                 live_hub.broadcast_snapshot(snapshot)
+
+                # Proactive notifications — fire alerts for significant findings.
+                try:
+                    notify_result = process_snapshot_notifications(
+                        snapshot,
+                        notify_config,
+                        outcome_ledger_path=outcome_ledger if outcome_ledger.exists() else None,
+                        dispatcher=notify_dispatcher,
+                    )
+                    snapshot["notifications"] = notify_result
+                except Exception:
+                    snapshot["notifications"] = {"enabled": False, "error": "dispatch failed"}
             except Exception as exc:
                 _write_json(paths["heartbeat"], {"last_tick_at": _iso_now(), "error": str(exc)})
             stop_event.wait(max(2, interval_seconds))
