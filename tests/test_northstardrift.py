@@ -11,6 +11,7 @@ from driftdriver.northstardrift import (
     emit_northstar_review_tasks,
     load_previous_northstardrift,
     read_northstardrift_history,
+    run_as_lane,
     write_northstardrift_artifacts,
 )
 
@@ -371,6 +372,56 @@ class NorthstarDriftTests(unittest.TestCase):
             result = emit_northstar_review_tasks(snapshot=snapshot, report=northstar)
             self.assertEqual(result["created"], 1)
             self.assertEqual(result["skipped"], 0)
+
+
+class NorthstarDriftLaneTests(unittest.TestCase):
+    """Tests for the run_as_lane adapter."""
+
+    def test_run_as_lane_returns_lane_result(self) -> None:
+        """run_as_lane returns a valid LaneResult that passes contract validation."""
+        import json
+
+        from driftdriver.lane_contract import LaneResult, validate_lane_output
+
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            result = run_as_lane(project_dir)
+
+            self.assertIsInstance(result, LaneResult)
+            self.assertEqual(result.lane, "northstardrift")
+            self.assertIsInstance(result.findings, list)
+            self.assertIsInstance(result.exit_code, int)
+            self.assertIsInstance(result.summary, str)
+            self.assertIn("northstardrift:", result.summary)
+            self.assertIn("score=", result.summary)
+            self.assertIn("tier=", result.summary)
+
+            # Verify it validates through the contract
+            raw = json.dumps({
+                "lane": result.lane,
+                "findings": [
+                    {"message": f.message, "severity": f.severity, "file": f.file, "line": f.line, "tags": f.tags}
+                    for f in result.findings
+                ],
+                "exit_code": result.exit_code,
+                "summary": result.summary,
+            })
+            validated = validate_lane_output(raw)
+            self.assertIsNotNone(validated)
+            self.assertEqual(validated.lane, "northstardrift")
+
+    def test_run_as_lane_handles_exception(self) -> None:
+        """run_as_lane returns an error LaneResult if compute_northstardrift raises."""
+        from unittest.mock import patch
+
+        with patch("driftdriver.northstardrift.compute_northstardrift", side_effect=RuntimeError("boom")):
+            result = run_as_lane(Path("/nonexistent"))
+
+        self.assertEqual(result.lane, "northstardrift")
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(len(result.findings), 1)
+        self.assertEqual(result.findings[0].severity, "error")
+        self.assertIn("boom", result.findings[0].message)
 
 
 if __name__ == "__main__":

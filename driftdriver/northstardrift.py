@@ -1382,3 +1382,123 @@ def write_northstardrift_artifacts(
         "interventions_ledger_path": str(interventions_path),
         "daily_path": str(daily_path),
     }
+
+
+def _minimal_northstar_snapshot(project_dir: Path) -> dict[str, Any]:
+    """Build a lightweight single-repo snapshot for lane-contract scoring."""
+    repo_name = project_dir.name
+    wg_dir = project_dir / ".workgraph"
+    wg_exists = wg_dir.is_dir()
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "overview": {},
+        "repos": [
+            {
+                "name": repo_name,
+                "path": str(project_dir),
+                "exists": True,
+                "workgraph_exists": wg_exists,
+                "service_running": False,
+                "reporting": False,
+                "stalled": False,
+                "missing_dependencies": 0,
+                "blocked_open": 0,
+                "stale_open": [],
+                "stale_in_progress": [],
+                "behind": 0,
+                "git_dirty": False,
+                "dirty_file_count": 0,
+                "ready": [],
+                "in_progress": [],
+                "task_counts": {},
+                "quality": {},
+                "security": {},
+                "repo_north_star": {},
+                "errors": [],
+            }
+        ],
+        "repo_dependency_overview": {},
+        "factory": {},
+        "supervisor": {},
+        "updates": {},
+        "upstream_candidates": [],
+    }
+
+
+def run_as_lane(project_dir: Path) -> "LaneResult":
+    """Run northstardrift and return results in the standard lane contract format.
+
+    Wraps ``compute_northstardrift`` so that northstardrift can be invoked
+    through the unified ``LaneResult`` interface used by all drift lanes.
+    The adapter builds a minimal single-repo snapshot from *project_dir*
+    and converts regressions, operator prompts, and recommended reviews
+    into ``LaneFinding`` objects.
+    """
+    from driftdriver.lane_contract import LaneFinding, LaneResult
+
+    try:
+        snapshot = _minimal_northstar_snapshot(project_dir)
+        report = compute_northstardrift(snapshot)
+    except Exception as exc:
+        return LaneResult(
+            lane="northstardrift",
+            findings=[LaneFinding(message=f"northstardrift error: {exc}", severity="error")],
+            exit_code=1,
+            summary=f"northstardrift failed: {exc}",
+        )
+
+    findings: list[LaneFinding] = []
+
+    # Map regressions to findings
+    for reg in report.get("regressions", []):
+        if not isinstance(reg, dict):
+            continue
+        kind = str(reg.get("kind") or "unknown")
+        summary_text = str(reg.get("summary") or "")
+        findings.append(LaneFinding(
+            message=summary_text,
+            severity="warning",
+            tags=["regression", kind],
+        ))
+
+    # Map operator prompts to findings
+    for prompt in report.get("operator_prompts", []):
+        if not isinstance(prompt, dict):
+            continue
+        priority = str(prompt.get("priority") or "medium")
+        severity = "error" if priority == "high" else "warning"
+        repo_name = str(prompt.get("repo") or "")
+        reason = str(prompt.get("reason") or "")
+        findings.append(LaneFinding(
+            message=f"[{repo_name}] {reason}" if reason else f"[{repo_name}] north-star pressure",
+            severity=severity,
+            tags=["operator-prompt", repo_name],
+        ))
+
+    # Map recommended reviews to findings
+    for review in report.get("recommended_reviews", []):
+        if not isinstance(review, dict):
+            continue
+        category = str(review.get("category") or "review")
+        sev = str(review.get("severity") or "medium")
+        severity = "error" if sev == "high" else "warning"
+        title = str(review.get("title") or "")
+        findings.append(LaneFinding(
+            message=title,
+            severity=severity,
+            tags=["review", category],
+        ))
+
+    summary_data = report.get("summary", {})
+    overall_score = summary_data.get("overall_score", 0.0)
+    overall_tier = summary_data.get("overall_tier", "unknown")
+    summary_text = f"northstardrift: score={overall_score} tier={overall_tier}"
+
+    exit_code = 1 if findings else 0
+    return LaneResult(
+        lane="northstardrift",
+        findings=findings,
+        exit_code=exit_code,
+        summary=summary_text,
+    )
