@@ -13,34 +13,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+from driftdriver.planner import DECOMPOSE_PROMPT_TEMPLATE, build_decompose_prompt
+
 SESSION_DRIVER_GLOB = (
     "~/.claude/plugins/cache/superpowers-marketplace/"
     "claude-session-driver/*/scripts"
 )
-
-DECOMPOSE_PROMPT_TEMPLATE = """\
-You are a project planner. Given a high-level goal, decompose it into
-concrete workgraph tasks with dependencies.
-
-## Goal
-{goal}
-
-## Project Directory
-{project_dir}
-
-## Instructions
-1. Research the goal by reading relevant files in the project.
-2. Create workgraph tasks using `wg add`. Each task must have:
-   - A short `--id` (kebab-case, e.g., `feat-auth-login`)
-   - A clear title
-   - A `-d` description covering: what to do, which files to touch, acceptance criteria
-   - `--blocked-by` dependencies where appropriate
-3. Keep tasks small — each should be completable in one focused session.
-4. After creating all tasks, run:
-   ./.workgraph/coredrift ensure-contracts --apply
-5. Print a summary of the tasks you created (id + title + deps).
-6. Do NOT implement anything. Planning only.
-"""
 
 WORKER_PROMPT_TEMPLATE = """\
 You are working in: {project_dir}
@@ -304,14 +282,6 @@ def get_ready_tasks(project_dir: Path) -> list[dict]:
         else:
             detailed.append(task)
     return detailed
-
-
-def build_decompose_prompt(goal: str, project_dir: Path) -> str:
-    """Build the prompt for goal decomposition."""
-    return DECOMPOSE_PROMPT_TEMPLATE.format(
-        goal=goal,
-        project_dir=str(project_dir),
-    )
 
 
 def build_worker_prompt(task: dict, project_dir: Path) -> str:
