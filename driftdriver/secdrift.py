@@ -6,9 +6,12 @@ import subprocess
 from datetime import datetime, timezone
 from hashlib import sha1
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from driftdriver.lane_contract import LaneResult
 
 
 _TEXT_SUFFIX_ALLOW = {
@@ -476,6 +479,63 @@ def run_secdrift_scan(
         "model_contract": model_contract,
         "errors": [],
     }
+
+
+_LANE_SEVERITY_MAP = {
+    "critical": "critical",
+    "high": "error",
+    "medium": "warning",
+    "low": "info",
+}
+
+
+def _map_severity(finding: dict[str, Any]) -> str:
+    """Map secdrift finding severity to lane contract level."""
+    raw = str(finding.get("severity") or "").lower()
+    return _LANE_SEVERITY_MAP.get(raw, "info")
+
+
+def run_as_lane(project_dir: Path) -> "LaneResult":
+    """Run secdrift and return results in the standard lane contract format.
+
+    Wraps ``run_secdrift_scan`` so that secdrift can be invoked through the
+    unified ``LaneResult`` interface used by all drift lanes.
+    """
+    from driftdriver.lane_contract import LaneFinding, LaneResult
+
+    try:
+        report = run_secdrift_scan(
+            repo_name=project_dir.name,
+            repo_path=project_dir,
+            policy_cfg={"run_pentest": False, "allow_network_scans": False},
+        )
+    except Exception as exc:
+        return LaneResult(
+            lane="secdrift",
+            findings=[LaneFinding(message=f"secdrift error: {exc}", severity="error")],
+            exit_code=1,
+            summary=f"secdrift failed: {exc}",
+        )
+
+    findings = []
+    for f in report.get("findings", []):
+        findings.append(LaneFinding(
+            message=str(f.get("title") or f.get("category") or "security finding"),
+            severity=_map_severity(f),
+            file=str(f.get("file") or ""),
+            line=int(f.get("line") or 0),
+            tags=[str(f.get("category") or "security")],
+        ))
+
+    summary_data = report.get("summary", {})
+    summary_text = str(summary_data.get("narrative") or f"{len(findings)} findings")
+    exit_code = 1 if findings else 0
+    return LaneResult(
+        lane="secdrift",
+        findings=findings,
+        exit_code=exit_code,
+        summary=summary_text,
+    )
 
 
 def _run_cmd(
