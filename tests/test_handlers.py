@@ -112,12 +112,16 @@ def test_scripts_are_under_80_lines():
         )
 
 
-# Fix 1: JSON injection via unescaped variables
-JSON_BUILDING_SCRIPTS = ["agent-error.sh", "task-claimed.sh", "task-completing.sh", "agent-stop.sh"]
+# Fix 1: Handler scripts that still build JSON must use jq -n for safety.
+# As of the real-time learning migration, handlers pass values as CLI args
+# to driftdriver record-event instead of building JSON — so no scripts need
+# jq -n anymore. This test verifies no script regresses to unsafe string
+# interpolation for JSON construction.
+JSON_BUILDING_SCRIPTS: list[str] = []
 
 
 def test_handler_scripts_use_jq_for_json_construction():
-    """Handler scripts must use 'jq -n' to build JSON safely, not string interpolation."""
+    """Handler scripts that build JSON must use 'jq -n' safely, not string interpolation."""
     for script in JSON_BUILDING_SCRIPTS:
         path = HANDLERS_DIR / script
         if not path.exists():
@@ -186,21 +190,24 @@ def test_task_completing_changed_files_normal_diff():
     )
 
 
-# Fix 2: lessons_mcp() must write to JSONL file, not pipe to node
-def test_lessons_mcp_writes_to_jsonl_file():
-    """lessons_mcp() must write events to .lessons-events/pending.jsonl, not pipe to node."""
+# Fix 2: lessons_mcp() must record events in real-time via driftdriver
+def test_lessons_mcp_uses_realtime_recording():
+    """lessons_mcp() must call driftdriver record-event for real-time recording."""
     common = HANDLERS_DIR / "common.sh"
     if not common.exists():
         return
     content = common.read_text()
-    assert ".lessons-events" in content, (
-        "common.sh lessons_mcp() must write to .lessons-events/ directory"
+    assert "driftdriver" in content, (
+        "common.sh lessons_mcp() must invoke driftdriver for real-time recording"
     )
-    assert "pending.jsonl" in content, (
-        "common.sh lessons_mcp() must append to pending.jsonl"
+    assert "record-event" in content, (
+        "common.sh lessons_mcp() must use record-event subcommand"
     )
     assert "lessons-mcp" not in content, (
         "common.sh lessons_mcp() must not invoke node lessons-mcp process"
+    )
+    assert "pending.jsonl" not in content, (
+        "common.sh lessons_mcp() must not write to pending.jsonl (batch mode removed)"
     )
 
 
@@ -216,15 +223,18 @@ def test_wg_log_uses_positional_arg():
     )
 
 
-# Fix 5: session-start.sh and pre-compact.sh must use jq for JSON construction
-def test_session_start_uses_jq():
-    """session-start.sh must use 'jq -n' to build JSON, not string interpolation."""
+# Fix 5: session-start.sh uses driftdriver CLI for real-time recording
+def test_session_start_uses_driftdriver_record_event():
+    """session-start.sh must use driftdriver record-event for real-time event recording."""
     path = HANDLERS_DIR / "session-start.sh"
     if not path.exists():
         return
     content = path.read_text()
-    assert "jq -n" in content, (
-        "session-start.sh must use 'jq -n' for safe JSON construction, not bare string interpolation"
+    assert "driftdriver" in content, (
+        "session-start.sh must use driftdriver CLI"
+    )
+    assert "record-event" in content, (
+        "session-start.sh must use record-event for real-time recording"
     )
 
 
@@ -270,14 +280,17 @@ def test_session_start_exports_workgraph_bin_on_path():
     )
 
 
-def test_pre_compact_uses_jq():
-    """pre-compact.sh must use 'jq -n' to build JSON, not string interpolation."""
+def test_pre_compact_uses_driftdriver_record_event():
+    """pre-compact.sh must use driftdriver record-event for real-time event recording."""
     path = HANDLERS_DIR / "pre-compact.sh"
     if not path.exists():
         return
     content = path.read_text()
-    assert "jq -n" in content, (
-        "pre-compact.sh must use 'jq -n' for safe JSON construction, not bare string interpolation"
+    assert "driftdriver" in content, (
+        "pre-compact.sh must use driftdriver CLI for real-time recording"
+    )
+    assert "record-event" in content, (
+        "pre-compact.sh must use record-event for immediate event recording"
     )
 
 

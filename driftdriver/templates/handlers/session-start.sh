@@ -31,12 +31,19 @@ if command -v driftdriver >/dev/null 2>&1; then
   driftdriver "${HUB_ARGS[@]}" >/dev/null 2>&1 || true
 fi
 
-# Query Lessons MCP for project context and print to stdout
-CONTEXT_JSON=$(jq -n --arg path "$PROJECT_DIR" '{project_path: $path}')
-CONTEXT=$(lessons_mcp "get_project_context" "$CONTEXT_JSON")
+# Prime agent with project knowledge from lessons.db (real-time path)
+if command -v driftdriver >/dev/null 2>&1; then
+  CONTEXT=$(driftdriver --dir "$PROJECT_DIR" prime 2>/dev/null || echo "")
+  if [[ -n "$CONTEXT" ]]; then
+    echo "=== Project Knowledge Summary ==="
+    echo "$CONTEXT"
+    echo "================================="
+  fi
 
-if [[ -n "$CONTEXT" ]]; then
-  echo "=== Project Knowledge Summary ==="
-  echo "$CONTEXT"
-  echo "================================="
+  # Record session start event immediately
+  driftdriver --dir "$PROJECT_DIR" record-event \
+    --event-type "session_start" \
+    --content "Session started for $(basename "$PROJECT_DIR") via $CLI_TOOL" \
+    --session-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-}}" \
+    --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
 fi

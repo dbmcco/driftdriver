@@ -10,10 +10,14 @@ HANDLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TASK_ID="$(current_task_id)"
 ERROR_MSG="${WG_ERROR_MESSAGE:-unknown error}"
 
-# Record error event to Lessons MCP
-EVENT_JSON=$(jq -n --arg event "agent_error" --arg tid "$TASK_ID" --arg err "$ERROR_MSG" --arg cli "$CLI_TOOL" \
-  '{event: $event, task_id: $tid, error: $err, cli: $cli}')
-lessons_mcp "record_event" "$EVENT_JSON"
+# Record error event immediately to lessons.db
+if command -v driftdriver >/dev/null 2>&1; then
+  driftdriver --dir "$PROJECT_DIR" record-event \
+    --event-type "agent_error" \
+    --content "Error on task $TASK_ID: $ERROR_MSG" \
+    --session-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-}}" \
+    --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
+fi
 
 # Check if agentjj checkpoint exists for this task
 CHECKPOINT="pre-task-$TASK_ID"

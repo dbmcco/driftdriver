@@ -1,5 +1,5 @@
 # ABOUTME: Reporting module that closes the speedrift learning loop
-# ABOUTME: Flushes pending events to Lessons MCP DB, exports knowledge, pushes to central repo
+# ABOUTME: Real-time event recording to lessons.db, knowledge export, central repo push
 
 from __future__ import annotations
 
@@ -49,11 +49,18 @@ def record_event_immediate(
     project: str = "",
     metadata: dict | None = None,
     db_path: Path | None = None,
+    dedupe_hint: str = "",
 ) -> bool:
     """Write a single event directly to lessons.db immediately.
 
-    Unlike flush_pending_events which batches from pending.jsonl,
-    this writes one event right now. Returns True on success.
+    This is the primary recording path for the always-on learning pipeline.
+    Returns True on success.
+
+    Args:
+        dedupe_hint: Optional stable string for deduplication. When provided,
+            the dedupe key is derived from session_id + event_type + hint
+            instead of timestamp, preventing duplicate entries for the same
+            logical event.
     """
     if db_path is None:
         db_path = Path.home() / ".claude" / "lessons-mcp" / "lessons.db"
@@ -63,7 +70,10 @@ def record_event_immediate(
 
     now_iso = datetime.now(timezone.utc).isoformat()
     payload = json.dumps({"event_type": event_type, "content": content, **(metadata or {})})
-    dedupe_key = f"{session_id}:{event_type}:{now_iso}:{hashlib.md5(payload[:200].encode()).hexdigest()[:16]}"
+    if dedupe_hint:
+        dedupe_key = f"{session_id}:{event_type}:{hashlib.md5(dedupe_hint.encode()).hexdigest()[:16]}"
+    else:
+        dedupe_key = f"{session_id}:{event_type}:{now_iso}:{hashlib.md5(payload[:200].encode()).hexdigest()[:16]}"
     event_id = str(uuid4())
 
     try:
@@ -106,6 +116,68 @@ def record_ecosystem_snapshot(
         },
         db_path=db_path,
     )
+
+
+def record_learning_immediate(
+    learning: object,
+    *,
+    session_id: str = "",
+    project: str = "",
+    db_path: Path | None = None,
+) -> bool:
+    """Record a single Learning from self-reflect directly to lessons.db.
+
+    Accepts a self_reflect.Learning dataclass instance and writes it as a
+    'learning' event type. Returns True on success, False on failure.
+    """
+    content = getattr(learning, "content", str(learning))
+    metadata = {
+        "learning_type": getattr(learning, "learning_type", "unknown"),
+        "confidence": getattr(learning, "confidence", "medium"),
+        "source_task": getattr(learning, "source_task", ""),
+        "affected_files": getattr(learning, "affected_files", []),
+    }
+    dedupe_content = f"{metadata['learning_type']}:{content}"
+    return record_event_immediate(
+        event_type="learning",
+        content=content,
+        session_id=session_id,
+        project=project,
+        metadata=metadata,
+        db_path=db_path,
+        dedupe_hint=dedupe_content,
+    )
+
+
+def self_reflect_and_record(
+    *,
+    events: list[dict] | None = None,
+    diff_text: str = "",
+    test_output: str = "",
+    session_id: str = "",
+    project: str = "",
+    task_id: str = "",
+    db_path: Path | None = None,
+) -> int:
+    """Run self-reflect pipeline and record each learning immediately to lessons.db.
+
+    Returns the count of learnings successfully recorded.
+    """
+    from driftdriver.self_reflect import self_reflect
+
+    learnings = self_reflect(events=events, diff_text=diff_text, test_output=test_output)
+    recorded = 0
+    for learning in learnings:
+        if not learning.source_task and task_id:
+            learning.source_task = task_id
+        if record_learning_immediate(
+            learning,
+            session_id=session_id,
+            project=project,
+            db_path=db_path,
+        ):
+            recorded += 1
+    return recorded
 
 
 def load_reporting_config(wg_dir: Path) -> ReportingConfig:

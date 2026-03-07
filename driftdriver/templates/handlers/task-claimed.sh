@@ -38,10 +38,13 @@ if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]]; then
   fi
 fi
 
-# Also query Lessons MCP for broader project context (async, non-blocking)
-TASK_DESC="${WG_TASK_DESCRIPTION:-}"
-QUERY_JSON=$(jq -n --arg query "$TASK_DESC" --argjson limit 5 \
-  '{query: $query, limit: $limit}')
-lessons_mcp "search_knowledge" "$QUERY_JSON"
+# Record task claim event immediately to lessons.db (real-time learning)
+if command -v driftdriver >/dev/null 2>&1; then
+  driftdriver --dir "$PROJECT_DIR" record-event \
+    --event-type "task_claimed" \
+    --content "Task $TASK_ID claimed by $CLI_TOOL" \
+    --session-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-}}" \
+    --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
+fi
 
 wg_log "$TASK_ID" "task-claimed: cli=$CLI_TOOL checkpoint=pre-task-$TASK_ID"

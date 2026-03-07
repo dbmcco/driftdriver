@@ -30,11 +30,14 @@ if [[ -n "$TASK_ID" ]]; then
   fi
 fi
 
-# Log reasoning to Lessons MCP
-EVENT_JSON=$(jq -n --arg event "agent_stop" --arg tid "$TASK_ID" --arg decision "$DECISION" \
-  --arg reason "$REASON" --arg cli "$CLI_TOOL" \
-  '{event: $event, task_id: $tid, decision: $decision, reason: $reason, cli: $cli}')
-lessons_mcp "record_decision" "$EVENT_JSON"
+# Record stop decision immediately to lessons.db
+if command -v driftdriver >/dev/null 2>&1; then
+  driftdriver --dir "$PROJECT_DIR" record-event \
+    --event-type "agent_stop" \
+    --content "Agent stop: decision=$DECISION reason=$REASON task=$TASK_ID" \
+    --session-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-}}" \
+    --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
+fi
 
 wg_log "$TASK_ID" "agent-stop: decision=$DECISION reason=$REASON"
 echo "$DECISION"

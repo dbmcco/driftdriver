@@ -18,18 +18,12 @@ fi
 GIT_DIFF_STAT=$(git -C "$PROJECT_DIR" diff --stat HEAD 2>/dev/null || echo "")
 CHANGED_FILES=$(printf '%s\n' "$GIT_DIFF_STAT" | grep -cE "changed|insertion|deletion") || CHANGED_FILES=0
 
-# Record completion event to Lessons MCP
-EVENT_JSON=$(jq -n --arg event "task_completing" --arg tid "$TASK_ID" --arg cli "$CLI_TOOL" \
-  --argjson changed "${CHANGED_FILES:-0}" \
-  '{event: $event, task_id: $tid, cli: $cli, files_changed: $changed}')
-lessons_mcp "record_event" "$EVENT_JSON"
-
-# Record task completion event immediately to lessons.db
+# Record task completion event immediately to lessons.db (real-time learning)
 if command -v driftdriver >/dev/null 2>&1; then
   driftdriver --dir "$PROJECT_DIR" record-event \
     --event-type "task_completed" \
-    --content "Task $TASK_ID completed" \
-    --session-id "${WG_SESSION_ID:-}" \
+    --content "Task $TASK_ID completed (files_changed=$CHANGED_FILES, cli=$CLI_TOOL)" \
+    --session-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-}}" \
     --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
 fi
 
