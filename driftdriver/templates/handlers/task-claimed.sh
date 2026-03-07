@@ -27,6 +27,17 @@ if command -v driftdriver >/dev/null 2>&1; then
   fi
 fi
 
+# Enrich task contract with relevant prior learnings
+if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]]; then
+  ENRICHED=$(driftdriver --dir "$PROJECT_DIR" wire enrich \
+    --task-id "$TASK_ID" \
+    --task-description "${WG_TASK_DESCRIPTION:-}" \
+    --project "$(basename "$PROJECT_DIR")" 2>/dev/null || echo "")
+  if [[ -n "$ENRICHED" ]]; then
+    wg_log "$TASK_ID" "contract-enriched: $ENRICHED"
+  fi
+fi
+
 # Also query Lessons MCP for broader project context (async, non-blocking)
 TASK_DESC="${WG_TASK_DESCRIPTION:-}"
 QUERY_JSON=$(jq -n --arg query "$TASK_DESC" --argjson limit 5 \
