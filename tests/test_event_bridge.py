@@ -1,13 +1,15 @@
 # ABOUTME: Tests for event_bridge.py - mapping session-driver JSONL events to Lessons MCP calls
-# ABOUTME: Covers map_event, parse_events_file, bridge_events, and format_mcp_call
+# ABOUTME: Covers map_event, parse_events_file, bridge_events, format_mcp_call, and quality gates
 
 import json
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from driftdriver.event_bridge import (
     MappedEvent,
     bridge_events,
+    filter_federated_knowledge,
     format_mcp_call,
     map_event,
     parse_events_file,
@@ -82,3 +84,134 @@ def test_format_mcp_call_shape():
     assert result["project"] == "proj"
     assert result["payload"] == {"tool": "Bash", "tool_input": {"command": "ls"}}
     assert set(result.keys()) == {"session_id", "event_type", "project", "payload"}
+
+
+# --- Quality gate tests for filter_federated_knowledge ---
+
+
+def test_filter_removes_low_confidence_float():
+    entries = [
+        {"content": "good entry", "confidence": 0.8},
+        {"content": "bad entry", "confidence": 0.2},
+    ]
+    result = filter_federated_knowledge(entries)
+    assert len(result) == 1
+    assert result[0]["content"] == "good entry"
+
+
+def test_filter_handles_string_confidence():
+    entries = [
+        {"content": "high conf", "confidence": "high"},
+        {"content": "medium conf", "confidence": "medium"},
+        {"content": "low conf", "confidence": "low"},
+    ]
+    result = filter_federated_knowledge(entries, min_confidence=0.5)
+    assert len(result) == 2
+    contents = {e["content"] for e in result}
+    assert "high conf" in contents
+    assert "medium conf" in contents
+    assert "low conf" not in contents
+
+
+def test_filter_deduplicates():
+    entries = [
+        {"content": "same thing", "confidence": 0.8},
+        {"content": "same thing", "confidence": 0.9},
+    ]
+    result = filter_federated_knowledge(entries)
+    assert len(result) == 1
+
+
+def test_filter_caps_per_peer():
+    entries = [
+        {"content": f"entry {i}", "confidence": 0.8, "_peer": "repo-a"}
+        for i in range(60)
+    ]
+    result = filter_federated_knowledge(entries, max_per_peer=50)
+    assert len(result) == 50
+
+
+def test_filter_caps_per_peer_multiple_peers():
+    entries_a = [
+        {"content": f"a-{i}", "confidence": 0.8, "_peer": "repo-a"}
+        for i in range(30)
+    ]
+    entries_b = [
+        {"content": f"b-{i}", "confidence": 0.8, "_peer": "repo-b"}
+        for i in range(30)
+    ]
+    result = filter_federated_knowledge(entries_a + entries_b, max_per_peer=20)
+    assert len(result) == 40
+    a_count = sum(1 for e in result if e["_peer"] == "repo-a")
+    b_count = sum(1 for e in result if e["_peer"] == "repo-b")
+    assert a_count == 20
+    assert b_count == 20
+
+
+def test_filter_removes_stale_entries():
+    old_date = (datetime.now() - timedelta(days=120)).isoformat()
+    recent_date = (datetime.now() - timedelta(days=10)).isoformat()
+    entries = [
+        {"content": "old fact", "confidence": 0.8, "created_at": old_date},
+        {"content": "recent fact", "confidence": 0.8, "created_at": recent_date},
+    ]
+    result = filter_federated_knowledge(entries, max_age_days=90)
+    assert len(result) == 1
+    assert result[0]["content"] == "recent fact"
+
+
+def test_filter_staleness_uses_last_confirmed_over_created_at():
+    old_created = (datetime.now() - timedelta(days=120)).isoformat()
+    recent_confirmed = (datetime.now() - timedelta(days=5)).isoformat()
+    entries = [
+        {
+            "content": "refreshed fact",
+            "confidence": 0.8,
+            "created_at": old_created,
+            "last_confirmed": recent_confirmed,
+        },
+    ]
+    result = filter_federated_knowledge(entries, max_age_days=90)
+    assert len(result) == 1
+
+
+def test_filter_staleness_from_provenance():
+    old_date = (datetime.now() - timedelta(days=120)).isoformat()
+    entries = [
+        {
+            "content": "provenance-dated fact",
+            "confidence": 0.8,
+            "provenance": f"lessons-db:{old_date}",
+        },
+    ]
+    result = filter_federated_knowledge(entries, max_age_days=90)
+    assert len(result) == 0
+
+
+def test_filter_keeps_entries_without_date():
+    entries = [
+        {"content": "no date fact", "confidence": 0.8},
+    ]
+    result = filter_federated_knowledge(entries, max_age_days=90)
+    assert len(result) == 1
+
+
+def test_filter_missing_confidence_treated_as_zero():
+    entries = [
+        {"content": "no confidence field"},
+    ]
+    result = filter_federated_knowledge(entries, min_confidence=0.5)
+    assert len(result) == 0
+
+
+def test_filter_unknown_string_confidence_treated_as_zero():
+    entries = [
+        {"content": "unknown label", "confidence": "uncertain"},
+    ]
+    result = filter_federated_knowledge(entries, min_confidence=0.5)
+    assert len(result) == 0
+
+
+def test_filter_empty_input():
+    result = filter_federated_knowledge([])
+    assert result == []

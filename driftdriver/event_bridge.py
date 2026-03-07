@@ -1,8 +1,10 @@
 # ABOUTME: Maps claude-session-driver JSONL events to Lessons MCP record_event calls
-# ABOUTME: Bridges worker lifecycle events to knowledge capture
+# ABOUTME: Bridges worker lifecycle events to knowledge capture with quality-gated federation
 
+import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 _EVENT_TYPE_MAP = {
@@ -80,6 +82,82 @@ def format_mcp_call(event: MappedEvent) -> dict:
     }
 
 
+_CONFIDENCE_STR_TO_FLOAT = {"high": 0.9, "medium": 0.7, "low": 0.3}
+
+
+def _parse_entry_date(entry: dict) -> datetime | None:
+    """Extract the best available date from a knowledge entry.
+
+    Checks last_confirmed, created_at, and the provenance field
+    (which embeds created_at as 'lessons-db:<iso-date>').
+    """
+    for field in ("last_confirmed", "created_at"):
+        raw = entry.get(field)
+        if raw:
+            try:
+                return datetime.fromisoformat(str(raw))
+            except (ValueError, TypeError):
+                pass
+    # Fall back to provenance embedded date (e.g. "lessons-db:2026-01-15T10:30:00")
+    prov = entry.get("provenance", "")
+    if prov.startswith("lessons-db:"):
+        date_str = prov[len("lessons-db:"):]
+        if date_str:
+            try:
+                return datetime.fromisoformat(date_str)
+            except (ValueError, TypeError):
+                pass
+    return None
+
+
+def filter_federated_knowledge(
+    entries: list[dict],
+    *,
+    min_confidence: float = 0.5,
+    max_age_days: int = 90,
+    max_per_peer: int = 50,
+) -> list[dict]:
+    """Filter federated knowledge entries for quality.
+
+    Removes low-confidence, stale, and duplicate entries.
+    Caps entries per source to prevent one peer from dominating.
+    """
+    cutoff = datetime.now() - timedelta(days=max_age_days)
+    seen_hashes: set[str] = set()
+    filtered: list[dict] = []
+    peer_counts: dict[str, int] = {}
+
+    for entry in entries:
+        # Confidence gate — handle both float and string values
+        conf = entry.get("confidence", 0.0)
+        if isinstance(conf, str):
+            conf = _CONFIDENCE_STR_TO_FLOAT.get(conf, 0.0)
+        if conf < min_confidence:
+            continue
+
+        # Staleness gate
+        entry_date = _parse_entry_date(entry)
+        if entry_date is not None and entry_date < cutoff:
+            continue
+
+        # Dedup gate — hash first 100 chars of content
+        content_prefix = entry.get("content", "")[:100]
+        content_hash = hashlib.md5(content_prefix.encode()).hexdigest()
+        if content_hash in seen_hashes:
+            continue
+        seen_hashes.add(content_hash)
+
+        # Per-peer cap
+        source = entry.get("_peer", entry.get("source", entry.get("project", "unknown")))
+        peer_counts[source] = peer_counts.get(source, 0) + 1
+        if peer_counts[source] > max_per_peer:
+            continue
+
+        filtered.append(entry)
+
+    return filtered
+
+
 def federate_learnings(project_dir: Path, peer_registry: object) -> list[dict]:
     """Read knowledge.jsonl from each reachable peer and return combined entries.
 
@@ -106,4 +184,4 @@ def federate_learnings(project_dir: Path, peer_registry: object) -> list[dict]:
                         pass
         except OSError:
             continue
-    return all_entries
+    return filter_federated_knowledge(all_entries)
