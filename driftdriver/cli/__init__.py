@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from driftdriver import wire
-from driftdriver.pm_coordination import get_ready_tasks
 from driftdriver.speedriftd import (
     load_runtime_snapshot,
     run_runtime_cycle,
@@ -128,9 +127,37 @@ def cmd_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_ready_output(stdout: str) -> list[dict]:
+    """Parse the text output of 'wg ready' into task dicts."""
+    tasks: list[dict] = []
+    for line in stdout.strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("Ready tasks:"):
+            continue
+        parts = line.split(" - ", 1)
+        if len(parts) == 2:
+            task_id = parts[0].strip()
+            title = parts[1].strip()
+            tasks.append({"id": task_id, "title": title, "description": ""})
+    return tasks
+
+
+def _get_ready_tasks(project_dir: Path) -> list[dict]:
+    """Run ``wg ready`` and return list of task dicts with id, title, description."""
+    result = subprocess.run(
+        ["wg", "ready"],
+        capture_output=True,
+        text=True,
+        cwd=str(project_dir),
+    )
+    if result.returncode != 0:
+        return []
+    return _parse_ready_output(result.stdout)
+
+
 def cmd_ready(args: argparse.Namespace) -> int:
     project_dir = Path(args.dir) if args.dir else Path.cwd()
-    tasks = get_ready_tasks(project_dir)
+    tasks = _get_ready_tasks(project_dir)
     if args.json:
         print(json.dumps(tasks))
     else:

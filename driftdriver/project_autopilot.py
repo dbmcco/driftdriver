@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -273,15 +274,28 @@ def get_task_details(project_dir: Path, task_id: str) -> dict | None:
     }
 
 
+def _parse_ready_output(stdout: str) -> list[dict]:
+    """Parse the text output of 'wg ready' into task dicts."""
+    tasks: list[dict] = []
+    for line in stdout.strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("Ready tasks:"):
+            continue
+        parts = line.split(" - ", 1)
+        if len(parts) == 2:
+            task_id = parts[0].strip()
+            title = parts[1].strip()
+            tasks.append({"id": task_id, "title": title, "description": ""})
+    return tasks
+
+
 def get_ready_tasks(project_dir: Path) -> list[dict]:
     """Get ready tasks from workgraph with full details."""
-    from .pm_coordination import parse_ready_output
-
     result = _run_command(["wg", "ready"], cwd=project_dir)
     if result.returncode != 0:
         return []
 
-    basic_tasks = parse_ready_output(result.stdout)
+    basic_tasks = _parse_ready_output(result.stdout)
     detailed = []
     for task in basic_tasks:
         details = get_task_details(project_dir, task["id"])
@@ -642,6 +656,86 @@ def dispatch_task(
     return ctx
 
 
+@dataclass
+class _PeerAssignment:
+    peer_name: str
+    task_id: str
+    prompt: str = ""
+    status: str = "pending"  # pending, dispatched, completed, failed
+
+
+def _format_task_prompt(task: dict) -> str:
+    """Format a task dict into a worker session prompt including TDD protocol."""
+    task_id = task.get("id", "")
+    title = task.get("title", "")
+    description = task.get("description", "")
+    return (
+        f"Task ID: {task_id}\n"
+        f"Title: {title}\n\n"
+        f"{description}\n\n"
+        "## Protocol\n"
+        "Follow TDD strictly: write failing tests first, verify RED, implement minimal "
+        "code to pass, verify GREEN, then run the full suite.\n"
+        "When complete, run: wg done\n"
+        "Before completing, run: drifts check\n"
+    )
+
+
+def _plan_peer_dispatch(
+    peer_registry: object,
+    ready_tasks: list[dict],
+) -> list[_PeerAssignment]:
+    """Scan task descriptions for @peer:<name> annotations and plan dispatch."""
+    peers = {p.name for p in peer_registry.peers()}
+    if not peers:
+        return []
+
+    assignments: list[_PeerAssignment] = []
+    pattern = re.compile(r"@peer:(\S+)")
+
+    for task in ready_tasks:
+        desc = task.get("description", "")
+        match = pattern.search(desc)
+        if match:
+            peer_name = match.group(1)
+            if peer_name in peers:
+                assignments.append(_PeerAssignment(
+                    peer_name=peer_name,
+                    task_id=task["id"],
+                    prompt=_format_task_prompt(task),
+                ))
+    return assignments
+
+
+def _dispatch_to_peer(
+    project_dir: Path,
+    peer_name: str,
+    task: dict,
+    peer_registry: object,
+) -> str | None:
+    """Dispatch a task to a peer repo via IPC AddTask.
+
+    Returns the remote task_id on success, None on failure.
+    """
+    from driftdriver.wg_ipc import IpcError, add_task
+
+    socket_path = peer_registry.socket(peer_name)
+    if not socket_path:
+        return None
+
+    try:
+        remote_id = add_task(
+            socket_path,
+            title=task.get("title", ""),
+            description=task.get("description", ""),
+            tags=["federation", f"origin:{project_dir.name}"],
+            origin=f"peer:{project_dir.name}",
+        )
+        return remote_id if remote_id else None
+    except IpcError:
+        return None
+
+
 def _init_peer_registry(project_dir: Path) -> object | None:
     """Initialize peer registry if peers are configured."""
     from driftdriver.peer_registry import PeerRegistry
@@ -659,10 +753,8 @@ def _run_peer_dispatch(
     peer_registry: object,
 ) -> list[str]:
     """Dispatch @peer:-annotated tasks to remote repos. Returns dispatched task IDs."""
-    from driftdriver.pm_coordination import plan_peer_dispatch, dispatch_to_peer
-
     project_dir = run.config.project_dir
-    assignments = plan_peer_dispatch(peer_registry, actionable)
+    assignments = _plan_peer_dispatch(peer_registry, actionable)
     dispatched: list[str] = []
 
     for assignment in assignments:
@@ -676,7 +768,7 @@ def _run_peer_dispatch(
             continue
 
         print(f"[autopilot] Dispatching to peer {assignment.peer_name}: {task['id']}")
-        remote_id = dispatch_to_peer(project_dir, assignment.peer_name, task, peer_registry)
+        remote_id = _dispatch_to_peer(project_dir, assignment.peer_name, task, peer_registry)
         if remote_id:
             print(f"[autopilot] Peer {assignment.peer_name} accepted: {task['id']} → {remote_id}")
             ctx = WorkerContext(
