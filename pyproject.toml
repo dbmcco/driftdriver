@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "Workgraph-first drift orchestrator (Speedrift suite)"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "speedrift-lane-sdk",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0"]
@@ -19,4 +21,7 @@ driftdriver = "driftdriver.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["driftdriver*"]
+
+[tool.uv.sources]
+speedrift-lane-sdk = { path = "../speedrift-lane-sdk", editable = true }
 
