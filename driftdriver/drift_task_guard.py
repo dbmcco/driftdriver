@@ -260,23 +260,31 @@ def guarded_add_drift_task(
         _record_escalation(wg_dir, actor, lane_tag, task_id, title, reason)
         return "capped"
 
-    # 8. Create the task.
-    cmd: list[str] = [
-        "wg", "--dir", str(wg_dir),
-        "add", title,
-        "--id", task_id,
-        "-d", description,
-        "--immediate",
-        "-t", "drift",
-        "-t", lane_tag,
-    ]
-    for tag in (extra_tags or []):
-        cmd.extend(["-t", tag])
-    if after:
-        cmd.extend(["--after", after])
+    # 8. Emit directive (replaces direct wg add call).
+    from driftdriver.directives import Action, Directive, DirectiveLog
+    from driftdriver.executor_shim import ExecutorShim
 
-    add_rc, _, _ = _run_wg(cmd, cwd=cwd, timeout=30.0)
-    if add_rc != 0:
+    directive = Directive(
+        source="drift_task_guard",
+        repo=actor.repo,
+        action=Action.CREATE_TASK,
+        params={
+            "task_id": task_id,
+            "title": title,
+            "description": description,
+            "tags": ["drift", lane_tag] + (extra_tags or []),
+            "after": [after] if after else [],
+        },
+        reason=f"drift follow-up from lane={lane_tag}",
+        priority="normal",
+    )
+
+    directive_dir = wg_dir / "service" / "directives"
+    log = DirectiveLog(directive_dir)
+    shim = ExecutorShim(wg_dir=wg_dir, log=log)
+    shim_result = shim.execute(directive)
+
+    if shim_result != "completed":
         return "error"
 
     # 9. Record in budget ledger.

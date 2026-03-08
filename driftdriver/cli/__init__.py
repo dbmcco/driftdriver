@@ -414,6 +414,55 @@ def cmd_report_cli(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_validation_gates(args: argparse.Namespace) -> int:
+    from driftdriver.directives import DirectiveLog
+    from driftdriver.validation_gates import check_validation_gates
+
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    log = DirectiveLog(wg_dir / "service" / "directives")
+
+    # Load the task via wg show --json
+    task_id = args.task_id
+    result_proc = subprocess.run(
+        ["wg", "show", task_id, "--json"],
+        capture_output=True,
+        text=True,
+        cwd=str(wg_dir.parent),
+    )
+    if result_proc.returncode != 0:
+        print(json.dumps({"error": f"could not load task {task_id}"}))
+        return 1
+    try:
+        task = json.loads(result_proc.stdout)
+    except json.JSONDecodeError:
+        print(json.dumps({"error": f"invalid JSON from wg show {task_id}"}))
+        return 1
+
+    result = check_validation_gates(task=task, wg_dir=wg_dir, directive_log=log)
+    print(json.dumps(result))
+    return 0
+
+
+def cmd_decompose(args: argparse.Namespace) -> int:
+    from driftdriver.decompose import decompose_goal
+    from driftdriver.directives import DirectiveLog
+
+    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    log = DirectiveLog(wg_dir / "service" / "directives")
+    result = decompose_goal(
+        goal=args.goal,
+        wg_dir=wg_dir,
+        directive_log=log,
+        repo=args.repo,
+        context=args.context,
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(result))
+    else:
+        print(f"Decomposed into {result['task_count']} tasks")
+    return 0
+
+
 def cmd_ecosystem_hub_proxy(args: argparse.Namespace) -> int:
     from driftdriver.ecosystem_hub import main as ecosystem_hub_main
 
@@ -442,10 +491,11 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
         or bool(getattr(args, "release_lease", False))
         or getattr(args, "lease_ttl_seconds", None) is not None
     ):
+        new_mode = getattr(args, "set_mode", None)
         write_control_state(
             project_dir,
             policy=policy,
-            mode=getattr(args, "set_mode", None),
+            mode=new_mode,
             lease_owner=getattr(args, "lease_owner", None),
             lease_ttl_seconds=getattr(args, "lease_ttl_seconds", None),
             release_lease=bool(getattr(args, "release_lease", False)),
@@ -453,6 +503,15 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
             reason=str(getattr(args, "reason", "") or ""),
         )
         control_changed = True
+
+        # Stop the wg daemon when mode drops to observe/manual — it should
+        # only run when explicitly armed.
+        if new_mode in ("observe", "manual"):
+            import subprocess
+            subprocess.run(
+                ["wg", "--dir", str(wg_dir), "service", "stop"],
+                capture_output=True, timeout=10,
+            )
 
     action = str(getattr(args, "action", "status") or "status")
     if action == "status":
@@ -1009,6 +1068,16 @@ def _build_parser() -> argparse.ArgumentParser:
     reflect_p = sub.add_parser("reflect", help="Run self-reflect on recent task")
     reflect_p.set_defaults(func=cmd_wire_reflect)
 
+    run_vg_p = sub.add_parser("run-validation-gates", help="Run validation gates for a completing task")
+    run_vg_p.add_argument("--task-id", required=True, help="Task ID to validate")
+    run_vg_p.set_defaults(func=cmd_run_validation_gates)
+
+    decompose_p = sub.add_parser("decompose", help="Decompose a goal into workgraph tasks via LLM")
+    decompose_p.add_argument("--goal", required=True, help="High-level goal to decompose")
+    decompose_p.add_argument("--repo", default="", help="Repo name for directive metadata")
+    decompose_p.add_argument("--context", default="", help="Additional context for LLM")
+    decompose_p.set_defaults(func=cmd_decompose)
+
     autopilot_p = sub.add_parser("autopilot", help="Run project autopilot: goal -> tasks -> workers -> drift -> done")
     autopilot_p.add_argument("--goal", required=True, help="High-level goal to decompose and execute")
     autopilot_p.add_argument("--max-parallel", type=int, default=4, help="Max parallel workers (default: 4)")
@@ -1110,6 +1179,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     forwarded = list(argv) if argv is not None else sys.argv[1:]
+    # Strip the legacy 'wire' prefix — e.g. `driftdriver wire reflect` → `driftdriver reflect`
+    if forwarded:
+        try:
+            wire_idx = forwarded.index("wire")
+        except ValueError:
+            wire_idx = -1
+        if wire_idx != -1:
+            forwarded = forwarded[:wire_idx] + forwarded[wire_idx + 1:]
     if forwarded:
         try:
             hub_idx = forwarded.index("ecosystem-hub")

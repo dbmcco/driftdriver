@@ -19,6 +19,7 @@ from driftdriver.northstardrift import (
 from driftdriver.policy import load_drift_policy
 from driftdriver.qadrift import run_program_quality_scan
 from driftdriver.secdrift import run_secdrift_scan
+from driftdriver.directives import DirectiveLog
 from driftdriver.workgraph import load_workgraph
 
 from .discovery import (
@@ -896,6 +897,7 @@ def supervise_repo_services(
     repos_payload: list[dict[str, Any]],
     cooldown_seconds: int,
     max_starts: int,
+    directive_log: DirectiveLog | None = None,
 ) -> dict[str, Any]:
     now = time.time()
     attempted = 0
@@ -923,13 +925,23 @@ def supervise_repo_services(
         if bool(row.get("service_running")):
             continue
 
+        # Only start services in repos whose speedriftd mode permits it.
+        repo_path = Path(repo_path_raw).expanduser()
+        try:
+            from driftdriver.speedriftd_state import load_control_state
+            ctrl = load_control_state(repo_path)
+            repo_mode = str(ctrl.get("mode") or "observe").strip().lower()
+        except Exception:
+            repo_mode = "observe"
+        if repo_mode not in ("supervise", "autonomous"):
+            continue
+
         in_progress = row.get("in_progress") if isinstance(row.get("in_progress"), list) else []
         ready = row.get("ready") if isinstance(row.get("ready"), list) else []
         if not in_progress and not ready:
             continue
         candidates += 1
 
-        repo_path = Path(repo_path_raw).expanduser()
         key = str(repo_path.resolve())
         last_attempt = _SUPERVISOR_LAST_ATTEMPT.get(key, 0.0)
         if now - last_attempt < max(1, cooldown_seconds):
@@ -938,11 +950,30 @@ def supervise_repo_services(
 
         _SUPERVISOR_LAST_ATTEMPT[key] = now
         attempted += 1
-        rc, out, err = _run_cmd(
-            ["wg", "--dir", str(repo_path / ".workgraph"), "service", "start"],
-            cwd=repo_path,
-            timeout=15.0,
-        )
+
+        if directive_log is not None:
+            from driftdriver.directives import Action, Directive
+            from driftdriver.executor_shim import ExecutorShim
+
+            directive = Directive(
+                source="ecosystem_hub",
+                repo=repo_name,
+                action=Action.START_SERVICE,
+                params={"repo": str(repo_path / ".workgraph")},
+                reason=f"service not running with {len(in_progress)} in-progress, {len(ready)} ready tasks",
+            )
+            wg_dir = repo_path / ".workgraph"
+            shim = ExecutorShim(wg_dir=wg_dir, log=directive_log, timeout=15.0)
+            shim_result = shim.execute(directive)
+            rc = 0 if shim_result == "completed" else 1
+            out = shim_result
+            err = ""
+        else:
+            rc, out, err = _run_cmd(
+                ["wg", "--dir", str(repo_path / ".workgraph"), "service", "start"],
+                cwd=repo_path,
+                timeout=15.0,
+            )
         text = f"{out}\n{err}".strip().lower()
         ok = rc == 0 or "already running" in text
         if ok:

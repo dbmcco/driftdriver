@@ -127,7 +127,7 @@ class TestGuardedAddDriftTask(unittest.TestCase):
         self.assertEqual(result, "capped")
 
     def test_creates_with_immediate_flag(self) -> None:
-        """When under budget, creates with --immediate and records to ledger."""
+        """When under budget, creates via directive with --immediate and records to ledger."""
         captured_cmd: list[str] = []
 
         def mock_run(cmd, *, cwd=None, timeout=40.0):
@@ -135,12 +135,15 @@ class TestGuardedAddDriftTask(unittest.TestCase):
                 return (1, "", "not found")
             if "list" in cmd:
                 return (0, "[]", "")
-            if "add" in cmd:
-                captured_cmd.extend(cmd)
-                return (0, "", "")
             return (1, "", "")
 
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run):
+        def mock_subprocess(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            from unittest.mock import MagicMock
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run), \
+             patch("driftdriver.executor_shim.subprocess.run", side_effect=mock_subprocess):
             result = guarded_add_drift_task(
                 wg_dir=self.wg_dir,
                 task_id="qadrift-new123",
@@ -165,12 +168,15 @@ class TestGuardedAddDriftTask(unittest.TestCase):
                 return (1, "", "not found")
             if "list" in cmd:
                 return (0, "[]", "")
-            if "add" in cmd:
-                captured_cmd.extend(cmd)
-                return (0, "", "")
             return (1, "", "")
 
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run):
+        def mock_subprocess(cmd, **kwargs):
+            captured_cmd.extend(cmd)
+            from unittest.mock import MagicMock
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run), \
+             patch("driftdriver.executor_shim.subprocess.run", side_effect=mock_subprocess):
             result = guarded_add_drift_task(
                 wg_dir=self.wg_dir,
                 task_id="drift-breaker-task1",
@@ -190,11 +196,14 @@ class TestGuardedAddDriftTask(unittest.TestCase):
                 return (1, "", "not found")
             if "list" in cmd:
                 return (0, "[]", "")
-            if "add" in cmd:
-                return (1, "", "already exists")
             return (1, "", "")
 
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run):
+        def mock_subprocess(cmd, **kwargs):
+            from unittest.mock import MagicMock
+            return MagicMock(returncode=1, stdout="", stderr="already exists")
+
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run), \
+             patch("driftdriver.executor_shim.subprocess.run", side_effect=mock_subprocess):
             result = guarded_add_drift_task(
                 wg_dir=self.wg_dir,
                 task_id="qadrift-fail",

@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from driftdriver.directives import Action, Directive, DirectiveLog
+from driftdriver.executor_shim import ExecutorShim
 from driftdriver.policy import load_drift_policy
 from driftdriver.updates import (
     check_ecosystem_updates,
@@ -821,15 +823,31 @@ def run_draft_pr_requests(
         ]
 
     for req in requests:
-        rc, out, err = _run(req.command, cwd=Path(req.repo_path), timeout=30.0)
+        wg_dir = Path(req.repo_path) / ".workgraph"
+        log = DirectiveLog(wg_dir / "directives")
+        shim = ExecutorShim(wg_dir=wg_dir, log=log, timeout=30.0)
+
+        directive = Directive(
+            source="discovery",
+            repo=req.repo,
+            action=Action.CREATE_UPSTREAM_PR,
+            params={
+                "repo": req.repo_path,
+                "title": req.title,
+                "body": req.body,
+                "base": req.base,
+                "head": req.branch,
+            },
+            reason="upstream contribution detected",
+        )
+        status = shim.execute(directive)
         results.append(
             {
                 "repo": req.repo,
                 "repo_path": req.repo_path,
-                "ok": rc == 0,
-                "exit_code": rc,
-                "stdout": out,
-                "stderr": err,
+                "ok": status == "completed",
+                "directive_id": directive.id,
+                "directive_status": status,
                 "command": req.command,
             }
         )

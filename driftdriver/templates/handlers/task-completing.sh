@@ -30,6 +30,11 @@ if command -v driftdriver >/dev/null 2>&1; then
     --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
 fi
 
+# Run validation gates — emits create_validation directive if task has verify criteria
+if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]]; then
+  driftdriver --dir "$PROJECT_DIR" wire run-validation-gates --task-id "$TASK_ID" 2>/dev/null || true
+fi
+
 # Extract learnings from task execution
 if command -v driftdriver >/dev/null 2>&1; then
   LEARNINGS=$(driftdriver --dir "$PROJECT_DIR" wire reflect 2>/dev/null || echo "")

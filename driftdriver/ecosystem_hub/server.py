@@ -14,6 +14,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from driftdriver.directives import DirectiveLog
 from driftdriver.notifications import (
     NotificationDispatcher,
     load_notification_config,
@@ -222,6 +223,8 @@ def run_service_foreground(
     notify_dispatcher = NotificationDispatcher(notify_config)
     outcome_ledger = wg_dir_for_notify / "drift-outcomes.jsonl"
 
+    directive_log = DirectiveLog(project_dir / ".workgraph" / "service" / "directives")
+
     def _collector_loop() -> None:
         while not stop_event.is_set():
             try:
@@ -239,6 +242,7 @@ def run_service_foreground(
                         repos_payload=repos_payload if isinstance(repos_payload, list) else [],
                         cooldown_seconds=max(1, int(supervise_cooldown_seconds)),
                         max_starts=max(1, int(supervise_max_starts)),
+                        directive_log=directive_log,
                     )
                 else:
                     supervisor = {

@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+from driftdriver.directives import Action, Directive, DirectiveLog
+from driftdriver.executor_shim import ExecutorShim
 from driftdriver.planner import DECOMPOSE_PROMPT_TEMPLATE, build_decompose_prompt
 
 SESSION_DRIVER_GLOB = (
@@ -642,8 +644,20 @@ def dispatch_task(
         status="running",
     )
 
-    # Claim the task
-    _run_command(["wg", "claim", task["id"]], cwd=project_dir)
+    # Claim the task via directive interface
+    wg_dir = project_dir / ".workgraph"
+    agent_name = worker_name
+    directive = Directive(
+        source="project_autopilot",
+        repo=project_dir.name,
+        action=Action.CLAIM_TASK,
+        params={"task_id": task["id"], "agent": agent_name},
+        reason="autopilot claiming task for execution",
+    )
+    directive_dir = wg_dir / "service" / "directives"
+    log = DirectiveLog(directive_dir)
+    shim = ExecutorShim(wg_dir=wg_dir, log=log)
+    shim.execute(directive)
 
     if scripts_dir is None:
         # Fallback: direct CLI execution (no session-driver)

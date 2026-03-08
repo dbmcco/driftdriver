@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -722,20 +721,22 @@ class TestCmdCompact:
             },
         ]
         wg_dir = _make_wg(tmp_path, tasks)
-        called_commands: list[list[str]] = []
+        executed_directives: list[Any] = []
 
-        def fake_check_call(cmd: list[str], **kwargs: Any) -> None:
-            called_commands.append(cmd)
+        def fake_execute(self: Any, directive: Any) -> str:
+            executed_directives.append(directive)
+            return "completed"
 
-        with patch("driftdriver.cli.doctor.subprocess.check_call", fake_check_call):
+        with patch("driftdriver.cli.doctor.ExecutorShim.execute", fake_execute):
             args = argparse.Namespace(dir=str(tmp_path), json=True, apply=True, max_ready=None, defer_hours=24)
             rc = cmd_compact(args)
 
         data = json.loads(capsys.readouterr().out)
         assert data["applied"] is True
-        # Should have called wg abandon for the duplicate
-        abandon_calls = [c for c in called_commands if "abandon" in c]
-        assert len(abandon_calls) >= 1
+        # Should have created ABANDON_TASK directives for the duplicate
+        from driftdriver.directives import Action
+        abandon_directives = [d for d in executed_directives if d.action == Action.ABANDON_TASK]
+        assert len(abandon_directives) >= 1
 
     def test_compact_apply_defer_calls_wg_reschedule(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         tasks = [
@@ -745,22 +746,24 @@ class TestCmdCompact:
             {"id": "drift-scope-c", "title": "scope c", "status": "open", "blocked_by": ["root"], "created_at": "2026-01-01T12:00:00Z"},
         ]
         wg_dir = _make_wg(tmp_path, tasks)
-        called_commands: list[list[str]] = []
+        executed_directives: list[Any] = []
 
-        def fake_check_call(cmd: list[str], **kwargs: Any) -> None:
-            called_commands.append(cmd)
+        def fake_execute(self: Any, directive: Any) -> str:
+            executed_directives.append(directive)
+            return "completed"
 
-        with patch("driftdriver.cli.doctor.subprocess.check_call", fake_check_call):
+        with patch("driftdriver.cli.doctor.ExecutorShim.execute", fake_execute):
             args = argparse.Namespace(dir=str(tmp_path), json=True, apply=True, max_ready=2, defer_hours=12)
             rc = cmd_compact(args)
 
         data = json.loads(capsys.readouterr().out)
-        # Should have deferred overflow
-        reschedule_calls = [c for c in called_commands if "reschedule" in c]
-        assert len(reschedule_calls) >= 1
-        # Check defer_hours is passed
-        for call in reschedule_calls:
-            assert "12" in call  # --after 12
+        # Should have created RESCHEDULE_TASK directives for overflow
+        from driftdriver.directives import Action
+        reschedule_directives = [d for d in executed_directives if d.action == Action.RESCHEDULE_TASK]
+        assert len(reschedule_directives) >= 1
+        # Check defer_hours is passed in params
+        for d in reschedule_directives:
+            assert d.params.get("after_hours") == "12"
 
     def test_compact_apply_with_errors(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         tasks = [
@@ -782,10 +785,10 @@ class TestCmdCompact:
         ]
         wg_dir = _make_wg(tmp_path, tasks)
 
-        def fake_check_call(cmd: list[str], **kwargs: Any) -> None:
-            raise subprocess.CalledProcessError(1, cmd)
+        def fake_execute(self: Any, directive: Any) -> str:
+            return "failed"
 
-        with patch("driftdriver.cli.doctor.subprocess.check_call", fake_check_call):
+        with patch("driftdriver.cli.doctor.ExecutorShim.execute", fake_execute):
             args = argparse.Namespace(dir=str(tmp_path), json=True, apply=True, max_ready=None, defer_hours=24)
             rc = cmd_compact(args)
 

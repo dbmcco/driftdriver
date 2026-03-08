@@ -6,12 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from driftdriver.directives import Action, Directive, DirectiveLog
+from driftdriver.executor_shim import ExecutorShim
 from driftdriver.health import (
     compute_scoreboard,
     find_duplicate_open_drift_groups,
@@ -283,22 +284,37 @@ def cmd_compact(args: argparse.Namespace) -> int:
     errors: list[str] = []
 
     if bool(getattr(args, "apply", False)):
+        log = DirectiveLog(wg_dir / "directives")
+        shim = ExecutorShim(wg_dir=wg_dir, log=log)
+        repo_name = wg_dir.parent.name
+
         for task_id in plan["abandon_task_ids"]:
-            try:
-                subprocess.check_call(["wg", "--dir", str(wg_dir), "abandon", task_id], stdout=subprocess.DEVNULL)
+            directive = Directive(
+                source="doctor/compact",
+                repo=repo_name,
+                action=Action.ABANDON_TASK,
+                params={"task_id": task_id},
+                reason="compact: duplicate or depth-exceeded drift task",
+            )
+            result = shim.execute(directive)
+            if result == "completed":
                 applied_abandoned.append(task_id)
-            except Exception as e:
-                errors.append(f"abandon {task_id}: {e}")
+            else:
+                errors.append(f"abandon {task_id}: directive {directive.id} {result}")
 
         for task_id in plan["defer_task_ids"]:
-            try:
-                subprocess.check_call(
-                    ["wg", "--dir", str(wg_dir), "reschedule", task_id, "--after", str(defer_hours)],
-                    stdout=subprocess.DEVNULL,
-                )
+            directive = Directive(
+                source="doctor/compact",
+                repo=repo_name,
+                action=Action.RESCHEDULE_TASK,
+                params={"task_id": task_id, "after_hours": str(defer_hours)},
+                reason=f"compact: defer overflow task by {defer_hours}h",
+            )
+            result = shim.execute(directive)
+            if result == "completed":
                 applied_deferred.append(task_id)
-            except Exception as e:
-                errors.append(f"reschedule {task_id}: {e}")
+            else:
+                errors.append(f"reschedule {task_id}: directive {directive.id} {result}")
 
     after_tasks = list(load_workgraph(wg_dir).tasks.values())
     score_before = compute_scoreboard(tasks)

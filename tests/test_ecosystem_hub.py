@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from typing import Any
 from unittest.mock import patch
 from urllib.request import urlopen
 from pathlib import Path
@@ -452,7 +453,8 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertTrue(candidates[0].working_tree_dirty)
             self.assertTrue(any(name.startswith("src") for name in candidates[0].changed_files))
 
-    def test_supervise_repo_services_restarts_active_repo_and_applies_cooldown(self) -> None:
+    @patch("driftdriver.speedriftd_state.load_control_state", return_value={"mode": "supervise"})
+    def test_supervise_repo_services_restarts_active_repo_and_applies_cooldown(self, _mock_ctrl: Any) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
             repo.mkdir(parents=True, exist_ok=True)
