@@ -9,7 +9,7 @@ import unittest
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from driftdriver.actor import Actor
 from driftdriver.budget_ledger import (
@@ -219,7 +219,9 @@ class TestGuardIntegration(unittest.TestCase):
                     f.write(json.dumps(entry) + "\n")
 
             # 10th create should succeed (9 recent + this one = check sees 9 < 10)
-            with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run):
+            with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock_run), \
+                 patch("driftdriver.executor_shim.subprocess.run",
+                       return_value=MagicMock(returncode=0, stdout="", stderr="")):
                 result = guarded_add_drift_task(
                     wg_dir=wg_dir,
                     task_id="qadrift-ten",

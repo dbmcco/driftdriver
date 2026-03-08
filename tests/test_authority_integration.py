@@ -7,7 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from driftdriver.actor import Actor
 from driftdriver.authority import Budget
@@ -77,7 +77,9 @@ class TestLaneBudget(unittest.TestCase):
             {"status": "open", "tags": ["drift", "qadrift"]},
         ]
         mock = _mock_run_wg(active_tasks=active_tasks)
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock):
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock), \
+             patch("driftdriver.executor_shim.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="", stderr="")):
             result = guarded_add_drift_task(
                 wg_dir=self.wg_dir,
                 task_id="qadrift-new",
@@ -103,7 +105,9 @@ class TestLaneBudget(unittest.TestCase):
     def test_no_actor_defaults_to_lane(self) -> None:
         """Without explicit actor, a lane actor is created from lane_tag."""
         mock = _mock_run_wg()
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock):
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock), \
+             patch("driftdriver.executor_shim.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="", stderr="")):
             result = guarded_add_drift_task(
                 wg_dir=self.wg_dir,
                 task_id="qadrift-auto",
@@ -116,7 +120,9 @@ class TestLaneBudget(unittest.TestCase):
     def test_records_in_budget_ledger(self) -> None:
         """A created task is recorded in the budget ledger."""
         mock = _mock_run_wg()
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock):
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock), \
+             patch("driftdriver.executor_shim.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="", stderr="")):
             result = guarded_add_drift_task(
                 wg_dir=self.wg_dir,
                 task_id="qadrift-ledger",
@@ -196,7 +202,9 @@ class TestPolicyOverride(unittest.TestCase):
             },
         }
         mock = _mock_run_wg(active_tasks=active_tasks)
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock):
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock), \
+             patch("driftdriver.executor_shim.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="", stderr="")):
             with patch("driftdriver.drift_task_guard.load_authority_policy", return_value=policy):
                 result = guarded_add_drift_task(
                     wg_dir=self.wg_dir,
@@ -253,7 +261,9 @@ class TestHumanActor(unittest.TestCase):
             for _ in range(10)
         ]
         mock = _mock_run_wg(active_tasks=active_tasks)
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock):
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock), \
+             patch("driftdriver.executor_shim.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="", stderr="")):
             result = guarded_add_drift_task(
                 wg_dir=self.wg_dir,
                 task_id="qadrift-human",
@@ -300,7 +310,9 @@ class TestGlobalCeiling(unittest.TestCase):
             for i in range(10)  # Well under 50
         ]
         mock = _mock_run_wg(active_tasks=active_tasks)
-        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock):
+        with patch("driftdriver.drift_task_guard._run_wg", side_effect=mock), \
+             patch("driftdriver.executor_shim.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="", stderr="")):
             result = guarded_add_drift_task(
                 wg_dir=self.wg_dir,
                 task_id="qadrift-ok",
