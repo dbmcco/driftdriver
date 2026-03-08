@@ -22,6 +22,7 @@ class DriftOutcome:
     evidence: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     actor_id: str = ""
+    bundle_id: str = ""
 
     def __post_init__(self) -> None:
         if self.outcome not in OUTCOME_VALUES:
@@ -40,6 +41,7 @@ class DriftOutcome:
             "evidence": self.evidence,
             "timestamp": self.timestamp.isoformat(),
             "actor_id": self.actor_id,
+            "bundle_id": self.bundle_id,
         }
 
     @classmethod
@@ -47,6 +49,7 @@ class DriftOutcome:
         data = dict(data)
         data["timestamp"] = datetime.fromisoformat(data["timestamp"])
         data.setdefault("actor_id", "")
+        data.setdefault("bundle_id", "")
         return cls(**data)
 
 

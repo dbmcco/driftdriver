@@ -189,3 +189,40 @@ class TestOutcomeRates:
         rates = outcome_rates(ledger)
         for v in OUTCOME_VALUES:
             assert rates[v] == pytest.approx(0.0)
+
+
+class TestBundleId:
+    def test_outcome_with_bundle_id(self) -> None:
+        outcome = DriftOutcome(
+            task_id="task-1",
+            lane="coredrift",
+            finding_key="scope_drift",
+            recommendation="fix scope",
+            action_taken="updated contract",
+            outcome="resolved",
+            evidence=["contract updated"],
+            timestamp=datetime.now(timezone.utc),
+            actor_id="attractor-loop",
+            bundle_id="scope-drift",
+        )
+        d = outcome.to_dict()
+        assert d["bundle_id"] == "scope-drift"
+
+        restored = DriftOutcome.from_dict(d)
+        assert restored.bundle_id == "scope-drift"
+
+    def test_outcome_without_bundle_id_defaults(self) -> None:
+        # Backward compat: old records without bundle_id
+        d = {
+            "task_id": "task-1",
+            "lane": "coredrift",
+            "finding_key": "x",
+            "recommendation": "y",
+            "action_taken": "z",
+            "outcome": "resolved",
+            "evidence": [],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "actor_id": "human",
+        }
+        restored = DriftOutcome.from_dict(d)
+        assert restored.bundle_id == ""
