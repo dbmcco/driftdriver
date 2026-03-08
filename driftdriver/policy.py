@@ -443,6 +443,16 @@ def _default_policy_text() -> str:
         "can_open_pr = false\n"
         "can_merge = false\n"
         "max_actions_per_cycle = 1\n"
+        "\n"
+        "[attractor]\n"
+        "target = \"onboarded\"\n"
+        "\n"
+        "[attractor.breakers]\n"
+        "max_passes = 3\n"
+        "max_tasks_per_cycle = 30\n"
+        "max_dispatches_per_cycle = 10\n"
+        "plateau_threshold = 2\n"
+        "pass_timeout_seconds = 1800\n"
     )
 
 
