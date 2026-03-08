@@ -17,6 +17,26 @@ from driftdriver.workgraph import find_workgraph_dir
 CONTROL_MODES = {"manual", "observe", "supervise", "autonomous"}
 
 
+def directives_allowed_for_mode(mode: str) -> set[str]:
+    """Map control mode to the set of directive actions allowed.
+
+    - observe / manual: no directives (read-only)
+    - supervise: service health + logging only
+    - autonomous: full directive vocabulary
+    """
+    if mode == "supervise":
+        return {"start_service", "stop_service", "log_to_task"}
+    if mode == "autonomous":
+        return {
+            "create_task", "claim_task", "complete_task", "fail_task",
+            "start_service", "stop_service", "log_to_task",
+            "evolve_prompt", "dispatch_to_peer", "block_task",
+            "create_validation", "create_upstream_pr",
+        }
+    # observe, manual → no directives
+    return set()
+
+
 def _iso_now(ts: float | None = None) -> str:
     if ts is None:
         dt = datetime.now(timezone.utc)
