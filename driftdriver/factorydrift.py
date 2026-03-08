@@ -10,6 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from driftdriver.attractor_loop import AttractorRun, CircuitBreakers, run_attractor_loop, save_attractor_run
+from driftdriver.attractors import load_attractors_from_dir, resolve_attractor
+from driftdriver.bundles import load_bundles_from_dir
 from driftdriver.drift_task_guard import guarded_add_drift_task
 from driftdriver.outcome import DriftOutcome, write_outcome
 from driftdriver.plandrift import emit_plan_review_tasks, run_workgraph_plan_review
@@ -1507,6 +1510,41 @@ def execute_factory_cycle(
 
         _done("skipped", reason=f"no deterministic executor for action kind '{kind}'")
 
+    # --- Attractor loop: run per-repo convergence after action execution ---
+    attractor_results: dict[str, dict[str, Any]] = {}
+    policy_dict = vars(policy) if hasattr(policy, "__dict__") and not isinstance(policy, dict) else (
+        dict(policy) if isinstance(policy, dict) else {}
+    )
+    attractor_cfg = policy_dict.get("attractor") if isinstance(policy_dict.get("attractor"), dict) else None
+    if attractor_cfg and str(attractor_cfg.get("target") or "").strip():
+        for repo_info in (cycle.get("selected_repos") or []):
+            if not isinstance(repo_info, dict):
+                continue
+            rname = str(repo_info.get("repo") or "").strip()
+            if not rname:
+                continue
+            rpath = repo_paths.get(rname)
+            if rpath is None:
+                continue
+            try:
+                run = _maybe_run_attractor_loop(
+                    repo_name=rname,
+                    repo_path=rpath,
+                    policy=policy_dict,
+                )
+                if run is not None:
+                    attractor_results[rname] = {
+                        "status": run.status,
+                        "attractor": run.attractor,
+                        "passes": len(run.passes),
+                        "escalation_count": len(run.escalations),
+                    }
+            except Exception as exc:
+                attractor_results[rname] = {
+                    "status": "error",
+                    "error": str(exc)[:220],
+                }
+
     execution_status = "executed"
     if failed > 0 and succeeded > 0:
         execution_status = "partial_failed"
@@ -1527,6 +1565,8 @@ def execute_factory_cycle(
         "attempts": attempts[:120],
         "followups": followups,
     }
+    if attractor_results:
+        summary["attractor_runs"] = attractor_results
 
     cycle["execution_status"] = execution_status
     cycle["execution"] = summary
@@ -1748,6 +1788,119 @@ def _minimal_policy() -> Any:
         },
         autonomy_repos=[],
     )
+
+
+def _maybe_run_attractor_loop(
+    *,
+    repo_name: str,
+    repo_path: Path,
+    policy: dict[str, Any],
+    diagnose_fn: Any | None = None,
+    execute_fn: Any | None = None,
+) -> AttractorRun | None:
+    """Run the attractor loop for a repo if it has a declared attractor target.
+
+    Reads the ``[attractor]`` section from the policy dict for a ``target`` key.
+    When present, loads attractor definitions and bundles from the driftdriver
+    package, resolves the target attractor (with inheritance), and executes the
+    convergence loop.  The run result is persisted to the service directory.
+
+    Returns ``None`` when no attractor target is configured.
+    """
+    attractor_cfg = policy.get("attractor") if isinstance(policy, dict) else None
+    if not isinstance(attractor_cfg, dict):
+        return None
+    target = str(attractor_cfg.get("target") or "").strip()
+    if not target:
+        return None
+
+    # Load attractor and bundle definitions from driftdriver package
+    pkg_root = Path(__file__).resolve().parent
+    attractors_dir = pkg_root / "attractors"
+    bundles_dir = pkg_root / "bundles"
+
+    registry = load_attractors_from_dir(attractors_dir) if attractors_dir.is_dir() else {}
+    attractor = resolve_attractor(target, registry)
+    bundles = load_bundles_from_dir(bundles_dir) if bundles_dir.is_dir() else []
+
+    # Build circuit breakers from policy
+    breaker_cfg = attractor_cfg.get("breakers") if isinstance(attractor_cfg.get("breakers"), dict) else {}
+    breakers = CircuitBreakers(
+        max_passes=max(1, int(breaker_cfg.get("max_passes", 3))),
+        max_tasks_per_cycle=max(1, int(breaker_cfg.get("max_tasks_per_cycle", 30))),
+        plateau_threshold=max(1, int(breaker_cfg.get("plateau_threshold", 2))),
+    )
+
+    # Default diagnose: run driftdriver check and parse lane results
+    if diagnose_fn is None:
+        from driftdriver.lane_contract import LaneFinding, LaneResult as _LR
+
+        def diagnose_fn(rp: Path) -> dict[str, _LR]:
+            rc, out, err = _run_cmd(
+                [sys.executable, "-m", "driftdriver.cli", "--dir", str(rp), "check", "--json"],
+                cwd=rp,
+                timeout=180.0,
+            )
+            try:
+                data = json.loads(out) if out.strip() else {}
+            except (json.JSONDecodeError, TypeError):
+                data = {}
+            results: dict[str, _LR] = {}
+            lanes = data.get("lanes") if isinstance(data.get("lanes"), dict) else {}
+            for lane_name, lane_data in lanes.items():
+                if not isinstance(lane_data, dict):
+                    continue
+                findings = []
+                for f in lane_data.get("findings", []):
+                    if isinstance(f, dict):
+                        findings.append(LaneFinding(
+                            message=str(f.get("message", "")),
+                            severity=str(f.get("severity", "info")),
+                            tags=list(f.get("tags", [])),
+                        ))
+                results[lane_name] = _LR(
+                    lane=lane_name,
+                    findings=findings,
+                    exit_code=int(lane_data.get("exit_code", 0)),
+                    summary=str(lane_data.get("summary", "")),
+                )
+            return results
+
+    # Default execute: create tasks via guarded_add_drift_task
+    if execute_fn is None:
+        def execute_fn(plan: Any, rp: Path) -> dict[str, str]:
+            outcomes: dict[str, str] = {}
+            wg_dir = rp / ".workgraph"
+            for inst in plan.bundle_instances:
+                for task in inst.tasks:
+                    result = guarded_add_drift_task(
+                        wg_dir=wg_dir,
+                        task_id=str(task.get("task_id", "")),
+                        title=str(task.get("title", "")),
+                        description=str(task.get("description", "")),
+                        lane_tag="attractor",
+                        extra_tags=list(task.get("tags", [])),
+                        cwd=rp,
+                    )
+                    outcomes[inst.bundle_id] = result
+            return outcomes
+
+    run = run_attractor_loop(
+        repo=repo_name,
+        repo_path=repo_path,
+        attractor=attractor,
+        bundles=bundles,
+        breakers=breakers,
+        diagnose_fn=diagnose_fn,
+        execute_fn=execute_fn,
+    )
+
+    # Persist the run
+    service_dir = repo_path / ".workgraph" / "service"
+    if service_dir.is_dir():
+        save_attractor_run(run, service_dir)
+
+    return run
 
 
 def run_as_lane(project_dir: Path) -> "LaneResult":
