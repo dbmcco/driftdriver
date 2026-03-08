@@ -491,10 +491,11 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
         or bool(getattr(args, "release_lease", False))
         or getattr(args, "lease_ttl_seconds", None) is not None
     ):
+        new_mode = getattr(args, "set_mode", None)
         write_control_state(
             project_dir,
             policy=policy,
-            mode=getattr(args, "set_mode", None),
+            mode=new_mode,
             lease_owner=getattr(args, "lease_owner", None),
             lease_ttl_seconds=getattr(args, "lease_ttl_seconds", None),
             release_lease=bool(getattr(args, "release_lease", False)),
@@ -502,6 +503,15 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
             reason=str(getattr(args, "reason", "") or ""),
         )
         control_changed = True
+
+        # Stop the wg daemon when mode drops to observe/manual — it should
+        # only run when explicitly armed.
+        if new_mode in ("observe", "manual"):
+            import subprocess
+            subprocess.run(
+                ["wg", "--dir", str(wg_dir), "service", "stop"],
+                capture_output=True, timeout=10,
+            )
 
     action = str(getattr(args, "action", "status") or "status")
     if action == "status":

@@ -29,6 +29,10 @@ CLAUDE_EXECUTOR_LEGACY = (
     'command = "claude"\n'
     'args = ["--print", "--dangerously-skip-permissions", "--no-session-persistence"]'
 )
+CLAUDE_EXECUTOR_LEGACY_ENV = (
+    'command = "env"\n'
+    'args = ["-u", "CLAUDECODE", "claude", "--print", "--dangerously-skip-permissions"]'
+)
 CLAUDE_EXECUTOR_CURRENT = (
     f'command = "{CLAUDE_EXECUTOR_WRAPPER}"\n'
     "args = []"
@@ -395,9 +399,10 @@ _TEMPLATE_START_RE = re.compile(r'(?P<prefix>\btemplate\s*=\s*"""\r?\n)', re.MUL
 def _inject_claude_executor_runner(body: str) -> str | None:
     if CLAUDE_EXECUTOR_CURRENT in body:
         return None
-    if CLAUDE_EXECUTOR_LEGACY not in body:
-        return None
-    return body.replace(CLAUDE_EXECUTOR_LEGACY, CLAUDE_EXECUTOR_CURRENT, 1)
+    for legacy in (CLAUDE_EXECUTOR_LEGACY, CLAUDE_EXECUTOR_LEGACY_ENV):
+        if legacy in body:
+            return body.replace(legacy, CLAUDE_EXECUTOR_CURRENT, 1)
+    return None
 
 
 def _inject_coredrift_into_template(body: str) -> str | None:

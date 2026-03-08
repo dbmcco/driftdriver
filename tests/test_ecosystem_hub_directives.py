@@ -12,8 +12,9 @@ from driftdriver.directives import DirectiveLog
 
 
 class TestSupervisionEmitsDirectives(unittest.TestCase):
+    @patch("driftdriver.speedriftd_state.load_control_state", return_value={"mode": "supervise"})
     @patch("driftdriver.executor_shim.subprocess.run")
-    def test_supervise_emits_start_service_directive(self, mock_run: MagicMock) -> None:
+    def test_supervise_emits_start_service_directive(self, mock_run: MagicMock, _mock_ctrl: MagicMock) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         with TemporaryDirectory() as tmp:
             repo_path = Path(tmp) / "test-repo"

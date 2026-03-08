@@ -925,13 +925,23 @@ def supervise_repo_services(
         if bool(row.get("service_running")):
             continue
 
+        # Only start services in repos whose speedriftd mode permits it.
+        repo_path = Path(repo_path_raw).expanduser()
+        try:
+            from driftdriver.speedriftd_state import load_control_state
+            ctrl = load_control_state(repo_path)
+            repo_mode = str(ctrl.get("mode") or "observe").strip().lower()
+        except Exception:
+            repo_mode = "observe"
+        if repo_mode not in ("supervise", "autonomous"):
+            continue
+
         in_progress = row.get("in_progress") if isinstance(row.get("in_progress"), list) else []
         ready = row.get("ready") if isinstance(row.get("ready"), list) else []
         if not in_progress and not ready:
             continue
         candidates += 1
 
-        repo_path = Path(repo_path_raw).expanduser()
         key = str(repo_path.resolve())
         last_attempt = _SUPERVISOR_LAST_ATTEMPT.get(key, 0.0)
         if now - last_attempt < max(1, cooldown_seconds):
