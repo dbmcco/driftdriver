@@ -1,0 +1,17 @@
+[bundle]
+id = "scope-drift"
+finding_kinds = ["scope_drift", "scope-drift", "hardening_in_core"]
+description = "Fix scope drift by updating contract and re-checking"
+
+[[tasks]]
+id_template = "{finding_id}-update-contract"
+title_template = "Update contract scope for {task_title}"
+description_template = "Scope drifted: {evidence}. Update the wg-contract block to reflect actual touched files."
+tags = ["drift", "attractor", "contract"]
+
+[[tasks]]
+id_template = "{finding_id}-verify-scope"
+title_template = "Verify scope alignment for {task_title}"
+description_template = "Re-run coredrift to confirm scope drift is resolved."
+tags = ["drift", "attractor", "verification"]
+after = ["{finding_id}-update-contract"]
