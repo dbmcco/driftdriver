@@ -786,10 +786,71 @@ allow_tmux_fallback = true
 hard_stop_on_critical = false
 ```
 
+## Attractor Loop (Convergence Engine)
+
+The attractor loop autonomously drives repos toward declared target states through a diagnose-plan-execute-re-diagnose cycle.
+
+### Three Layers
+
+| Layer | Module | Purpose |
+|-------|--------|---------|
+| A — Bundles | `driftdriver/bundles.py` | Reusable TOML-defined task graph fragments mapped to finding-kinds |
+| B — Planner | `driftdriver/attractor_planner.py` | Deterministic bundle selection, escalation for unmatched findings |
+| C — Loop | `driftdriver/attractor_loop.py` | Orchestrates passes with circuit breakers until convergence or plateau |
+
+### Attractors (Target States)
+
+Attractors are TOML-defined target states with inheritance:
+
+- **onboarded** — base level, coredrift with ≤5 actionable findings
+- **production-ready** — extends onboarded, zero tolerance on coredrift/plandrift/depsdrift/secdrift
+- **hardened** — extends production-ready, adds 90% coverage threshold
+
+Set a repo's target in `.workgraph/drift-policy.toml`:
+
+```toml
+[attractor]
+target = "production-ready"
+
+[attractor.breakers]
+max_passes = 3
+plateau_threshold = 2
+max_tasks_per_cycle = 30
+```
+
+### CLI
+
+```bash
+# List available attractors
+driftdriver attractor list --json
+
+# Check current convergence status
+driftdriver attractor status --json
+
+# Set target attractor
+driftdriver attractor set production-ready
+
+# Preview convergence plan (dry run)
+driftdriver attractor plan --json
+
+# Run full convergence loop
+driftdriver attractor run --json
+```
+
+### Circuit Breakers
+
+| Breaker | Default | Purpose |
+|---------|---------|---------|
+| `max_passes` | 3 | Maximum diagnose-plan-execute cycles |
+| `plateau_threshold` | 2 | Consecutive passes with no improvement triggers plateau |
+| `max_tasks_per_cycle` | 30 | Total task budget across all passes |
+| `max_dispatches_per_cycle` | 10 | Bundle dispatch cap |
+| `pass_timeout_seconds` | 1800 | Per-pass wall clock limit |
+
 ## Development
 
 ```bash
-# Run full test suite (1662 tests)
+# Run full test suite (1711 tests)
 python3 -m pytest tests/ -x -q
 
 # E2E smoke test
