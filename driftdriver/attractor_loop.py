@@ -16,6 +16,7 @@ from driftdriver.attractor_planner import (
     build_convergence_plan,
 )
 from driftdriver.attractors import (
+    ACTIONABLE_SEVERITIES,
     Attractor,
     AttractorGap,
     evaluate_attractor,
@@ -108,7 +109,7 @@ def run_attractor_pass(
     lane_results = diagnose_fn(repo_path)
     findings_before = sum(
         1 for r in lane_results.values()
-        for f in r.findings if f.severity in ("warning", "error", "critical")
+        for f in r.findings if f.severity in ACTIONABLE_SEVERITIES
     )
 
     # Plan
@@ -131,7 +132,7 @@ def run_attractor_pass(
     lane_results_after = diagnose_fn(repo_path)
     findings_after = sum(
         1 for r in lane_results_after.values()
-        for f in r.findings if f.severity in ("warning", "error", "critical")
+        for f in r.findings if f.severity in ACTIONABLE_SEVERITIES
     )
 
     elapsed = time.monotonic() - start

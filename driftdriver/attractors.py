@@ -79,16 +79,26 @@ def load_attractors_from_dir(directory: Path) -> dict[str, Attractor]:
     return registry
 
 
-def resolve_attractor(attractor_id: str, registry: dict[str, Attractor]) -> Attractor:
+def resolve_attractor(
+    attractor_id: str,
+    registry: dict[str, Attractor],
+    _seen: set[str] | None = None,
+) -> Attractor:
     """Resolve inheritance chain and return a fully-merged attractor."""
     if attractor_id not in registry:
         raise ValueError(f"Unknown attractor: {attractor_id}")
+
+    if _seen is None:
+        _seen = set()
+    if attractor_id in _seen:
+        raise ValueError(f"Circular attractor inheritance: {attractor_id}")
+    _seen.add(attractor_id)
 
     attractor = registry[attractor_id]
     if not attractor.extends:
         return attractor
 
-    parent = resolve_attractor(attractor.extends, registry)
+    parent = resolve_attractor(attractor.extends, registry, _seen)
     merged_criteria = list(parent.criteria) + list(attractor.criteria)
 
     return Attractor(
