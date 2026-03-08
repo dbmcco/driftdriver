@@ -1,0 +1,18 @@
+[bundle]
+id = "scaffold-tests"
+finding_kinds = ["no_tests", "missing_test_directory"]
+description = "Create test directory and initial smoke test"
+
+[[tasks]]
+id_template = "{finding_id}-create-tests"
+title_template = "Create test directory for {repo_name}"
+description_template = "Create tests/ directory with initial smoke test to establish testing baseline."
+tags = ["drift", "attractor", "testing", "onboarding"]
+
+[[tasks]]
+id_template = "{finding_id}-verify-tests"
+title_template = "Verify test suite runs in {repo_name}"
+description_template = "Run pytest to confirm test infrastructure works."
+tags = ["drift", "attractor", "verification"]
+after = ["{finding_id}-create-tests"]
+verify = "pytest tests/ -x -q"

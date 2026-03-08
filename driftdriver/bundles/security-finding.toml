@@ -1,0 +1,17 @@
+[bundle]
+id = "security-finding"
+finding_kinds = ["security_vulnerability", "security-finding", "secdrift_critical", "secdrift_high"]
+description = "Address security finding and re-scan"
+
+[[tasks]]
+id_template = "{finding_id}-fix-security"
+title_template = "Fix security finding: {task_title}"
+description_template = "Security issue: {evidence}. Apply fix and verify."
+tags = ["drift", "attractor", "security"]
+
+[[tasks]]
+id_template = "{finding_id}-rescan"
+title_template = "Re-scan security for {task_title}"
+description_template = "Re-run secdrift to confirm finding is resolved."
+tags = ["drift", "attractor", "verification"]
+after = ["{finding_id}-fix-security"]

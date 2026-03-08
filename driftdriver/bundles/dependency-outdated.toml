@@ -1,0 +1,18 @@
+[bundle]
+id = "dependency-outdated"
+finding_kinds = ["dependency_outdated", "lock_not_updated", "deps-outdated"]
+description = "Update outdated dependency and verify"
+
+[[tasks]]
+id_template = "{finding_id}-update-dep"
+title_template = "Update dependency for {task_title}"
+description_template = "Dependency outdated: {evidence}. Update and regenerate lockfile."
+tags = ["drift", "attractor", "deps"]
+
+[[tasks]]
+id_template = "{finding_id}-verify-dep"
+title_template = "Verify dependency update for {task_title}"
+description_template = "Run tests after dependency update to confirm no regressions."
+tags = ["drift", "attractor", "verification"]
+after = ["{finding_id}-update-dep"]
+verify = "pytest tests/ -x -q"

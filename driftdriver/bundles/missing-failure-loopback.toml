@@ -1,0 +1,17 @@
+[bundle]
+id = "missing-failure-loopback"
+finding_kinds = ["missing-failure-loopback", "missing_failure_loopback"]
+description = "Add failure recovery path for test tasks"
+
+[[tasks]]
+id_template = "{finding_id}-add-loopback"
+title_template = "Add failure loopback for {task_title}"
+description_template = "Test task lacks recovery path: {evidence}. Add a loopback edge so failures route to a fix task."
+tags = ["drift", "attractor", "planning"]
+
+[[tasks]]
+id_template = "{finding_id}-verify-loopback"
+title_template = "Verify loopback exists for {task_title}"
+description_template = "Re-run plandrift to confirm failure loopback is wired."
+tags = ["drift", "attractor", "verification"]
+after = ["{finding_id}-add-loopback"]

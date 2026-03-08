@@ -1,0 +1,24 @@
+[bundle]
+id = "scaffold-workgraph"
+finding_kinds = ["no_workgraph", "missing_workgraph"]
+description = "Initialize workgraph and install driftdriver in a repo"
+
+[[tasks]]
+id_template = "{finding_id}-wg-init"
+title_template = "Initialize workgraph in {repo_name}"
+description_template = "Run wg init to create .workgraph/ directory."
+tags = ["drift", "attractor", "onboarding"]
+
+[[tasks]]
+id_template = "{finding_id}-install-driftdriver"
+title_template = "Install driftdriver in {repo_name}"
+description_template = "Run driftdriver install to wire drift lanes."
+tags = ["drift", "attractor", "onboarding"]
+after = ["{finding_id}-wg-init"]
+
+[[tasks]]
+id_template = "{finding_id}-ensure-contracts"
+title_template = "Ensure contracts in {repo_name}"
+description_template = "Run ensure-contracts --apply to add wg-contract blocks to open tasks."
+tags = ["drift", "attractor", "onboarding"]
+after = ["{finding_id}-install-driftdriver"]

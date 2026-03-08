@@ -1,0 +1,17 @@
+[bundle]
+id = "spec-not-updated"
+finding_kinds = ["spec_not_updated", "spec-not-updated"]
+description = "Update spec to match current implementation"
+
+[[tasks]]
+id_template = "{finding_id}-update-spec"
+title_template = "Update spec for {task_title}"
+description_template = "Spec drift detected: {evidence}. Update the specdrift block to match implementation."
+tags = ["drift", "attractor", "spec"]
+
+[[tasks]]
+id_template = "{finding_id}-verify-spec"
+title_template = "Verify spec alignment for {task_title}"
+description_template = "Re-run specdrift to confirm spec is current."
+tags = ["drift", "attractor", "verification"]
+after = ["{finding_id}-update-spec"]

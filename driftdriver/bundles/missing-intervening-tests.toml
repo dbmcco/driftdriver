@@ -1,0 +1,18 @@
+[bundle]
+id = "missing-intervening-tests"
+finding_kinds = ["missing-intervening-tests", "missing-test-gate"]
+description = "Add integration test gate downstream of implementation task"
+
+[[tasks]]
+id_template = "{finding_id}-write-test"
+title_template = "Write integration test for {task_title}"
+description_template = "Add test coverage verifying {evidence}"
+tags = ["drift", "attractor", "testing"]
+
+[[tasks]]
+id_template = "{finding_id}-verify-gate"
+title_template = "Verify test gate passes for {task_title}"
+description_template = "Run test suite, confirm coverage threshold met"
+tags = ["drift", "attractor", "verification"]
+after = ["{finding_id}-write-test"]
+verify = "pytest tests/ -x -q"
