@@ -3,8 +3,32 @@
 Driftdriver is an orchestrator for **Workgraph-first** agent development.
 
 - **Workgraph is the spine** (tasks, dependencies, loops, agent spawning).
-- **Driftdriver coordinates "drift" tools** (code drift, UX drift, data drift, etc.) without hard-blocking work.
-- Findings are written back into Workgraph via `wg log` and follow-up tasks, keeping the graph in sync.
+- **Driftdriver is the opinionated judgment engine** — it decides what's drifting, what to do about it, and who should act.
+- **Workgraph is the execution layer** — all state-changing actions (task creation, claims, completions) flow through a formal directive interface.
+- Findings create follow-up tasks via `guarded_add_drift_task()`, enforcing authority budgets, dedup, and a full audit trail.
+
+## Architectural Boundary: Judgment vs Execution
+
+Every execution action Speedrift wants taken flows through a **directive**:
+
+```
+  Speedrift (judgment)          Directive            wg (execution)
+  ┌─────────────────┐    ┌─────────────────┐    ┌──────────────┐
+  │ drift lanes     │───▶│ Directive schema │───▶│ ExecutorShim │───▶ wg CLI
+  │ control plane   │    │ Action enum      │    │ JSONL audit  │
+  │ authority gates │    │ Authority/budget │    │ completed/   │
+  │ outcome feedback│    │ params + reason  │    │ failed trail │
+  └─────────────────┘    └─────────────────┘    └──────────────┘
+```
+
+**14 directive actions**: `create_task`, `claim_task`, `complete_task`, `fail_task`, `start_service`, `stop_service`, `log_to_task`, `evolve_prompt`, `dispatch_to_peer`, `block_task`, `create_validation`, `create_upstream_pr`, `abandon_task`, `reschedule_task`
+
+**Mode-gated vocabulary**: speedriftd control mode determines which directives can fire:
+- `observe`/`manual`: no directives
+- `supervise`: service health + logging only
+- `autonomous`: full vocabulary
+
+The ExecutorShim is intentionally temporary — when Workgraph ships a portfolio coordinator, the shim is replaced with native API calls. Speedrift's judgment code doesn't change.
 
 ## Architecture (Six Services)
 
@@ -765,7 +789,7 @@ hard_stop_on_critical = false
 ## Development
 
 ```bash
-# Run full test suite (1525+ tests)
+# Run full test suite (1662 tests)
 python3 -m pytest tests/ -x -q
 
 # E2E smoke test
