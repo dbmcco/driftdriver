@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -60,3 +61,86 @@ class Directive:
         if auth and isinstance(auth, dict):
             d["authority"] = Authority(**auth)
         return cls(**d)
+
+
+@dataclass
+class DirectiveLog:
+    """JSONL audit trail for the directive lifecycle: pending, completed, failed."""
+
+    base_dir: Path
+
+    def __post_init__(self) -> None:
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def _pending(self) -> Path:
+        return self.base_dir / "pending.jsonl"
+
+    @property
+    def _completed(self) -> Path:
+        return self.base_dir / "completed.jsonl"
+
+    @property
+    def _failed(self) -> Path:
+        return self.base_dir / "failed.jsonl"
+
+    def append(self, directive: Directive) -> None:
+        with self._pending.open("a") as f:
+            f.write(directive.to_json() + "\n")
+
+    def read_pending(self) -> list[Directive]:
+        if not self._pending.exists():
+            return []
+        completed_ids = {r["directive_id"] for r in self.read_completed()}
+        failed_ids = {r["directive_id"] for r in self.read_failed()}
+        done_ids = completed_ids | failed_ids
+        result: list[Directive] = []
+        for line in self._pending.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            d = Directive.from_json(line)
+            if d.id not in done_ids:
+                result.append(d)
+        return result
+
+    def mark_completed(
+        self, directive_id: str, *, exit_code: int, output: str
+    ) -> None:
+        record = json.dumps({
+            "directive_id": directive_id,
+            "exit_code": exit_code,
+            "output": output,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        with self._completed.open("a") as f:
+            f.write(record + "\n")
+
+    def mark_failed(
+        self, directive_id: str, *, exit_code: int, error: str
+    ) -> None:
+        record = json.dumps({
+            "directive_id": directive_id,
+            "exit_code": exit_code,
+            "error": error,
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        with self._failed.open("a") as f:
+            f.write(record + "\n")
+
+    def read_completed(self) -> list[dict[str, Any]]:
+        return self._read_records(self._completed)
+
+    def read_failed(self) -> list[dict[str, Any]]:
+        return self._read_records(self._failed)
+
+    @staticmethod
+    def _read_records(path: Path) -> list[dict[str, Any]]:
+        if not path.exists():
+            return []
+        result: list[dict[str, Any]] = []
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line:
+                result.append(json.loads(line))
+        return result

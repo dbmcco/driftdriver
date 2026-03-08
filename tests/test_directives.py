@@ -7,7 +7,10 @@ import json
 import unittest
 from datetime import datetime, timezone
 
-from driftdriver.directives import Action, Directive
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from driftdriver.directives import Action, Directive, DirectiveLog
 
 
 class TestDirective(unittest.TestCase):
@@ -51,3 +54,54 @@ class TestDirective(unittest.TestCase):
         for a in Action:
             self.assertEqual(a.value, a.value.lower())
             self.assertNotIn("-", a.value)
+
+
+class TestDirectiveLog(unittest.TestCase):
+    def test_append_and_read_pending(self) -> None:
+        with TemporaryDirectory() as tmp:
+            log = DirectiveLog(Path(tmp))
+            d = Directive(
+                source="test",
+                repo="repo-a",
+                action=Action.CREATE_TASK,
+                params={"task_id": "t1", "title": "test task"},
+                reason="unit test",
+            )
+            log.append(d)
+            pending = log.read_pending()
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0].params["task_id"], "t1")
+
+    def test_mark_completed_moves_from_pending(self) -> None:
+        with TemporaryDirectory() as tmp:
+            log = DirectiveLog(Path(tmp))
+            d = Directive(
+                source="test",
+                repo="repo-a",
+                action=Action.LOG_TO_TASK,
+                params={"task_id": "t1", "message": "hello"},
+                reason="test",
+            )
+            log.append(d)
+            log.mark_completed(d.id, exit_code=0, output="ok")
+            pending = log.read_pending()
+            self.assertEqual(len(pending), 0)
+            completed = log.read_completed()
+            self.assertEqual(len(completed), 1)
+            self.assertEqual(completed[0]["directive_id"], d.id)
+
+    def test_mark_failed_records_error(self) -> None:
+        with TemporaryDirectory() as tmp:
+            log = DirectiveLog(Path(tmp))
+            d = Directive(
+                source="test",
+                repo="repo-a",
+                action=Action.FAIL_TASK,
+                params={"task_id": "t1", "reason": "stuck"},
+                reason="test",
+            )
+            log.append(d)
+            log.mark_failed(d.id, exit_code=1, error="wg not found")
+            failed = log.read_failed()
+            self.assertEqual(len(failed), 1)
+            self.assertEqual(failed[0]["error"], "wg not found")
