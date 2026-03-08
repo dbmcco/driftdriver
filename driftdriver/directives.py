@@ -25,6 +25,8 @@ class Action(Enum):
     BLOCK_TASK = "block_task"
     CREATE_VALIDATION = "create_validation"
     CREATE_UPSTREAM_PR = "create_upstream_pr"
+    ABANDON_TASK = "abandon_task"
+    RESCHEDULE_TASK = "reschedule_task"
 
 
 @dataclass

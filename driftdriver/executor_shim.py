@@ -50,6 +50,8 @@ class ExecutorShim:
     def _resolve_cwd(self, directive: Directive) -> str:
         if directive.action in {Action.START_SERVICE, Action.STOP_SERVICE}:
             return directive.params.get("repo", str(self.wg_dir.parent))
+        if directive.action == Action.CREATE_UPSTREAM_PR:
+            return directive.params.get("repo", str(self.wg_dir.parent))
         return str(self.wg_dir.parent)
 
     def _build_command(self, directive: Directive) -> list[str]:
@@ -115,11 +117,25 @@ class ExecutorShim:
                 ]
 
             case Action.CREATE_UPSTREAM_PR:
-                return [
+                cmd = [
                     "gh", "pr", "create", "--draft",
                     "--title", p.get("title", "upstream contribution"),
                     "--body", p.get("body", ""),
                 ]
+                if p.get("base"):
+                    cmd += ["--base", p["base"]]
+                if p.get("head"):
+                    cmd += ["--head", p["head"]]
+                return cmd
+
+            case Action.ABANDON_TASK:
+                return wg + ["abandon", p["task_id"]]
+
+            case Action.RESCHEDULE_TASK:
+                cmd = wg + ["reschedule", p["task_id"]]
+                if p.get("after_hours"):
+                    cmd += ["--after", str(p["after_hours"])]
+                return cmd
 
             case _:
                 return ["echo", f"unknown action: {directive.action}"]
