@@ -326,7 +326,6 @@ def _plugin_cmd(
     task_id: str,
     want_json: bool,
     write_log: bool,
-    create_followups: bool,
 ) -> list[str]:
     if plugin == "uxdrift":
         cmd = [str(plugin_bin), "wg", "--dir", str(project_dir), "check", "--task", task_id]
@@ -337,9 +336,42 @@ def _plugin_cmd(
         cmd.extend(["wg", "check", "--task", task_id])
     if write_log:
         cmd.append("--write-log")
-    if create_followups:
-        cmd.append("--create-followups")
+    # NOTE: --create-followups is intentionally NOT passed to external lanes.
+    # Followup tasks are created by driftdriver itself (via guarded_add_drift_task)
+    # after parsing the lane's JSON output, enforcing authority budgets, dedup,
+    # and directive audit trail.
     return cmd
+
+
+def _create_followups_from_findings(
+    *,
+    validated: Any,
+    plugin: str,
+    task_id: str,
+    wg_dir: Path,
+) -> None:
+    """Create followup tasks from validated lane findings via guarded_add_drift_task.
+
+    Only actionable severities (warning, error, critical) produce followups.
+    This replaces the previous pattern where external lanes called ``wg add``
+    directly, bypassing authority budgets, dedup, and directive audit trail.
+    """
+    from driftdriver.drift_task_guard import guarded_add_drift_task
+
+    for finding in validated.findings:
+        if finding.severity not in ("warning", "error", "critical"):
+            continue
+        tag = finding.tags[0] if finding.tags else finding.severity
+        followup_id = f"{plugin}-{tag}-{task_id}"
+        title = f"{plugin}: {finding.message[:80]}"
+        guarded_add_drift_task(
+            wg_dir=wg_dir,
+            task_id=followup_id,
+            title=title,
+            description=finding.message,
+            after=task_id,
+            lane_tag=plugin.replace("drift", ""),
+        )
 
 
 def _run_optional_plugin_json(
@@ -369,7 +401,6 @@ def _run_optional_plugin_json(
         task_id=task_id,
         want_json=True,
         write_log=write_log,
-        create_followups=create_followups,
     )
     proc = subprocess.run(cmd, text=True, capture_output=True)
     rc = int(proc.returncode)
@@ -391,6 +422,15 @@ def _run_optional_plugin_json(
                     "exit_code": validated.exit_code,
                     "summary": validated.summary,
                 }
+                # Create followup tasks through the directive interface
+                # instead of letting the external lane do it directly.
+                if create_followups:
+                    _create_followups_from_findings(
+                        validated=validated,
+                        plugin=plugin,
+                        task_id=task_id,
+                        wg_dir=wg_dir,
+                    )
             else:
                 report["_contract_valid"] = False
             return {"ran": True, "exit_code": rc, "report": report}
@@ -422,9 +462,10 @@ def _run_optional_plugin_text(
     if not enabled:
         return 0
 
-    write_log, create_followups = _mode_flags(mode=mode, plugin=plugin)
+    write_log, _create_followups = _mode_flags(mode=mode, plugin=plugin)
     write_log = write_log or force_write_log
-    create_followups = create_followups or force_create_followups
+    # Text mode: followups are not created (no structured output to parse).
+    # Only JSON mode routes findings through guarded_add_drift_task.
     cmd = _plugin_cmd(
         plugin=plugin,
         plugin_bin=plugin_bin,
@@ -432,7 +473,6 @@ def _run_optional_plugin_text(
         task_id=task_id,
         want_json=False,
         write_log=write_log,
-        create_followups=create_followups,
     )
     rc = int(_run(cmd))
     if rc in (ExitCode.ok, ExitCode.findings):
@@ -657,8 +697,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     speed_cmd = [str(coredrift), "--dir", str(project_dir), "check", "--task", task_id]
     if speed_write_log:
         speed_cmd.append("--write-log")
-    if speed_followups:
-        speed_cmd.append("--create-followups")
+    # NOTE: --create-followups is NOT passed to coredrift subprocess.
+    # Followups are created by driftdriver from parsed JSON output.
     if args.json:
         # JSON mode: capture sub-tool outputs and emit a single combined JSON object.
         speed_cmd.append("--json")
@@ -671,6 +711,19 @@ def cmd_check(args: argparse.Namespace) -> int:
             speed_report = json.loads(speed_proc.stdout or "{}")
         except Exception:
             speed_report = {"raw": speed_proc.stdout}
+
+        # Create followup tasks from coredrift findings through the directive interface.
+        if speed_followups:
+            from driftdriver.lane_contract import validate_lane_output as _validate
+
+            coredrift_validated = _validate(speed_proc.stdout or "")
+            if coredrift_validated is not None:
+                _create_followups_from_findings(
+                    validated=coredrift_validated,
+                    plugin="coredrift",
+                    task_id=task_id,
+                    wg_dir=wg_dir,
+                )
 
         plugin_results: dict[str, dict[str, Any]] = {}
         rc_by_plugin: dict[str, int] = {"coredrift": speed_rc}
