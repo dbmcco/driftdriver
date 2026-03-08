@@ -23,6 +23,12 @@ if [[ ! -x "$DRIVER_BIN" ]]; then
   exit 2
 fi
 
+# ── 0. Run upstream workgraph monitor ──
+if [[ -x "$SCRIPT_DIR/monitor_upstream_wg.sh" ]]; then
+  echo "Running upstream workgraph monitor..."
+  "$SCRIPT_DIR/monitor_upstream_wg.sh" || true
+fi
+
 # ── 1. Run the ecosystem scan ──
 set +e
 "$DRIVER_BIN" --dir "$APP_DIR" updates --json --config "$CONFIG" --force >"$JSON_OUT"
