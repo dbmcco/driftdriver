@@ -1,0 +1,7 @@
+[attractor]
+id = "onboarded"
+description = "Repo has workgraph, drift lanes installed, at least one task"
+
+[[criteria]]
+lane = "coredrift"
+max_actionable_findings = 5

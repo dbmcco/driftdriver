@@ -1,0 +1,21 @@
+[attractor]
+id = "production-ready"
+extends = "onboarded"
+description = "Repo is test-covered, drift-clean, deps current, security scanned"
+
+[[criteria]]
+lane = "coredrift"
+max_actionable_findings = 0
+
+[[criteria]]
+lane = "plandrift"
+max_actionable_findings = 0
+require = ["test-gates", "failure-loopbacks"]
+
+[[criteria]]
+lane = "depsdrift"
+max_actionable_findings = 0
+
+[[criteria]]
+lane = "secdrift"
+max_actionable_findings = 0

@@ -1,0 +1,12 @@
+[attractor]
+id = "hardened"
+extends = "production-ready"
+description = "Production-ready plus strict security and comprehensive coverage"
+
+[[criteria]]
+lane = "secdrift"
+max_actionable_findings = 0
+
+[[criteria]]
+custom = "test_coverage_above"
+threshold = 90
