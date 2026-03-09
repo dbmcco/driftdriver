@@ -24,10 +24,14 @@ if [[ ! -x "$DRIVER_BIN" ]]; then
   exit 2
 fi
 
-# ── 0. Run upstream workgraph monitor ──
+# ── 0. Run upstream workgraph monitor + eval chain ──
 if [[ -x "$SCRIPT_DIR/monitor_upstream_wg.sh" ]]; then
   echo "Running upstream workgraph monitor..."
   "$SCRIPT_DIR/monitor_upstream_wg.sh" || true
+fi
+if [[ -x "$SCRIPT_DIR/eval_upstream_wg.sh" ]]; then
+  echo "Running upstream workgraph eval chain..."
+  "$SCRIPT_DIR/eval_upstream_wg.sh" || true
 fi
 
 # ── 1. Run the ecosystem scan ──
