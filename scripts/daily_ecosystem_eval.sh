@@ -8,6 +8,7 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DRIVER_BIN="$ROOT/bin/driftdriver"
 APP_DIR="${1:-$ROOT}"
 APP_DIR="$(cd "$APP_DIR" && pwd)"
+TASK_IDS=()
 
 CONFIG="$APP_DIR/.workgraph/.driftdriver/ecosystem-review.json"
 OUTPUT_DIR="$APP_DIR/.workgraph/.driftdriver/reviews"
