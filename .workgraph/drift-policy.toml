@@ -1,0 +1,56 @@
+schema = 1
+mode = "redirect"
+order = ["speedrift", "specdrift", "datadrift", "depsdrift", "uxdrift", "therapydrift", "yagnidrift"]
+
+[recursion]
+cooldown_seconds = 1800
+max_auto_actions_per_hour = 2
+require_new_evidence = true
+max_auto_depth = 2
+
+[factory]
+enabled = true
+cycle_seconds = 90
+plan_only = false
+max_repos_per_cycle = 4
+max_actions_per_cycle = 12
+emit_followups = true
+max_followups_per_repo = 3
+write_decision_ledger = true
+hard_stop_on_failed_verification = true
+
+[autonomy.default]
+level = "safe-fix"
+can_push = false
+can_open_pr = false
+can_merge = false
+max_actions_per_cycle = 3
+
+[secdrift]
+enabled = true
+interval_seconds = 14400
+max_findings_per_repo = 40
+scan_max_files = 320
+scan_max_file_bytes = 262144
+run_pentest = false
+allow_network_scans = false
+target_urls = []
+emit_review_tasks = true
+max_review_tasks_per_repo = 3
+hard_stop_on_critical = false
+
+[qadrift]
+enabled = true
+interval_seconds = 21600
+max_findings_per_repo = 40
+emit_review_tasks = true
+max_review_tasks_per_repo = 3
+include_playwright = true
+include_test_health = true
+include_workgraph_health = true
+
+[enforcement]
+enabled = false
+block_on_critical = true
+warn_on_error = true
+max_unresolved_warnings = 10
