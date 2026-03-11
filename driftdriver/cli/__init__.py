@@ -472,6 +472,31 @@ def cmd_ecosystem_hub_proxy(args: argparse.Namespace) -> int:
     return int(ecosystem_hub_main(forwarded))
 
 
+def cmd_brain_status(args: argparse.Namespace) -> int:
+    from driftdriver.factory_brain.cli import handle_brain_status
+    return handle_brain_status(args)
+
+
+def cmd_brain_roster(args: argparse.Namespace) -> int:
+    from driftdriver.factory_brain.cli import handle_brain_roster
+    return handle_brain_roster(args)
+
+
+def cmd_brain_log(args: argparse.Namespace) -> int:
+    from driftdriver.factory_brain.cli import handle_brain_log
+    return handle_brain_log(args)
+
+
+def cmd_brain_enroll(args: argparse.Namespace) -> int:
+    from driftdriver.factory_brain.cli import handle_brain_enroll
+    return handle_brain_enroll(args)
+
+
+def cmd_brain_unenroll(args: argparse.Namespace) -> int:
+    from driftdriver.factory_brain.cli import handle_brain_unenroll
+    return handle_brain_unenroll(args)
+
+
 def cmd_attractor(args: argparse.Namespace) -> int:
     """Manage attractor convergence targets."""
     from driftdriver.attractors import load_attractors_from_dir, resolve_attractor
@@ -1427,6 +1452,25 @@ def _build_parser() -> argparse.ArgumentParser:
     ecosystem_hub_p = sub.add_parser("ecosystem-hub", help="Proxy to the ecosystem hub service manager")
     ecosystem_hub_p.add_argument("ecosystem_hub_args", nargs=argparse.REMAINDER, help="Arguments for ecosystem hub")
     ecosystem_hub_p.set_defaults(func=cmd_ecosystem_hub_proxy)
+
+    # -- Factory brain commands --
+    brain_status_p = sub.add_parser("brain-status", help="Show factory brain state summary")
+    brain_status_p.set_defaults(func=cmd_brain_status)
+
+    brain_roster_p = sub.add_parser("brain-roster", help="Show enrolled repos in the factory brain")
+    brain_roster_p.set_defaults(func=cmd_brain_roster)
+
+    brain_log_p = sub.add_parser("brain-log", help="Show recent factory brain reasoning log")
+    brain_log_p.set_defaults(func=cmd_brain_log)
+
+    brain_enroll_p = sub.add_parser("brain-enroll", help="Manually enroll a repo in the factory brain")
+    brain_enroll_p.add_argument("path", help="Path to the repo to enroll")
+    brain_enroll_p.add_argument("--target", default="onboarded", help="Attractor target (default: onboarded)")
+    brain_enroll_p.set_defaults(func=cmd_brain_enroll)
+
+    brain_unenroll_p = sub.add_parser("brain-unenroll", help="Manually unenroll a repo from the factory brain")
+    brain_unenroll_p.add_argument("name", help="Repo name to unenroll")
+    brain_unenroll_p.set_defaults(func=cmd_brain_unenroll)
 
     # -- Attractor commands --
     attractor_p = sub.add_parser("attractor", help="Manage attractor convergence targets")
