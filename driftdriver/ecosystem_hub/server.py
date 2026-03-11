@@ -55,6 +55,8 @@ from .snapshot import (
 )
 from .websocket import LiveStreamHub
 
+_log = __import__("logging").getLogger(__name__)
+
 _CHILD_PROCS: dict[int, subprocess.Popen[str]] = {}
 
 
@@ -225,6 +227,22 @@ def run_service_foreground(
 
     directive_log = DirectiveLog(project_dir / ".workgraph" / "service" / "directives")
 
+    # Factory brain — model-mediated decisions (optional, safe to fail)
+    _factory_brain = None
+    try:
+        from driftdriver.factory_brain.hub_integration import FactoryBrain
+
+        brain_data_dir = paths["dir"] / "factory-brain"
+        brain_data_dir.mkdir(parents=True, exist_ok=True)
+        _factory_brain = FactoryBrain(
+            hub_data_dir=brain_data_dir,
+            workspace_roots=[workspace_root],
+            dry_run=False,
+        )
+        _log.info("Factory brain initialized (roster: %s)", _factory_brain.roster_file)
+    except Exception:
+        _log.debug("Factory brain not available — skipping", exc_info=True)
+
     def _collector_loop() -> None:
         while not stop_event.is_set():
             try:
@@ -360,6 +378,26 @@ def run_service_foreground(
                         "enabled": False,
                         "reason": "factory disabled in drift-policy",
                     }
+
+                # Factory brain — model-mediated decisions
+                if _factory_brain is not None:
+                    try:
+                        brain_results = _factory_brain.tick(
+                            snapshot=snapshot,
+                            heuristic_recommendation=cycle if factory_enabled and policy is not None else None,
+                        )
+                        if brain_results:
+                            _log.info("Factory brain: %d tier invocations", len(brain_results))
+                        snapshot["factory_brain"] = {
+                            "enabled": True,
+                            "tick_results": len(brain_results),
+                        }
+                    except Exception:
+                        _log.exception("Factory brain tick failed")
+                        snapshot["factory_brain"] = {
+                            "enabled": True,
+                            "error": "tick failed",
+                        }
 
                 _decorate_snapshot_with_northstardrift(
                     project_dir=project_dir,
