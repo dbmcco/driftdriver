@@ -221,7 +221,21 @@ def _handle_set_attractor_target(d: Directive, *, dry_run: bool, repo_paths: dic
 
 
 def _handle_send_telegram(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
-    return {"status": "deferred", "action": "send_telegram", "message": d.params["message"]}
+    from driftdriver.factory_brain.telegram import load_telegram_config, send_telegram
+
+    msg = d.params.get("message", "")
+    if dry_run:
+        return {"action": "send_telegram", "status": "dry_run", "message": msg}
+    config = load_telegram_config()
+    if not config:
+        logger.warning("No Telegram config found, skipping")
+        return {"action": "send_telegram", "status": "no_config", "message": msg}
+    ok = send_telegram(
+        bot_token=config["bot_token"],
+        chat_id=config["chat_id"],
+        message=msg,
+    )
+    return {"action": "send_telegram", "status": "ok" if ok else "error", "message": msg}
 
 
 def _handle_escalate(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
