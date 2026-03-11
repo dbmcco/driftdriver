@@ -2,6 +2,12 @@
 # ABOUTME: Dark Factory launcher — starts autonomous improvement across all enrolled repos.
 # ABOUTME: Manages dispatch loops, ecosystem hub, and continuous attractor convergence.
 
+echo "WARNING: dark-factory.sh is deprecated. Use: scripts/factory-brain-start.sh"
+echo "The factory brain manages dispatch loops, enrollment, and healing autonomously."
+echo ""
+echo "Continuing with legacy dark factory in 5 seconds... (Ctrl+C to abort)"
+sleep 5
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
