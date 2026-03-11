@@ -209,11 +209,36 @@ def _handle_adjust_concurrency(d: Directive, *, dry_run: bool, repo_paths: dict[
 
 
 def _handle_enroll(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
-    return {"status": "deferred", "action": "enroll", "repo": d.params["repo"]}
+    repo_path_str = d.params.get("repo", "")
+    repo_path = Path(repo_path_str)
+    if dry_run:
+        return {"status": "dry_run", "action": "enroll", "repo": repo_path_str}
+    if not repo_path.exists():
+        return {"action": "enroll", "status": "error", "error": f"path not found: {repo_path_str}"}
+    if not (repo_path / ".workgraph").exists():
+        return {"action": "enroll", "status": "error", "error": f"no .workgraph in: {repo_path_str}"}
+    # Install dispatch-loop.sh if missing
+    dispatch = repo_path / ".workgraph" / "executors" / "dispatch-loop.sh"
+    if not dispatch.exists():
+        template = Path(__file__).parent.parent / "templates" / "dispatch-loop.sh"
+        if template.exists():
+            import shutil
+
+            dispatch.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(template), str(dispatch))
+            dispatch.chmod(0o755)
+            logger.info("Installed dispatch-loop.sh in %s", repo_path.name)
+    return {"action": "enroll", "status": "ok", "repo": repo_path_str, "dispatch_installed": dispatch.exists()}
 
 
 def _handle_unenroll(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
-    return {"status": "deferred", "action": "unenroll", "repo": d.params["repo"]}
+    repo = d.params.get("repo", "")
+    if dry_run:
+        return {"status": "dry_run", "action": "unenroll", "repo": repo}
+    # Stop dispatch loop if running
+    _run_cmd(["pkill", "-f", f"dispatch-loop.sh.*{repo}"])
+    logger.info("Unenrolled: %s", repo)
+    return {"action": "unenroll", "status": "ok", "repo": repo}
 
 
 def _handle_set_attractor_target(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
