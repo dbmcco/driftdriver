@@ -574,6 +574,29 @@ def render_dashboard_html() -> str:
       return (currentData && currentData.repos || []).find((repo) => String(repo.name || '') === String(name || '')) || null;
     }
 
+    function syncFiltersToUrl() {
+      var params = new URLSearchParams();
+      if (repoSearchText) params.set('q', repoSearchText);
+      if (repoRoleFilter !== 'all') params.set('role', repoRoleFilter);
+      if (repoStatusFilter !== 'all') params.set('status', repoStatusFilter);
+      if (repoDriftFilter !== 'all') params.set('drift', repoDriftFilter);
+      var qs = params.toString();
+      var url = qs ? '?' + qs : window.location.pathname;
+      window.history.replaceState({}, '', url);
+    }
+
+    function loadFiltersFromUrl() {
+      var params = new URLSearchParams(window.location.search);
+      repoSearchText = params.get('q') || '';
+      repoRoleFilter = params.get('role') || 'all';
+      repoStatusFilter = params.get('status') || 'all';
+      repoDriftFilter = params.get('drift') || 'all';
+      el('repo-search').value = repoSearchText;
+      el('repo-role-filter').value = repoRoleFilter;
+      el('repo-status-filter').value = repoStatusFilter;
+      el('repo-drift-filter').value = repoDriftFilter;
+    }
+
     function qualityPill(repo) {
       const north = repo.northstar || {};
       const northTier = String(north.tier || '').toLowerCase();
@@ -1601,18 +1624,22 @@ def render_dashboard_html() -> str:
     el('repo-search').addEventListener('input', function(e) {
       repoSearchText = String(e.target.value || '');
       if (currentData) renderRepoTable(currentData);
+      syncFiltersToUrl();
     });
     el('repo-role-filter').addEventListener('change', function(e) {
       repoRoleFilter = String(e.target.value || 'all');
       if (currentData) renderRepoTable(currentData);
+      syncFiltersToUrl();
     });
     el('repo-status-filter').addEventListener('change', function(e) {
       repoStatusFilter = String(e.target.value || 'all');
       if (currentData) renderRepoTable(currentData);
+      syncFiltersToUrl();
     });
     el('repo-drift-filter').addEventListener('change', function(e) {
       repoDriftFilter = String(e.target.value || 'all');
       if (currentData) renderRepoTable(currentData);
+      syncFiltersToUrl();
     });
 
     el('repo-table').querySelectorAll('th[data-sort]').forEach(function(th) {
@@ -1644,6 +1671,7 @@ def render_dashboard_html() -> str:
       }
     });
 
+    loadFiltersFromUrl();
     refreshHttp().catch(() => {});
     startPolling();
     connectWebSocket();
