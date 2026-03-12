@@ -52,232 +52,19 @@ def render_dashboard_html() -> str:
       color: var(--muted);
       font-size: 0.86rem;
     }
-    main {
-      padding: 1rem 1.2rem 2rem;
-      display: grid;
-      gap: 0.95rem;
-      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-    }
-    section {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 0.9rem;
-      box-shadow: 0 6px 12px rgba(24, 34, 28, 0.06);
-    }
-    .span-all {
-      grid-column: 1 / -1;
-    }
     h2 {
       margin: 0 0 0.65rem;
       font-size: 0.9rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      color: #30443b;
+      color: var(--ink);
     }
-    .narrative {
-      line-height: 1.45;
-      font-size: 0.95rem;
-      margin: 0;
-      color: #1f2f28;
-    }
-    .cards {
-      display: grid;
-      gap: 0.6rem;
-      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-    }
-    .card {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 0.55rem 0.6rem;
-      background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(246,241,232,0.7));
-    }
-    .card .k {
-      color: var(--muted);
-      font-size: 0.74rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .card .v {
-      margin-top: 0.2rem;
-      font-size: 1.05rem;
-      font-weight: 650;
-      font-family: var(--mono);
-    }
-    .card .sub {
-      margin-top: 0.24rem;
-      font-size: 0.74rem;
-      color: var(--muted);
-      line-height: 1.25;
-    }
-    .spark {
-      display: block;
-      width: 100%;
-      height: 34px;
-      margin-top: 0.34rem;
-    }
-    .trend-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 0.7rem;
-      margin-top: 0.8rem;
-    }
-    .trend-panel {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 0.65rem 0.75rem;
-      background: linear-gradient(180deg, rgba(255,255,255,0.74), rgba(247,243,235,0.92));
-    }
-    .trend-panel h3 {
-      margin: 0 0 0.45rem;
-      font-size: 0.82rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: #30443b;
-    }
-    .trend-panel ul {
-      margin: 0;
-      padding-left: 1rem;
-    }
-    .trend-panel li {
-      margin: 0.32rem 0;
-      line-height: 1.35;
-      color: #30443b;
-      font-size: 0.83rem;
-    }
-    .attention-list, ul {
-      margin: 0;
-      padding-left: 1rem;
-    }
-    li {
-      margin: 0.23rem 0;
-      font-size: 0.9rem;
-    }
-    .repo-grid {
-      display: grid;
-      gap: 0.7rem;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    }
-    .repo-toolbar {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-      margin-bottom: 0.55rem;
-    }
-    #repo-summary {
-      margin: 0 0 0.5rem;
-      color: #31433a;
-      font-size: 0.86rem;
-    }
-    .repo-card {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 0.65rem;
-      background: rgba(255,255,255,0.6);
-      cursor: pointer;
-      transition: border-color 120ms ease, box-shadow 120ms ease;
-    }
-    @keyframes repoCardPulse {
-      0% {
-        border-color: #0f6f7c;
-        box-shadow: 0 0 0 0 rgba(15, 111, 124, 0.42);
-      }
-      72% {
-        border-color: #5e95a0;
-        box-shadow: 0 0 0 8px rgba(15, 111, 124, 0);
-      }
-      100% {
-        border-color: #0f6f7c;
-        box-shadow: 0 0 0 0 rgba(15, 111, 124, 0);
-      }
-    }
-    .repo-card.active-running {
-      border-color: #0f6f7c;
-      animation: repoCardPulse 1.95s ease-out infinite;
-    }
-    .repo-card:hover {
-      border-color: #9cb7bc;
-      box-shadow: 0 3px 8px rgba(30, 58, 64, 0.12);
-    }
-    .repo-card.active-running:hover {
-      border-color: #0f6f7c;
-      box-shadow: 0 0 0 0 rgba(15, 111, 124, 0.42), 0 3px 10px rgba(30, 58, 64, 0.15);
-    }
-    .repo-card.stalled {
-      border-color: #d8b596;
-      background: rgba(255, 250, 243, 0.9);
-    }
-    .repo-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 0.6rem;
-      font-size: 0.92rem;
-      margin-bottom: 0.35rem;
-    }
-    .repo-name { font-weight: 700; }
-    .pill {
-      font-family: var(--mono);
-      font-size: 0.72rem;
-      border-radius: 999px;
-      padding: 0.1rem 0.48rem;
-      border: 1px solid var(--line);
-      background: #f8f4eb;
-      color: #47544d;
-    }
-    .pill.bad { color: var(--bad); border-color: #d9bcbc; background: #fbeeee; }
-    .pill.warn { color: var(--warn); border-color: #e0c8b5; background: #fff3e8; }
-    .pill.good { color: var(--good); border-color: #bfd8c4; background: #e8f5ea; }
-    .repo-meta {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.24rem 0.4rem;
-      font-size: 0.8rem;
-      color: #324139;
-      margin-bottom: 0.4rem;
-    }
-    .repo-note {
-      margin: 0;
-      font-size: 0.84rem;
-      color: #2d3a33;
-      line-height: 1.35;
-    }
-    .repo-note.stall {
-      margin-top: 0.35rem;
-      color: #7a4322;
-    }
-    .repo-note.signal {
-      margin-top: 0.32rem;
-      color: #5f3e22;
-      font-style: italic;
-    }
-    .repo-note.warn { color: var(--warn); }
-    .repo-actions { margin-top: 0.45rem; }
     .warn { color: var(--warn); }
     .bad { color: var(--bad); }
     .good { color: var(--good); }
     code {
       font-family: var(--mono);
       font-size: 0.82rem;
-    }
-    .graph-toolbar {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-      margin-bottom: 0.55rem;
-    }
-    .graph-toolbar button {
-      font: inherit;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 0.2rem 0.48rem;
-      background: #fff;
-      cursor: pointer;
-    }
-    .graph-toolbar button:hover {
-      background: #f5efe2;
     }
     select {
       font: inherit;
@@ -286,50 +73,23 @@ def render_dashboard_html() -> str:
       border: 1px solid var(--line);
       background: #fff;
     }
-    .graph-wrap {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: #fffdfa;
-      overflow: auto;
-      height: 560px;
-    }
-    #graph {
+    .spark {
       display: block;
       width: 100%;
-      height: 100%;
-      touch-action: none;
-      cursor: grab;
+      height: 34px;
+      margin-top: 0.34rem;
     }
-    #graph.dragging {
-      cursor: grabbing;
-    }
+
+    /* --- Graph-related styles (kept) --- */
     @keyframes taskPulseHalo {
-      0% {
-        opacity: 0.9;
-        transform: scale(0.82);
-      }
-      70% {
-        opacity: 0;
-        transform: scale(1.72);
-      }
-      100% {
-        opacity: 0;
-        transform: scale(1.8);
-      }
+      0% { opacity: 0.9; transform: scale(0.82); }
+      70% { opacity: 0; transform: scale(1.72); }
+      100% { opacity: 0; transform: scale(1.8); }
     }
     @keyframes repoPulseHalo {
-      0% {
-        opacity: 0.88;
-        transform: scale(0.86);
-      }
-      72% {
-        opacity: 0;
-        transform: scale(1.62);
-      }
-      100% {
-        opacity: 0;
-        transform: scale(1.66);
-      }
+      0% { opacity: 0.88; transform: scale(0.86); }
+      72% { opacity: 0; transform: scale(1.62); }
+      100% { opacity: 0; transform: scale(1.66); }
     }
     .graph-node .pulse-halo {
       display: none;
@@ -360,29 +120,18 @@ def render_dashboard_html() -> str:
       margin-right: 0.28rem;
       vertical-align: baseline;
     }
-    .graph-path {
-      margin-top: 0.55rem;
-      padding: 0.45rem 0.55rem;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      background: #fcf8ef;
-      color: #2b3c34;
-      font-size: 0.82rem;
-      line-height: 1.35;
-      min-height: 2.4rem;
-      white-space: pre-wrap;
+    .repo-dep-node .repo-pulse {
+      display: none;
+      pointer-events: none;
+      transform-origin: center;
+      transform-box: fill-box;
     }
-    .repo-dep-wrap {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: #fffdfa;
-      padding: 0.45rem;
-      margin-bottom: 0.55rem;
+    .repo-dep-node.active .repo-pulse {
+      display: block;
+      animation: repoPulseHalo 1.85s ease-out infinite;
     }
-    .repo-dep-meta {
-      color: #4a5b53;
-      font-size: 0.8rem;
-      margin-bottom: 0.35rem;
+    .repo-dep-node.active .repo-main {
+      filter: drop-shadow(0 0 5px rgba(15, 111, 124, 0.45));
     }
     #repo-dep-graph {
       width: 100%;
@@ -397,154 +146,6 @@ def render_dashboard_html() -> str:
     }
     #repo-dep-graph.dragging {
       cursor: grabbing;
-    }
-    .repo-dep-toolbar {
-      display: flex;
-      align-items: center;
-      gap: 0.45rem;
-      margin-bottom: 0.35rem;
-    }
-    .repo-dep-node .repo-pulse {
-      display: none;
-      pointer-events: none;
-      transform-origin: center;
-      transform-box: fill-box;
-    }
-    .repo-dep-node.active .repo-pulse {
-      display: block;
-      animation: repoPulseHalo 1.85s ease-out infinite;
-    }
-    .repo-dep-node.active .repo-main {
-      filter: drop-shadow(0 0 5px rgba(15, 111, 124, 0.45));
-    }
-    #repo-dep-note {
-      margin-top: 0.35rem;
-      line-height: 1.28;
-    }
-    .action-toolbar {
-      display: flex;
-      align-items: center;
-      gap: 0.55rem;
-      flex-wrap: wrap;
-      margin-bottom: 0.55rem;
-    }
-    #action-summary {
-      margin: 0 0 0.6rem;
-      color: #31433a;
-      font-size: 0.86rem;
-    }
-    .action-grid {
-      display: grid;
-      gap: 0.7rem;
-      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-    }
-    .action-panel {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 0.6rem;
-      background: rgba(255,255,255,0.7);
-      min-height: 220px;
-    }
-    .action-head {
-      margin: 0 0 0.45rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 0.45rem;
-    }
-    .action-panel h3 {
-      margin: 0;
-      font-size: 0.79rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: #385148;
-    }
-    .action-count {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 1.5rem;
-      padding: 0.02rem 0.3rem;
-      border-radius: 999px;
-      border: 1px solid #c8beae;
-      background: #f4eee2;
-      font-family: var(--mono);
-      font-size: 0.72rem;
-      color: #495b52;
-    }
-    .action-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: grid;
-      gap: 0.35rem;
-    }
-    .action-item {
-      border: 1px solid #d9d0c1;
-      border-left-width: 4px;
-      border-radius: 8px;
-      padding: 0.4rem 0.5rem;
-      background: #fffdf8;
-      font-size: 0.82rem;
-      line-height: 1.3;
-    }
-    .action-item.sev-high { border-left-color: #9c2525; }
-    .action-item.sev-med { border-left-color: #a26c13; }
-    .action-item.sev-low { border-left-color: #2f6e39; }
-    .action-title {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 0.4rem;
-      color: #25352f;
-      margin-bottom: 0.15rem;
-    }
-    .action-why {
-      color: #52645b;
-      font-size: 0.77rem;
-      margin-bottom: 0.15rem;
-    }
-    .action-prompt {
-      margin-top: 0.2rem;
-      color: #3f5148;
-      font-size: 0.76rem;
-      line-height: 1.28;
-      background: #f7f2e8;
-      border: 1px solid #dfd5c4;
-      border-radius: 7px;
-      padding: 0.28rem 0.32rem;
-      word-break: break-word;
-    }
-    .action-empty {
-      color: #5f6f66;
-      border-style: dashed;
-      border-left-width: 1px;
-    }
-    .action-link {
-      font: inherit;
-      font-size: 0.76rem;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
-      padding: 0.12rem 0.35rem;
-      margin-left: 0.35rem;
-      cursor: pointer;
-    }
-    .action-link:hover {
-      background: #eef7f8;
-      border-color: #9fbec5;
-    }
-    .cmd {
-      margin-top: 0.18rem;
-      color: #60726a;
-      font-size: 0.76rem;
-      line-height: 1.25;
-    }
-    .graph-all-grid {
-      padding: 0.5rem;
-      display: grid;
-      gap: 0.6rem;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     }
     .graph-mini {
       border: 1px solid var(--line);
@@ -569,9 +170,267 @@ def render_dashboard_html() -> str:
       background: #fffcf8;
       display: block;
     }
-    @media (max-width: 820px) {
-      main { grid-template-columns: 1fr; }
-      .repo-meta { grid-template-columns: 1fr 1fr; }
+
+    /* --- New 4-zone layout --- */
+    .hub-layout {
+      display: flex;
+      flex-direction: column;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 1rem 1.2rem 2rem;
+      gap: 0.95rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.9rem;
+      box-shadow: 0 6px 12px rgba(24, 34, 28, 0.06);
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      margin-bottom: 0.65rem;
+    }
+    .section-header h2 {
+      margin: 0;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1.5rem;
+      padding: 0.02rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    /* Zone 1: Briefing Bar */
+    .briefing-bar {
+      padding: 0.75rem 0.9rem;
+    }
+    .briefing-text {
+      margin: 0;
+      line-height: 1.45;
+      font-size: 0.95rem;
+      color: var(--ink);
+    }
+    .briefing-expander {
+      cursor: pointer;
+      text-decoration: underline;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .briefing-detail {
+      display: none;
+    }
+    .briefing-detail.open {
+      display: block;
+      margin-top: 0.5rem;
+      padding: 0.5rem 0.65rem;
+      background: var(--accent-soft);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }
+
+    /* Zone 2: Attention Queue */
+    .attention-queue {
+      /* wrapper inherits .card */
+    }
+    .attention-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    .attention-table th,
+    .attention-table td {
+      padding: 0.45rem 0.55rem;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+    }
+    .attention-table th {
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .attention-table th:hover {
+      color: var(--accent);
+    }
+    .severity-high { color: var(--bad); font-weight: 600; }
+    .severity-medium { color: var(--warn); font-weight: 600; }
+    .severity-low { color: var(--good); }
+    .action-stub {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .attention-empty {
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-style: italic;
+      margin: 0.5rem 0 0;
+    }
+
+    /* Zone 3+4: Split panel */
+    .split-panel {
+      display: flex;
+      gap: 0.95rem;
+      min-height: 500px;
+    }
+    .repo-panel {
+      flex: 3;
+    }
+    .graphs-panel {
+      flex: 2;
+    }
+
+    /* Repo filter bar */
+    .repo-filter-bar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 0.55rem;
+    }
+    .repo-filter-bar input {
+      font: inherit;
+      padding: 0.3rem 0.5rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fff;
+      min-width: 140px;
+    }
+    .repo-filter-bar select {
+      font: inherit;
+      padding: 0.25rem 0.38rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    /* Repo table */
+    .repo-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+    }
+    .repo-table th,
+    .repo-table td {
+      padding: 0.4rem 0.5rem;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+    }
+    .repo-table th {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .repo-table th[data-sort] {
+      cursor: pointer;
+      user-select: none;
+    }
+    .repo-table th[data-sort]:hover {
+      color: var(--accent);
+    }
+    .repo-table tr:hover {
+      background: var(--accent-soft);
+    }
+    .repo-row {
+      cursor: pointer;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      vertical-align: middle;
+    }
+    .status-dot.active { background: var(--good); }
+    .status-dot.idle { background: #999; }
+    .status-dot.missing { background: var(--bad); }
+    .drift-count {
+      display: inline-block;
+      padding: 0.05rem 0.35rem;
+      border-radius: 999px;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #fff;
+      background: var(--warn);
+    }
+    .drift-count.high {
+      background: var(--bad);
+    }
+
+    /* Expanded repo row */
+    .repo-expanded-row td {
+      padding: 0;
+    }
+    .repo-expanded {
+      padding: 0.65rem 0.75rem;
+      border-top: 1px solid var(--line);
+      background: #faf7f0;
+    }
+    .task-dag {
+      margin-top: 0.35rem;
+    }
+    .task-dag-svg {
+      width: 100%;
+      max-height: 200px;
+      display: block;
+    }
+    .loop-indicator {
+      color: var(--bad);
+      font-size: 0.76rem;
+      font-weight: 600;
+    }
+
+    /* Graph controls */
+    .graph-controls {
+      display: flex;
+      gap: 0.3rem;
+      margin-left: auto;
+    }
+    .graph-controls button {
+      font: inherit;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.2rem 0.48rem;
+      background: #fff;
+      cursor: pointer;
+    }
+    .graph-controls button:hover {
+      background: #f5efe2;
+    }
+
+    /* Chat panel stub */
+    #chat-panel[hidden] {
+      display: none;
+    }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .split-panel {
+        flex-direction: column;
+      }
+      .repo-panel,
+      .graphs-panel {
+        flex: none;
+      }
+      .graphs-panel {
+        order: -1;
+      }
     }
   </style>
 </head>
@@ -580,203 +439,107 @@ def render_dashboard_html() -> str:
     <h1>Speedrift Ecosystem Hub</h1>
     <div class="meta" id="meta">Loading ecosystem state…</div>
   </header>
-  <main>
-    <section class="span-all">
-      <h2>Narrated Overview</h2>
-      <p class="narrative" id="narrative">Waiting for first snapshot.</p>
+  <main class="hub-layout">
+    <!-- Zone 1: Briefing Bar -->
+    <section class="briefing-bar card" id="briefing-bar">
+      <p class="briefing-text" id="briefing-text">Loading ecosystem state...</p>
+      <div id="briefing-details"></div>
     </section>
 
-    <section class="span-all">
-      <h2>North Star Scorecard</h2>
-      <p class="narrative" id="northstar-summary">Loading north-star effectiveness…</p>
-      <div class="cards" id="northstar-cards"></div>
-      <div class="trend-grid">
-        <article class="trend-panel">
-          <h3>Trend Review</h3>
-          <p class="narrative" id="northstar-trend-summary">Loading effectiveness history…</p>
-        </article>
-        <article class="trend-panel">
-          <h3>Window Deltas</h3>
-          <ul id="northstar-window-deltas"></ul>
-        </article>
-        <article class="trend-panel">
-          <h3>Target Gaps</h3>
-          <ul id="northstar-target-gaps"></ul>
-        </article>
-        <article class="trend-panel">
-          <h3>Weekly Rollups</h3>
-          <ul id="northstar-weekly-rollups"></ul>
-        </article>
-        <article class="trend-panel">
-          <h3>Top Regressions</h3>
-          <ul id="northstar-regressions"></ul>
-        </article>
-        <article class="trend-panel">
-          <h3>Top Improvements</h3>
-          <ul id="northstar-improvements"></ul>
-        </article>
+    <!-- Zone 2: Attention Queue -->
+    <section class="attention-queue card" id="attention-section">
+      <div class="section-header">
+        <h2>Attention Queue</h2>
+        <span class="badge" id="attention-count">0</span>
       </div>
+      <table class="attention-table" id="attention-table">
+        <thead>
+          <tr>
+            <th data-sort="repo">Repo</th>
+            <th data-sort="issue">Issue</th>
+            <th data-sort="severity">Severity</th>
+            <th data-sort="age">Age</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="attention-body"></tbody>
+      </table>
+      <p class="attention-empty" id="attention-empty" style="display:none">
+        Nothing needs your attention right now.
+      </p>
     </section>
 
-    <section class="span-all">
-      <h2>Operational Overview</h2>
-      <div class="cards" id="overview-cards"></div>
-    </section>
-
-    <section class="span-all">
-      <h2>By Repo</h2>
-      <p class="narrative" id="repo-summary">Loading repos…</p>
-      <div class="repo-toolbar">
-        <label for="repo-sort">Sort:</label>
-        <select id="repo-sort">
-          <option value="priority" selected>priority</option>
-          <option value="dirty">dirty first</option>
-          <option value="blocked">blocked first</option>
-          <option value="behind">behind first</option>
-          <option value="name">name</option>
-        </select>
-        <label for="repo-health-filter">Health:</label>
-        <select id="repo-health-filter">
-          <option value="all" selected>all</option>
-          <option value="risk">risk</option>
-          <option value="watch">watch</option>
-          <option value="healthy">healthy</option>
-        </select>
-        <label for="repo-dirty-filter">Dirty:</label>
-        <select id="repo-dirty-filter">
-          <option value="all" selected>all</option>
-          <option value="dirty">dirty only</option>
-          <option value="clean">clean only</option>
-        </select>
-        <label for="repo-service-filter">Service:</label>
-        <select id="repo-service-filter">
-          <option value="all" selected>all</option>
-          <option value="stopped">stopped</option>
-          <option value="running">running</option>
-        </select>
-      </div>
-      <div class="repo-grid" id="repo-grid"></div>
-    </section>
-
-    <section class="span-all" id="graph-section">
-      <h2>Dependency Graph</h2>
-      <div class="graph-toolbar">
-        <label for="graph-repo">Repo:</label>
-        <select id="graph-repo"></select>
-        <label for="graph-mode">Mode:</label>
-        <select id="graph-mode">
-          <option value="focus">focus chain</option>
-          <option value="active" selected>active + blocked</option>
-          <option value="full">full graph</option>
-        </select>
-        <button id="graph-zoom-out" type="button">-</button>
-        <button id="graph-zoom-in" type="button">+</button>
-        <button id="graph-zoom-reset" type="button">reset</button>
-        <span class="meta" id="graph-meta"></span>
-      </div>
-      <div class="repo-dep-wrap">
-        <div class="repo-dep-toolbar">
-          <div class="repo-dep-meta" id="repo-dep-meta">Loading repo dependency overview…</div>
-          <button id="repo-dep-zoom-out" type="button">-</button>
-          <button id="repo-dep-zoom-in" type="button">+</button>
-          <button id="repo-dep-zoom-reset" type="button">reset</button>
+    <!-- Zone 3+4: Split panel -->
+    <div class="split-panel">
+      <!-- Repo Table (left) -->
+      <section class="repo-panel card" id="repo-section">
+        <div class="section-header">
+          <h2>Repos</h2>
+          <span class="badge" id="repo-count">0</span>
         </div>
-        <svg id="repo-dep-graph" viewBox="0 0 1200 520" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="cmd" id="repo-dep-note">Edge A -> B means repo A has dependency signals pointing to repo B. Pulsing repo nodes have in-progress tasks. Click a repo to focus its task graph.</div>
-      </div>
-      <div class="graph-wrap">
-        <svg id="graph" viewBox="0 0 1200 340" preserveAspectRatio="xMidYMin meet"></svg>
-        <div id="graph-all" class="graph-all-grid" style="display:none;"></div>
-      </div>
-      <div class="graph-legend">
-        <span><span class="dot" style="background:#2f6e39"></span>Done</span>
-        <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
-        <span><span class="dot" style="background:#a26c13"></span>Open/Ready</span>
-        <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
-        <span><span class="dot" style="background:#8c2f2f"></span>Cycle edge</span>
-        <span>Pulsing node = currently active work</span>
-      </div>
-      <div class="graph-path" id="graph-path">Select a node to inspect dependency chain.</div>
-    </section>
+        <div class="repo-filter-bar" id="repo-filters">
+          <input type="text" id="repo-search" placeholder="Search repos..." />
+          <select id="repo-role-filter">
+            <option value="all">all roles</option>
+            <option value="orchestrator">orchestrator</option>
+            <option value="baseline">baseline</option>
+            <option value="lane">lane</option>
+            <option value="product">product</option>
+          </select>
+          <select id="repo-status-filter">
+            <option value="all">all status</option>
+            <option value="active">active</option>
+            <option value="idle">idle</option>
+            <option value="missing">missing</option>
+          </select>
+          <select id="repo-drift-filter">
+            <option value="all">all drift</option>
+            <option value="has-drift">has drift</option>
+            <option value="clean">clean</option>
+          </select>
+        </div>
+        <table class="repo-table" id="repo-table">
+          <thead>
+            <tr>
+              <th data-sort="name">Repo</th>
+              <th data-sort="role">Role</th>
+              <th>Status</th>
+              <th data-sort="drift">Drift</th>
+              <th data-sort="tasks">Tasks</th>
+              <th>Trend</th>
+              <th data-sort="activity">Last Activity</th>
+            </tr>
+          </thead>
+          <tbody id="repo-body"></tbody>
+        </table>
+      </section>
 
-    <section class="span-all">
-      <h2>Action Center</h2>
-      <p class="narrative" id="action-summary">Loading prioritized actions…</p>
-      <div class="action-toolbar">
-        <label for="action-repo-filter">Repo filter:</label>
-        <select id="action-repo-filter">
-          <option value="__all__">all repos</option>
-        </select>
-        <label for="action-sort">Sort:</label>
-        <select id="action-sort">
-          <option value="priority" selected>priority</option>
-          <option value="dirtiness">dirty first</option>
-          <option value="age">age</option>
-          <option value="repo">repo</option>
-        </select>
-        <label for="action-priority-filter">Priority:</label>
-        <select id="action-priority-filter">
-          <option value="all" selected>all</option>
-          <option value="high">high only</option>
-          <option value="med">medium + high</option>
-        </select>
-        <label for="action-dirty-filter">Repo dirty:</label>
-        <select id="action-dirty-filter">
-          <option value="all" selected>all</option>
-          <option value="dirty">dirty only</option>
-          <option value="clean">clean only</option>
-        </select>
-      </div>
-      <div class="action-grid">
-        <article class="action-panel">
-          <div class="action-head">
-            <h3>Attention Queue</h3>
-            <span class="action-count" id="attention-count">0</span>
+      <!-- Graphs Panel (right) -->
+      <section class="graphs-panel card" id="graphs-section">
+        <div class="section-header">
+          <h2>Dependencies</h2>
+          <div class="graph-controls">
+            <button id="dep-zoom-out" type="button">-</button>
+            <button id="dep-zoom-in" type="button">+</button>
+            <button id="dep-zoom-reset" type="button">reset</button>
           </div>
-          <ul class="action-list" id="attention"></ul>
-        </article>
-        <article class="action-panel">
-          <div class="action-head">
-            <h3>Aging, Gaps, Dependencies</h3>
-            <span class="action-count" id="aging-count">0</span>
-          </div>
-          <ul class="action-list" id="aging"></ul>
-        </article>
-        <article class="action-panel">
-          <div class="action-head">
-            <h3>Upstream Candidates</h3>
-            <span class="action-count" id="upstream-count">0</span>
-          </div>
-          <ul class="action-list" id="upstream"></ul>
-        </article>
-        <article class="action-panel">
-          <div class="action-head">
-            <h3>Planned Next Work</h3>
-            <span class="action-count" id="next-count">0</span>
-          </div>
-          <ul class="action-list" id="next"></ul>
-        </article>
-        <article class="action-panel">
-          <div class="action-head">
-            <h3>Security Reviews</h3>
-            <span class="action-count" id="security-count">0</span>
-          </div>
-          <ul class="action-list" id="security"></ul>
-        </article>
-        <article class="action-panel">
-          <div class="action-head">
-            <h3>Quality Reviews</h3>
-            <span class="action-count" id="quality-count">0</span>
-          </div>
-          <ul class="action-list" id="quality"></ul>
-        </article>
-      </div>
-    </section>
+        </div>
+        <svg id="repo-dep-graph" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="graph-legend">
+          <span><span class="dot" style="background:#2f6e39"></span>Done</span>
+          <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
+          <span><span class="dot" style="background:#a26c13"></span>Open</span>
+          <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
+        </div>
+      </section>
 
-    <section class="span-all">
-      <h2>Updates</h2>
-      <div id="updates"></div>
-    </section>
+      <!-- Chat Panel stub (Approach C) -->
+      <aside id="chat-panel" hidden>
+        <div class="section-header"><h2>Chat</h2></div>
+        <div id="chat-messages"></div>
+        <input type="text" id="chat-input" placeholder="Ask about your ecosystem..." />
+      </aside>
+    </div>
   </main>
   <script>
     let ws = null;
@@ -806,7 +569,7 @@ def render_dashboard_html() -> str:
       dragBaseY: 0,
     };
 
-    function el(id) { return document.getElementById(id); }
+    function el(id) { return document.getElementById(id) || document.createElement('div'); }
     function n(value) { return Number.isFinite(Number(value)) ? Number(value) : 0; }
     function esc(value) {
       return String(value || '')
@@ -834,7 +597,7 @@ def render_dashboard_html() -> str:
       select.value = value;
       if (currentData) drawGraph(currentData);
       if (scrollToGraph) {
-        el('graph-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el('graphs-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
 
@@ -2558,15 +2321,15 @@ def render_dashboard_html() -> str:
       const oy = (baseH - h) / 2 - repoDepView.ty / repoDepView.scale;
       depSvg.setAttribute('viewBox', `${ox} ${oy} ${w} ${h}`);
     }
-    el('repo-dep-zoom-in').addEventListener('click', () => {
+    el('dep-zoom-in').addEventListener('click', () => {
       repoDepView.scale = Math.min(4, repoDepView.scale * 1.25);
       applyRepoDepZoom();
     });
-    el('repo-dep-zoom-out').addEventListener('click', () => {
+    el('dep-zoom-out').addEventListener('click', () => {
       repoDepView.scale = Math.max(0.3, repoDepView.scale / 1.25);
       applyRepoDepZoom();
     });
-    el('repo-dep-zoom-reset').addEventListener('click', () => {
+    el('dep-zoom-reset').addEventListener('click', () => {
       repoDepView.scale = 1; repoDepView.tx = 0; repoDepView.ty = 0;
       applyRepoDepZoom();
     });
