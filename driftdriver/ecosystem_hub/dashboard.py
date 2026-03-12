@@ -572,6 +572,14 @@ def render_dashboard_html() -> str:
     let attentionSortCol = 'severity';
     let attentionSortAsc = false;
 
+    let repoSearchText = '';
+    let repoRoleFilter = 'all';
+    let repoStatusFilter = 'all';
+    let repoDriftFilter = 'all';
+    let repoSortCol = 'name';
+    let repoSortAsc = true;
+    let expandedRepo = null;
+
     function el(id) { return document.getElementById(id) || document.createElement('div'); }
     function n(value) { return Number.isFinite(Number(value)) ? Number(value) : 0; }
     function esc(value) {
@@ -2352,6 +2360,229 @@ def render_dashboard_html() -> str:
       }).join('');
     }
 
+    function repoRole(repo) {
+      var src = String(repo.source || '');
+      if (repo.ecosystem_role) return String(repo.ecosystem_role).toLowerCase();
+      var match = src.match(/^(orchestrator|baseline|lane|product)[:]/i);
+      if (match) return match[1].toLowerCase();
+      if (/orchestrator/i.test(src)) return 'orchestrator';
+      if (/baseline/i.test(src)) return 'baseline';
+      if (/lane/i.test(src)) return 'lane';
+      if (/product/i.test(src)) return 'product';
+      return src ? src.split(':')[0].toLowerCase() : '';
+    }
+
+    function repoStatus(repo) {
+      if (!repo.path || repo.missing) return 'missing';
+      if (String(repo.activity_state || '').toLowerCase() === 'active') return 'active';
+      return 'idle';
+    }
+
+    function repoHasDrift(repo) {
+      return n((repo.northstar || {}).priority_score) > 0;
+    }
+
+    function repoMatchesFilters(repo) {
+      if (repoSearchText && String(repo.name || '').toLowerCase().indexOf(repoSearchText.toLowerCase()) === -1) {
+        return false;
+      }
+      if (repoRoleFilter !== 'all') {
+        var role = repoRole(repo);
+        if (role !== repoRoleFilter) return false;
+      }
+      if (repoStatusFilter !== 'all') {
+        if (repoStatus(repo) !== repoStatusFilter) return false;
+      }
+      if (repoDriftFilter !== 'all') {
+        var hasDrift = repoHasDrift(repo);
+        if (repoDriftFilter === 'has-drift' && !hasDrift) return false;
+        if (repoDriftFilter === 'clean' && hasDrift) return false;
+      }
+      return true;
+    }
+
+    function relativeTime(seconds) {
+      if (seconds == null || !Number.isFinite(Number(seconds))) return '\u2014';
+      var s = Number(seconds);
+      if (s < 60) return 'now';
+      if (s < 3600) return String(Math.floor(s / 60)) + 'm ago';
+      if (s < 86400) return String(Math.floor(s / 3600)) + 'h ago';
+      return String(Math.floor(s / 86400)) + 'd ago';
+    }
+
+    function repoTaskCounts(repo) {
+      var nodes = Array.isArray(repo.task_graph_nodes) ? repo.task_graph_nodes : [];
+      var done = 0;
+      var total = nodes.length;
+      nodes.forEach(function(nd) {
+        if (String(nd.status || '').toLowerCase() === 'done') done++;
+      });
+      return { done: done, total: total };
+    }
+
+    function repoSparklineData(data) {
+      var map = {};
+      var history = (data.northstardrift && data.northstardrift.history && Array.isArray(data.northstardrift.history.points))
+        ? data.northstardrift.history.points : [];
+      history.forEach(function(point) {
+        var scores = Array.isArray(point.repo_scores) ? point.repo_scores : [];
+        scores.forEach(function(rs) {
+          var name = String(rs.repo || '');
+          if (!name) return;
+          if (!map[name]) map[name] = [];
+          map[name].push(Number(rs.score || 0));
+        });
+      });
+      return map;
+    }
+
+    function repoSparklineSvg(values, color) {
+      if (!values || !values.length) return '';
+      var width = 80;
+      var height = 24;
+      var min = Math.min.apply(null, values);
+      var max = Math.max.apply(null, values);
+      var span = Math.max(1, max - min);
+      var pts = values.map(function(value, idx) {
+        var x = values.length <= 1 ? 0 : (idx / (values.length - 1)) * width;
+        var y = height - (((value - min) / span) * (height - 4)) - 2;
+        return x.toFixed(1) + ',' + y.toFixed(1);
+      }).join(' ');
+      return '<svg class="spark" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none" style="width:80px;height:24px;display:inline-block;vertical-align:middle"><polyline fill="none" stroke="' + color + '" stroke-width="1.8" points="' + pts + '" /></svg>';
+    }
+
+    function renderRepoTable(data) {
+      var allRepos = Array.isArray(data.repos) ? data.repos : [];
+      var filtered = allRepos.filter(repoMatchesFilters);
+
+      filtered.sort(function(a, b) {
+        var dir = repoSortAsc ? 1 : -1;
+        if (repoSortCol === 'name') {
+          return String(a.name || '').localeCompare(String(b.name || '')) * dir;
+        }
+        if (repoSortCol === 'role') {
+          return repoRole(a).localeCompare(repoRole(b)) * dir;
+        }
+        if (repoSortCol === 'drift') {
+          var da = n((a.northstar || {}).priority_score);
+          var db = n((b.northstar || {}).priority_score);
+          var d = db - da;
+          return d !== 0 ? d * dir : String(a.name || '').localeCompare(String(b.name || ''));
+        }
+        if (repoSortCol === 'tasks') {
+          var ta = repoTaskCounts(a);
+          var tb = repoTaskCounts(b);
+          var dt = tb.total - ta.total;
+          return dt !== 0 ? dt * dir : String(a.name || '').localeCompare(String(b.name || ''));
+        }
+        if (repoSortCol === 'activity') {
+          var aa = (a.heartbeat_age_seconds != null) ? Number(a.heartbeat_age_seconds) : 999999;
+          var ab = (b.heartbeat_age_seconds != null) ? Number(b.heartbeat_age_seconds) : 999999;
+          var dAct = aa - ab;
+          return dAct !== 0 ? dAct * dir : String(a.name || '').localeCompare(String(b.name || ''));
+        }
+        return String(a.name || '').localeCompare(String(b.name || '')) * dir;
+      });
+
+      var sparkData = repoSparklineData(data);
+
+      var rows = [];
+      filtered.forEach(function(repo) {
+        var repoName = String(repo.name || '');
+        var role = repoRole(repo);
+        var status = repoStatus(repo);
+        var driftScore = n((repo.northstar || {}).priority_score);
+        var tc = repoTaskCounts(repo);
+        var sparkValues = sparkData[repoName] || [];
+        var sparkColor = driftScore > 0 ? '#934e1c' : '#2f6e39';
+        var sparkSvg = repoSparklineSvg(sparkValues, sparkColor);
+        var lastActivity = relativeTime(repo.heartbeat_age_seconds);
+
+        var driftHtml = driftScore > 0
+          ? '<span class="drift-count' + (driftScore >= 20 ? ' high' : '') + '">' + esc(String(driftScore)) + '</span>'
+          : '<span style="color:var(--muted)">0</span>';
+
+        rows.push(
+          '<tr class="repo-row" data-repo-name="' + escAttr(repoName) + '">'
+          + '<td><strong>' + esc(repoName) + '</strong></td>'
+          + '<td>' + esc(role || '\u2014') + '</td>'
+          + '<td><span class="status-dot ' + status + '"></span></td>'
+          + '<td>' + driftHtml + '</td>'
+          + '<td>' + esc(String(tc.done)) + '/' + esc(String(tc.total)) + '</td>'
+          + '<td>' + sparkSvg + '</td>'
+          + '<td>' + esc(lastActivity) + '</td>'
+          + '</tr>'
+        );
+
+        if (expandedRepo === repoName) {
+          rows.push(renderRepoExpanded(repo));
+        }
+      });
+
+      el('repo-body').innerHTML = rows.join('');
+      el('repo-count').textContent = String(filtered.length) + '/' + String(allRepos.length);
+    }
+
+    function renderRepoExpanded(repo) {
+      var repoName = String(repo.name || '');
+      var nodes = Array.isArray(repo.task_graph_nodes) ? repo.task_graph_nodes : [];
+      var inProgress = 0;
+      var ready = 0;
+      var blocked = 0;
+      var aging = 0;
+      var now = Date.now();
+      nodes.forEach(function(nd) {
+        var st = String(nd.status || '').toLowerCase();
+        if (st === 'in-progress' || st === 'in_progress') inProgress++;
+        else if (st === 'ready' || st === 'open') ready++;
+        else if (st === 'blocked') blocked++;
+        var created = nd.created || nd.started || '';
+        if (created && st !== 'done') {
+          var ms = new Date(created).getTime();
+          if (!isNaN(ms) && (now - ms) > 3 * 86400000) aging++;
+        }
+      });
+
+      var taskSummary = esc(String(inProgress)) + ' in progress, '
+        + esc(String(ready)) + ' ready, '
+        + esc(String(blocked)) + ' blocked, '
+        + esc(String(aging)) + ' aging';
+
+      var branch = esc(String(repo.git_branch || 'n/a'));
+      var dirtyClean = repo.git_dirty ? 'dirty' : 'clean';
+      var ahead = n(repo.ahead);
+      var behind = n(repo.behind);
+      var gitState = 'branch: <code>' + branch + '</code> ('
+        + esc(dirtyClean)
+        + (ahead ? ', +' + esc(String(ahead)) + ' ahead' : '')
+        + (behind ? ', -' + esc(String(behind)) + ' behind' : '')
+        + ')';
+
+      var stalledText = '';
+      if (repo.stalled) {
+        var stallReasons = Array.isArray(repo.stall_reasons) ? repo.stall_reasons : [];
+        stalledText = '<div style="margin-top:0.25rem;color:var(--bad);font-weight:600">Stalled'
+          + (stallReasons.length ? ': ' + stallReasons.map(function(r) { return esc(String(r)); }).join('; ') : '')
+          + '</div>';
+      }
+
+      var dagDiv = '';
+      if (nodes.length > 0 && nodes.length <= 80) {
+        dagDiv = '<div class="task-dag" id="task-dag-' + escAttr(repoName) + '"></div>';
+      }
+
+      return '<tr class="repo-expanded-row" data-repo-expanded="' + escAttr(repoName) + '">'
+        + '<td colspan="7">'
+        + '<div class="repo-expanded">'
+        + '<div><strong>Tasks:</strong> ' + taskSummary + '</div>'
+        + '<div><strong>Git:</strong> ' + gitState + '</div>'
+        + stalledText
+        + dagDiv
+        + '</div>'
+        + '</td>'
+        + '</tr>';
+    }
+
     function render(data, source) {
       currentData = data;
       window.currentData = data;
@@ -2608,6 +2839,46 @@ def render_dashboard_html() -> str:
         }
         if (currentData) renderAttentionQueue(currentData);
       });
+    });
+
+    el('repo-search').addEventListener('input', function(e) {
+      repoSearchText = String(e.target.value || '');
+      if (currentData) renderRepoTable(currentData);
+    });
+    el('repo-role-filter').addEventListener('change', function(e) {
+      repoRoleFilter = String(e.target.value || 'all');
+      if (currentData) renderRepoTable(currentData);
+    });
+    el('repo-status-filter').addEventListener('change', function(e) {
+      repoStatusFilter = String(e.target.value || 'all');
+      if (currentData) renderRepoTable(currentData);
+    });
+    el('repo-drift-filter').addEventListener('change', function(e) {
+      repoDriftFilter = String(e.target.value || 'all');
+      if (currentData) renderRepoTable(currentData);
+    });
+
+    el('repo-table').querySelectorAll('th[data-sort]').forEach(function(th) {
+      th.addEventListener('click', function() {
+        var col = String(th.getAttribute('data-sort') || '');
+        if (!col) return;
+        if (repoSortCol === col) {
+          repoSortAsc = !repoSortAsc;
+        } else {
+          repoSortCol = col;
+          repoSortAsc = (col === 'name' || col === 'role' || col === 'activity');
+        }
+        if (currentData) renderRepoTable(currentData);
+      });
+    });
+
+    el('repo-body').addEventListener('click', function(e) {
+      var row = e.target.closest('.repo-row');
+      if (!row) return;
+      var name = String(row.getAttribute('data-repo-name') || '');
+      if (!name) return;
+      expandedRepo = (expandedRepo === name) ? null : name;
+      if (currentData) renderRepoTable(currentData);
     });
 
     refreshHttp().catch(() => {});
