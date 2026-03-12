@@ -569,6 +569,9 @@ def render_dashboard_html() -> str:
       dragBaseY: 0,
     };
 
+    let attentionSortCol = 'severity';
+    let attentionSortAsc = false;
+
     function el(id) { return document.getElementById(id) || document.createElement('div'); }
     function n(value) { return Number.isFinite(Number(value)) ? Number(value) : 0; }
     function esc(value) {
@@ -2161,6 +2164,194 @@ def render_dashboard_html() -> str:
       return shown.length;
     }
 
+    function renderBriefing(data) {
+      var attentionRepos = (data.overview && Array.isArray(data.overview.attention_repos))
+        ? data.overview.attention_repos : [];
+      var repos = Array.isArray(data.repos) ? data.repos : [];
+      var activeCount = repos.filter(function(r) {
+        return String(r.activity_state || '').toLowerCase() === 'active';
+      }).length;
+      var trend = (data.northstardrift && data.northstardrift.summary)
+        ? String(data.northstardrift.summary.overall_trend || 'stable') : 'stable';
+
+      var briefingHtml = '';
+      if (!attentionRepos.length) {
+        briefingHtml = 'All ' + esc(String(activeCount || repos.length)) + ' repos are running smoothly.';
+      } else {
+        var count = attentionRepos.length;
+        var displayRepos = attentionRepos.slice(0, 3);
+        var names = displayRepos.map(function(ar) {
+          var rName = esc(String(ar.repo || ''));
+          var safeRepo = escAttr(String(ar.repo || ''));
+          return '<span class="briefing-expander" data-repo="' + safeRepo + '">' + rName + ' &#9656;</span>';
+        });
+        var nameStr = names.join(', ');
+        if (count > 3) nameStr += ' (+' + esc(String(count - 3)) + ' more)';
+        briefingHtml = esc(String(count)) + ' repos need attention \\u2014 ' + nameStr + '.';
+        briefingHtml += ' Ecosystem trend: ' + esc(trend) + ' across ' + esc(String(activeCount || repos.length)) + ' active repos.';
+      }
+      el('briefing-text').innerHTML = briefingHtml;
+
+      var detailsContainer = el('briefing-details');
+      detailsContainer.innerHTML = '';
+      var detailRepos = attentionRepos.slice(0, 3);
+      detailRepos.forEach(function(ar) {
+        var repoName = String(ar.repo || '');
+        var repoObj = repoByName(repoName);
+        var div = document.createElement('div');
+        div.className = 'briefing-detail';
+        div.id = 'briefing-detail-' + repoName.replace(/[^a-zA-Z0-9_-]/g, '-');
+        var stalledText = repoObj && repoObj.stalled ? 'Stalled' : 'Active';
+        var taskCount = repoObj && Array.isArray(repoObj.in_progress)
+          ? repoObj.in_progress.length : 0;
+        var reasons = Array.isArray(ar.reasons) ? ar.reasons.slice(0, 3) : [];
+        var reasonsText = reasons.length
+          ? reasons.map(function(r) { return esc(String(r)); }).join('; ')
+          : 'elevated pressure score';
+        var stallReasons = repoObj && Array.isArray(repoObj.stall_reasons)
+          ? repoObj.stall_reasons.slice(0, 2) : [];
+        var stallText = stallReasons.length
+          ? ' (' + stallReasons.map(function(r) { return esc(String(r)); }).join(', ') + ')'
+          : '';
+        var score = n(ar.score);
+        var inner = '<strong>' + esc(repoName) + '</strong> \\u2014 '
+          + esc(stalledText) + stallText
+          + ' | ' + esc(String(taskCount)) + ' in-progress task' + (taskCount !== 1 ? 's' : '')
+          + ' | Reasons: ' + reasonsText
+          + ' | Score: ' + esc(String(score));
+        div.innerHTML = inner;
+        detailsContainer.appendChild(div);
+      });
+    }
+
+    function renderAttentionQueue(data) {
+      var attentionRepos = (data.overview && Array.isArray(data.overview.attention_repos))
+        ? data.overview.attention_repos : [];
+      var repos = Array.isArray(data.repos) ? data.repos : [];
+      var items = [];
+      var seenRepos = {};
+
+      // 1. Attention repos
+      attentionRepos.forEach(function(ar) {
+        var repoName = String(ar.repo || '');
+        seenRepos[repoName] = true;
+        var score = n(ar.score);
+        var severity = score >= 22 ? 'high' : (score >= 10 ? 'medium' : 'low');
+        var severityNum = score >= 22 ? 3 : (score >= 10 ? 2 : 1);
+        var reasons = Array.isArray(ar.reasons) ? ar.reasons : [];
+        var issueText = reasons.length
+          ? reasons.slice(0, 2).join('; ')
+          : 'elevated attention score';
+        items.push({
+          repo: repoName,
+          issue: issueText,
+          severity: severity,
+          severityNum: severityNum,
+          ageNum: score,
+          ageText: 'score ' + String(score),
+          action: 'Review'
+        });
+      });
+
+      // 2. Stalled repos not already in attention
+      repos.forEach(function(r) {
+        var repoName = String(r.name || '');
+        if (seenRepos[repoName]) return;
+        if (!r.stalled) return;
+        seenRepos[repoName] = true;
+        var stallReasons = Array.isArray(r.stall_reasons) ? r.stall_reasons : [];
+        var issueText = stallReasons.length
+          ? 'Stalled: ' + stallReasons.slice(0, 2).join('; ')
+          : 'Stalled: no active execution';
+        items.push({
+          repo: repoName,
+          issue: issueText,
+          severity: 'high',
+          severityNum: 3,
+          ageNum: 99,
+          ageText: 'stalled',
+          action: 'Unblock'
+        });
+      });
+
+      // 3. Aging in-progress tasks from repos not in attention
+      var now = Date.now();
+      repos.forEach(function(r) {
+        var repoName = String(r.name || '');
+        if (seenRepos[repoName]) return;
+        var tasks = Array.isArray(r.in_progress) ? r.in_progress : [];
+        tasks.forEach(function(task) {
+          var created = task.created || task.started || '';
+          if (!created) return;
+          var createdMs = new Date(created).getTime();
+          if (isNaN(createdMs)) return;
+          var ageDays = Math.floor((now - createdMs) / 86400000);
+          if (ageDays < 3) return;
+          var severity = ageDays >= 7 ? 'high' : 'medium';
+          var severityNum = ageDays >= 7 ? 3 : 2;
+          var title = String(task.title || task.id || 'unknown task');
+          items.push({
+            repo: repoName,
+            issue: title + ' (' + String(ageDays) + 'd old)',
+            severity: severity,
+            severityNum: severityNum,
+            ageNum: ageDays,
+            ageText: String(ageDays) + 'd',
+            action: 'Check'
+          });
+        });
+      });
+
+      // Sort
+      items.sort(function(a, b) {
+        var col = attentionSortCol;
+        var dir = attentionSortAsc ? 1 : -1;
+        if (col === 'severity') {
+          var d = a.severityNum - b.severityNum;
+          return d !== 0 ? d * dir : String(a.repo || '').localeCompare(String(b.repo || ''));
+        }
+        if (col === 'age') {
+          var d2 = a.ageNum - b.ageNum;
+          return d2 !== 0 ? d2 * dir : String(a.repo || '').localeCompare(String(b.repo || ''));
+        }
+        if (col === 'repo') {
+          return String(a.repo || '').localeCompare(String(b.repo || '')) * dir;
+        }
+        if (col === 'issue') {
+          return String(a.issue || '').localeCompare(String(b.issue || '')) * dir;
+        }
+        return (b.severityNum - a.severityNum);
+      });
+
+      var shown = items.slice(0, 15);
+
+      var table = el('attention-table');
+      var body = el('attention-body');
+      var countBadge = el('attention-count');
+      var emptyEl = el('attention-empty');
+
+      if (!shown.length) {
+        table.style.display = 'none';
+        emptyEl.style.display = '';
+        countBadge.textContent = '0';
+        return;
+      }
+      table.style.display = '';
+      emptyEl.style.display = 'none';
+      countBadge.textContent = String(shown.length);
+
+      body.innerHTML = shown.map(function(item) {
+        var sevClass = 'severity-' + item.severity;
+        return '<tr>'
+          + '<td><code>' + esc(item.repo) + '</code></td>'
+          + '<td>' + esc(item.issue) + '</td>'
+          + '<td><span class="' + sevClass + '">' + esc(item.severity) + '</span></td>'
+          + '<td>' + esc(item.ageText) + '</td>'
+          + '<td><span class="action-stub">' + esc(item.action) + '</span></td>'
+          + '</tr>';
+      }).join('');
+    }
+
     function render(data, source) {
       currentData = data;
       window.currentData = data;
@@ -2286,6 +2477,16 @@ def render_dashboard_html() -> str:
 
     document.addEventListener('click', (event) => {
       const target = event.target;
+      const expander = target && target.closest ? target.closest('.briefing-expander') : null;
+      if (expander) {
+        var repoName = String(expander.getAttribute('data-repo') || '');
+        var detailId = 'briefing-detail-' + repoName.replace(/[^a-zA-Z0-9_-]/g, '-');
+        var detailEl = document.getElementById(detailId);
+        if (detailEl) {
+          detailEl.classList.toggle('open');
+        }
+        return;
+      }
       const copy = target && target.closest ? target.closest('[data-copy-prompt]') : null;
       if (copy) {
         const promptText = String(copy.getAttribute('data-copy-prompt') || '');
@@ -2394,6 +2595,20 @@ def render_dashboard_html() -> str:
     }
     svg.addEventListener('pointerup', endGraphDrag);
     svg.addEventListener('pointercancel', endGraphDrag);
+
+    el('attention-table').querySelectorAll('th[data-sort]').forEach(function(th) {
+      th.addEventListener('click', function() {
+        var col = String(th.getAttribute('data-sort') || '');
+        if (!col) return;
+        if (attentionSortCol === col) {
+          attentionSortAsc = !attentionSortAsc;
+        } else {
+          attentionSortCol = col;
+          attentionSortAsc = false;
+        }
+        if (currentData) renderAttentionQueue(currentData);
+      });
+    });
 
     refreshHttp().catch(() => {});
     startPolling();
