@@ -171,9 +171,10 @@ class EcosystemHubTests(unittest.TestCase):
     def test_load_ecosystem_repos_supports_explicit_repo_path(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            outside = root.parent / "outside-repo"
-            (root / "speedrift-ecosystem").mkdir(parents=True)
-            toml_path = root / "speedrift-ecosystem" / "ecosystem.toml"
+            # Relative paths resolve from ecosystem.toml's parent directory
+            toml_dir = root / "speedrift-ecosystem"
+            toml_dir.mkdir(parents=True)
+            toml_path = toml_dir / "ecosystem.toml"
             toml_path.write_text(
                 "schema = 1\n"
                 "[repos.atlas_product]\n"
@@ -182,7 +183,8 @@ class EcosystemHubTests(unittest.TestCase):
                 encoding="utf-8",
             )
             repos = _load_ecosystem_repos(toml_path, root)
-            self.assertEqual(repos["atlas_product"], outside.resolve())
+            expected = (toml_dir / "../outside-repo").resolve()
+            self.assertEqual(repos["atlas_product"], expected)
 
     def test_discover_active_workspace_repos_includes_all_matching_repos_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -639,10 +641,11 @@ class EcosystemHubTests(unittest.TestCase):
 
             ecosystem_root = root / "speedrift-ecosystem"
             ecosystem_root.mkdir()
+            # Relative paths resolve from ecosystem.toml's parent directory
             (ecosystem_root / "ecosystem.toml").write_text(
                 "schema = 1\n"
                 "[repos.driftdriver]\nrole='orchestrator'\nurl='https://example.com'\n"
-                "[repos.atlas_product]\nrole='product'\npath='external/atlas_product'\n",
+                "[repos.atlas_product]\nrole='product'\npath='../external/atlas_product'\n",
                 encoding="utf-8",
             )
 
@@ -699,27 +702,24 @@ class EcosystemHubTests(unittest.TestCase):
         html = render_dashboard_html()
         self.assertIn("Speedrift Ecosystem Hub", html)
         self.assertIn("/api/status", html)
-        self.assertIn("Narrated Overview", html)
-        self.assertIn("North Star Scorecard", html)
-        self.assertIn("Trend Review", html)
-        self.assertIn("Window Deltas", html)
-        self.assertIn("Target Gaps", html)
-        self.assertIn("Weekly Rollups", html)
-        self.assertIn("Action Center", html)
-        self.assertIn("Security Reviews", html)
-        self.assertIn("Quality Reviews", html)
-        self.assertIn("Dependency Graph", html)
-        self.assertIn("Stalled Repos", html)
-        self.assertIn("graph-zoom-in", html)
-        self.assertIn("graph-mode", html)
-        self.assertIn("all repos", html)
+        self.assertIn("Attention Queue", html)
+        self.assertIn("attention-table", html)
+        self.assertIn("briefing-bar", html)
         self.assertIn("repo-dep-graph", html)
-        self.assertIn("graph-path", html)
+        self.assertIn("dep-zoom-in", html)
+        self.assertIn("dep-zoom-out", html)
+        self.assertIn("dep-zoom-reset", html)
+        self.assertIn("repo-table", html)
+        self.assertIn("repo-search", html)
+        self.assertIn("Dependencies", html)
+        self.assertIn("all roles", html)
+        self.assertIn("all status", html)
+        self.assertIn("drawTaskDag", html)
+        self.assertIn("renderBriefing", html)
+        self.assertIn("renderAttentionQueue", html)
+        self.assertIn("renderRepoTable", html)
+        self.assertIn("drawRepoDependencyOverview", html)
         self.assertIn("/ws/status", html)
-        self.assertIn("By Repo", html)
-        self.assertIn("repo-sort", html)
-        self.assertIn("action-sort", html)
-        self.assertIn("action-dirty-filter", html)
 
     def test_build_draft_pr_requests_dry_run(self) -> None:
         candidates = [
