@@ -911,12 +911,50 @@ def render_dashboard_html() -> str:
     }
 
     function drawTaskDag(repo) {
-      var repoName = String(repo.name || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+      var repoName = String(repo.name || '');
       var container = document.getElementById('task-dag-' + repoName);
       if (!container) return;
-      var nodes = Array.isArray(repo.task_graph_nodes) ? repo.task_graph_nodes : [];
-      var edges = Array.isArray(repo.task_graph_edges) ? repo.task_graph_edges : [];
-      if (!nodes.length) return;
+      var allNodes = Array.isArray(repo.task_graph_nodes) ? repo.task_graph_nodes : [];
+      var allEdges = Array.isArray(repo.task_graph_edges) ? repo.task_graph_edges : [];
+      if (!allNodes.length) return;
+
+      // For large graphs, filter to non-done nodes to keep it readable
+      var nodes, edges;
+      if (allNodes.length > 60) {
+        var activeIds = new Set();
+        allNodes.forEach(function(nd) {
+          var st = String(nd.status || '').toLowerCase();
+          if (st !== 'done') activeIds.add(String(nd.id || ''));
+        });
+        // If all done, show last 20
+        if (!activeIds.size) {
+          nodes = allNodes.slice(-20);
+          var showIds = new Set(nodes.map(function(nd) { return String(nd.id || ''); }));
+          edges = allEdges.filter(function(e) {
+            return showIds.has(String(e.from || e.source || '')) && showIds.has(String(e.to || e.target || ''));
+          });
+        } else {
+          nodes = allNodes.filter(function(nd) { return activeIds.has(String(nd.id || '')); });
+          edges = allEdges.filter(function(e) {
+            return activeIds.has(String(e.from || e.source || '')) || activeIds.has(String(e.to || e.target || ''));
+          });
+          // Also include done nodes that are direct parents of active nodes
+          var extraIds = new Set();
+          edges.forEach(function(e) {
+            var from = String(e.from || e.source || '');
+            if (!activeIds.has(from)) extraIds.add(from);
+          });
+          if (extraIds.size) {
+            allNodes.forEach(function(nd) {
+              if (extraIds.has(String(nd.id || ''))) nodes.push(nd);
+            });
+          }
+        }
+        container.setAttribute('data-filtered', 'Showing ' + nodes.length + ' of ' + allNodes.length + ' tasks (non-done)');
+      } else {
+        nodes = allNodes;
+        edges = allEdges;
+      }
 
       // Status color mapping
       var statusColor = function(nd) {
@@ -1058,6 +1096,11 @@ def render_dashboard_html() -> str:
 
       if (backEdgeCount > 0) {
         html += '<div class="loop-indicator">' + esc(String(backEdgeCount)) + ' break-fix loop' + (backEdgeCount !== 1 ? 's' : '') + ' detected</div>';
+      }
+
+      var filterNote = container.getAttribute('data-filtered');
+      if (filterNote) {
+        html += '<div style="font-size:0.75rem;color:var(--muted);margin-top:0.25rem">' + esc(filterNote) + '</div>';
       }
 
       container.innerHTML = html;
@@ -1458,7 +1501,7 @@ def render_dashboard_html() -> str:
       }
 
       var dagDiv = '';
-      if (nodes.length > 0 && nodes.length <= 80) {
+      if (nodes.length > 0 && nodes.length <= 200) {
         dagDiv = '<div class="task-dag" id="task-dag-' + escAttr(repoName) + '"></div>';
       }
 
