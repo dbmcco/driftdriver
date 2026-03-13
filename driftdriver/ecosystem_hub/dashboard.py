@@ -281,17 +281,9 @@ def render_dashboard_html() -> str:
       margin: 0.5rem 0 0;
     }
 
-    /* Zone 3+4: Split panel */
-    .split-panel {
-      display: flex;
-      gap: 0.95rem;
-      min-height: 500px;
-    }
-    .repo-panel {
-      flex: 3;
-    }
-    .graphs-panel {
-      flex: 2;
+    /* Zone 3: Dependencies */
+    .dependency-panel {
+      min-height: 420px;
     }
 
     /* Repo filter bar */
@@ -349,6 +341,10 @@ def render_dashboard_html() -> str:
     .repo-row {
       cursor: pointer;
     }
+    .repo-row.selected {
+      background: #e6f1ef;
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
     .status-dot {
       display: inline-block;
       width: 8px;
@@ -382,13 +378,36 @@ def render_dashboard_html() -> str:
       border-top: 1px solid var(--line);
       background: #faf7f0;
     }
+    .repo-expanded-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.8rem 1.4rem;
+      align-items: baseline;
+    }
     .task-dag {
-      margin-top: 0.35rem;
+      margin-top: 0.75rem;
+    }
+    .repo-graph-wrap {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffcf8;
+      overflow: hidden;
     }
     .task-dag-svg {
       width: 100%;
-      max-height: 200px;
+      min-height: 340px;
       display: block;
+      cursor: grab;
+      touch-action: none;
+    }
+    .task-dag-svg.dragging {
+      cursor: grabbing;
+    }
+    .repo-graph-empty {
+      color: var(--muted);
+      font-size: 0.84rem;
+      font-style: italic;
+      padding: 0.4rem 0;
     }
     .loop-indicator {
       color: var(--bad);
@@ -410,16 +429,30 @@ def render_dashboard_html() -> str:
       background: #fff;
       cursor: pointer;
     }
+    .graph-controls select {
+      font: inherit;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.2rem 0.35rem;
+      background: #fff;
+    }
     .graph-controls button:hover {
       background: #f5efe2;
     }
 
-    /* Task graph viewer */
-    .task-graph-viewer { margin-top: 0.5rem; }
-    .graph-wrap { border: 1px solid var(--line); border-radius: 6px; background: #fffcf8; }
+    .graph-meta {
+      margin-top: 0.45rem;
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      color: var(--muted);
+    }
+    .graph-note {
+      margin-top: 0.28rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
     .graph-path { font-family: var(--mono); font-size: 0.78rem; }
-    #graph { cursor: grab; }
-    #graph.dragging { cursor: grabbing; }
 
     /* Chat panel stub */
     #chat-panel[hidden] {
@@ -428,15 +461,9 @@ def render_dashboard_html() -> str:
 
     /* Responsive */
     @media (max-width: 900px) {
-      .split-panel {
+      .repo-expanded-meta {
         flex-direction: column;
-      }
-      .repo-panel,
-      .graphs-panel {
-        flex: none;
-      }
-      .graphs-panel {
-        order: -1;
+        gap: 0.35rem;
       }
     }
   </style>
@@ -476,10 +503,29 @@ def render_dashboard_html() -> str:
       </p>
     </section>
 
-    <!-- Zone 3+4: Split panel -->
-    <div class="split-panel">
-      <!-- Repo Table (left) -->
-      <section class="repo-panel card" id="repo-section">
+    <!-- Zone 3: Dependencies -->
+    <section class="dependency-panel card" id="dependencies-section">
+      <div class="section-header">
+        <h2>Dependencies</h2>
+        <div class="graph-controls">
+          <button id="dep-zoom-out" type="button">-</button>
+          <button id="dep-zoom-in" type="button">+</button>
+          <button id="dep-zoom-reset" type="button">reset</button>
+        </div>
+      </div>
+      <svg id="repo-dep-graph" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="graph-meta" id="repo-dep-meta">Loading repo dependency graph...</div>
+      <div class="graph-note" id="repo-dep-note">Click a repo node to focus and expand that repo below.</div>
+      <div class="graph-legend">
+        <span><span class="dot" style="background:#2f6e39"></span>Done</span>
+        <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
+        <span><span class="dot" style="background:#a26c13"></span>Open</span>
+        <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
+      </div>
+    </section>
+
+    <!-- Zone 4: Repo Table -->
+    <section class="repo-panel card" id="repo-section">
         <div class="section-header">
           <h2>Repos</h2>
           <span class="badge" id="repo-count">0</span>
@@ -519,61 +565,14 @@ def render_dashboard_html() -> str:
           </thead>
           <tbody id="repo-body"></tbody>
         </table>
-      </section>
+    </section>
 
-      <!-- Graphs Panel (right) -->
-      <section class="graphs-panel card" id="graphs-section">
-        <div class="section-header">
-          <h2>Dependencies</h2>
-          <div class="graph-controls">
-            <button id="dep-zoom-out" type="button">-</button>
-            <button id="dep-zoom-in" type="button">+</button>
-            <button id="dep-zoom-reset" type="button">reset</button>
-          </div>
-        </div>
-        <svg id="repo-dep-graph" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="graph-legend">
-          <span><span class="dot" style="background:#2f6e39"></span>Done</span>
-          <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
-          <span><span class="dot" style="background:#a26c13"></span>Open</span>
-          <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
-        </div>
-        <div class="task-graph-viewer" id="task-graph-viewer">
-          <div class="section-header" style="margin-top:1rem">
-            <h3>Task Graph</h3>
-            <div class="graph-controls">
-              <select id="graph-repo" style="max-width:140px"><option value="">select repo</option></select>
-              <select id="graph-mode">
-                <option value="active" selected>active + blocked</option>
-                <option value="focus">focus chain</option>
-                <option value="full">full graph</option>
-              </select>
-              <button id="graph-zoom-out" type="button">-</button>
-              <button id="graph-zoom-in" type="button">+</button>
-              <button id="graph-zoom-reset" type="button">reset</button>
-            </div>
-          </div>
-          <div class="graph-wrap" style="overflow:hidden">
-            <svg id="graph" viewBox="0 0 1000 340" preserveAspectRatio="xMidYMin meet" style="width:100%;min-height:200px"></svg>
-          </div>
-          <div class="graph-legend" style="margin-top:0.25rem">
-            <span><span class="dot" style="background:#2f6e39"></span>Done</span>
-            <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
-            <span><span class="dot" style="background:#a26c13"></span>Open</span>
-            <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
-            <span>Pulsing = active</span>
-          </div>
-          <div class="graph-path" id="graph-path" style="font-size:0.78rem;color:var(--muted);margin-top:0.3rem">Select a repo to view its task graph.</div>
-        </div>
-      </section>
-
-      <!-- Chat Panel stub (Approach C) -->
-      <aside id="chat-panel" hidden>
-        <div class="section-header"><h2>Chat</h2></div>
-        <div id="chat-messages"></div>
-        <input type="text" id="chat-input" placeholder="Ask about your ecosystem..." />
-      </aside>
-    </div>
+    <!-- Chat Panel stub (Approach C) -->
+    <aside id="chat-panel" hidden>
+      <div class="section-header"><h2>Chat</h2></div>
+      <div id="chat-messages"></div>
+      <input type="text" id="chat-input" placeholder="Ask about your ecosystem..." />
+    </aside>
   </main>
   <script>
     let ws = null;
@@ -581,7 +580,8 @@ def render_dashboard_html() -> str:
     let reconnectTimer = null;
     let currentData = null;
     let selectedRepo = '';
-    let graphMode = 'active';
+    let expandedRepo = '';
+    let graphMode = 'full';
     let selectedNodeId = '';
     const graphView = {
       scale: 1,
@@ -603,7 +603,6 @@ def render_dashboard_html() -> str:
     let repoDriftFilter = 'all';
     let repoSortCol = 'name';
     let repoSortAsc = true;
-    let expandedRepo = null;
 
     function el(id) { return document.getElementById(id) || document.createElement('div'); }
     function n(value) { return Number.isFinite(Number(value)) ? Number(value) : 0; }
@@ -616,8 +615,61 @@ def render_dashboard_html() -> str:
     function escAttr(value) {
       return esc(value).replaceAll('"', '&quot;').replaceAll("'", '&#39;');
     }
+    function repoDomId(name) {
+      return String(name || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+    }
     function repoByName(name) {
       return (currentData && currentData.repos || []).find((repo) => String(repo.name || '') === String(name || '')) || null;
+    }
+    function resetGraphViewState() {
+      graphView.scale = 1;
+      graphView.tx = 0;
+      graphView.ty = 0;
+      graphView.drag = false;
+    }
+    function scrollRepoIntoView(name) {
+      if (!name) return;
+      const domId = repoDomId(name);
+      const expanded = document.getElementById('repo-expanded-' + domId);
+      const row = Array.from(document.querySelectorAll('.repo-row')).find(function(item) {
+        return String(item.getAttribute('data-repo-name') || '') === name;
+      }) || null;
+      const target = expanded || row;
+      if (target && target.scrollIntoView) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+    function drawExpandedRepoGraph() {
+      if (!currentData || !expandedRepo) return;
+      const repo = repoByName(expandedRepo);
+      if (repo) drawTaskDag(repo);
+    }
+    function selectRepo(name, options) {
+      const nextRepo = String(name || '');
+      const toggleExpanded = !!(options && options.toggleExpanded);
+      const forceExpanded = !!(options && options.forceExpanded);
+      const shouldScroll = !!(options && options.scrollIntoView);
+      const nextExpanded = toggleExpanded
+        ? (expandedRepo === nextRepo ? '' : nextRepo)
+        : (forceExpanded ? nextRepo : expandedRepo);
+      const repoChanged = nextRepo !== selectedRepo;
+      const expansionChanged = nextExpanded !== expandedRepo;
+      if (repoChanged || expansionChanged) {
+        selectedNodeId = '';
+        resetGraphViewState();
+      }
+      selectedRepo = nextRepo;
+      expandedRepo = nextExpanded;
+      if (currentData) {
+        renderRepoTable(currentData);
+        drawRepoDependencyOverview(currentData);
+        drawExpandedRepoGraph();
+      }
+      if (shouldScroll) {
+        window.requestAnimationFrame(function() {
+          scrollRepoIntoView(expandedRepo || selectedRepo);
+        });
+      }
     }
 
     function syncFiltersToUrl() {
@@ -763,6 +815,8 @@ def render_dashboard_html() -> str:
       const summary = overview.summary && typeof overview.summary === 'object' ? overview.summary : {};
 
       if (!nodes.length) {
+        svg.dataset.baseWidth = '800';
+        svg.dataset.baseHeight = '280';
         svg.setAttribute('viewBox', '0 0 800 280');
         svg.innerHTML = '<text x="24" y="48" fill="#5f6f66" font-size="16">No repo dependency signals available yet.</text>';
         meta.textContent = 'repo dependencies unavailable';
@@ -779,6 +833,8 @@ def render_dashboard_html() -> str:
         ));
       const width = Math.max(800, 300 + rankedNodes.length * 38);
       const height = 500;
+      svg.dataset.baseWidth = String(width);
+      svg.dataset.baseHeight = String(height);
       const centerX = width / 2;
       const centerY = height / 2;
 
@@ -944,6 +1000,7 @@ def render_dashboard_html() -> str:
         ${edgeSvg}
         ${nodeSvg}
       `;
+      applyRepoDepZoom();
 
       meta.textContent =
         `repo dependencies | repos=${n(summary.repo_count || nodes.length)} | links=${n(summary.edge_count || edges.length)} | isolated=${n(summary.isolated_repos || 0)}`;
@@ -958,198 +1015,94 @@ def render_dashboard_html() -> str:
 
     function drawTaskDag(repo) {
       var repoName = String(repo.name || '');
-      var container = document.getElementById('task-dag-' + repoName);
-      if (!container) return;
-      var allNodes = Array.isArray(repo.task_graph_nodes) ? repo.task_graph_nodes : [];
-      var allEdges = Array.isArray(repo.task_graph_edges) ? repo.task_graph_edges : [];
-      if (!allNodes.length) return;
-
-      // For large graphs, filter to non-done nodes to keep it readable
-      var nodes, edges;
-      if (allNodes.length > 60) {
-        var activeIds = new Set();
-        allNodes.forEach(function(nd) {
-          var st = String(nd.status || '').toLowerCase();
-          if (st !== 'done') activeIds.add(String(nd.id || ''));
-        });
-        // If all done, show last 20
-        if (!activeIds.size) {
-          nodes = allNodes.slice(-20);
-          var showIds = new Set(nodes.map(function(nd) { return String(nd.id || ''); }));
-          edges = allEdges.filter(function(e) {
-            return showIds.has(String(e.from || e.source || '')) && showIds.has(String(e.to || e.target || ''));
-          });
-        } else {
-          nodes = allNodes.filter(function(nd) { return activeIds.has(String(nd.id || '')); });
-          edges = allEdges.filter(function(e) {
-            return activeIds.has(String(e.from || e.source || '')) || activeIds.has(String(e.to || e.target || ''));
-          });
-          // Also include done nodes that are direct parents of active nodes
-          var extraIds = new Set();
-          edges.forEach(function(e) {
-            var from = String(e.from || e.source || '');
-            if (!activeIds.has(from)) extraIds.add(from);
-          });
-          if (extraIds.size) {
-            allNodes.forEach(function(nd) {
-              if (extraIds.has(String(nd.id || ''))) nodes.push(nd);
-            });
-          }
-        }
-        container.setAttribute('data-filtered', 'Showing ' + nodes.length + ' of ' + allNodes.length + ' tasks (non-done)');
-      } else {
-        nodes = allNodes;
-        edges = allEdges;
+      var domId = repoDomId(repoName);
+      var svg = document.getElementById('task-graph-svg-' + domId);
+      var out = document.getElementById('graph-path-' + domId);
+      if (!svg || !out) return;
+      var baseModel = normalizeGraph(repo);
+      if (!baseModel.nodes.length) {
+        svg.setAttribute('viewBox', '0 0 1000 340');
+        svg.innerHTML = '<text x="40" y="60" fill="#5f6f66" font-size="16">No task graph for selected repo.</text>';
+        out.textContent = 'No graph data for selected repo. This usually means tasks have not been written to .workgraph/graph.jsonl yet.';
+        return;
       }
 
-      // Status color mapping
-      var statusColor = function(nd) {
-        var st = String(nd.status || '').toLowerCase();
-        if (st === 'done') return '#2f6e39';
-        if (st === 'in-progress' || st === 'in_progress') return '#0f6f7c';
-        if (st === 'blocked') return '#9c2525';
-        return '#a26c13'; // open/ready/other
-      };
-
-      // Build adjacency and detect incoming edges
-      var adj = {};
-      var incoming = {};
-      nodes.forEach(function(nd) {
-        var id = String(nd.id || '');
-        adj[id] = [];
-        incoming[id] = 0;
-      });
-      var nodeIds = new Set(nodes.map(function(nd) { return String(nd.id || ''); }));
-      edges.forEach(function(e) {
-        var from = String(e.from || e.source || '');
-        var to = String(e.to || e.target || '');
-        if (!from || !to || !nodeIds.has(from) || !nodeIds.has(to)) return;
-        if (!adj[from]) adj[from] = [];
-        adj[from].push(to);
-        if (incoming[to] == null) incoming[to] = 0;
-        incoming[to]++;
-      });
-
-      // Find root nodes (no incoming edges)
-      var roots = [];
-      nodes.forEach(function(nd) {
-        var id = String(nd.id || '');
-        if ((incoming[id] || 0) === 0) roots.push(id);
-      });
-      if (!roots.length) {
-        // All nodes have incoming; pick first as fallback
-        roots = [String(nodes[0].id || '')];
+      var shaped = subgraphForMode(baseModel, graphMode, selectedNodeId);
+      var model = layoutGraph(shaped);
+      if (selectedNodeId && !model.pos[selectedNodeId]) {
+        selectedNodeId = '';
       }
+      var activeNodeId = selectedNodeId || shaped.seed || '';
+      var traversal = activeNodeId ? traverseSelection(model, activeNodeId) : null;
+      var cycleEdges = detectCycleEdges(baseModel.edges);
 
-      // BFS to assign columns (layer = distance from root)
-      var col = {};
-      var visited = {};
-      var queue = [];
-      roots.forEach(function(id) {
-        col[id] = 0;
-        visited[id] = true;
-        queue.push(id);
-      });
-      while (queue.length) {
-        var cur = queue.shift();
-        var children = adj[cur] || [];
-        children.forEach(function(child) {
-          var nextCol = (col[cur] || 0) + 1;
-          if (!visited[child] || nextCol > (col[child] || 0)) {
-            col[child] = nextCol;
-          }
-          if (!visited[child]) {
-            visited[child] = true;
-            queue.push(child);
-          }
-        });
-      }
-      // Assign column 0 to unvisited nodes
-      nodes.forEach(function(nd) {
-        var id = String(nd.id || '');
-        if (col[id] == null) col[id] = 0;
-      });
+      var edgeSvg = model.edges
+        .filter(function(edge) { return model.pos[edge.source] && model.pos[edge.target]; })
+        .map(function(edge) {
+          var a = model.pos[edge.source];
+          var b = model.pos[edge.target];
+          var cx1 = a.x + Math.max(24, Math.abs(b.x - a.x) * 0.35);
+          var cx2 = b.x - Math.max(24, Math.abs(b.x - a.x) * 0.35);
+          var edgeKey = String(edge.source || '') + '->' + String(edge.target || '');
+          var inPath = traversal ? traversal.pathEdges.has(edgeKey) : false;
+          var isCycle = cycleEdges.has(edgeKey);
+          var stroke = inPath ? '#0f6f7c' : (isCycle ? '#8c2f2f' : '#b8b0a3');
+          var opacity = inPath ? 1.0 : (traversal ? 0.2 : 0.82);
+          var dash = isCycle ? ' stroke-dasharray="6 4"' : '';
+          var width = inPath ? 2.1 : 1.4;
+          return '<path d="M ' + a.x + ' ' + a.y + ' C ' + cx1 + ' ' + a.y + ', ' + cx2 + ' ' + b.y + ', ' + b.x + ' ' + b.y + '" stroke="' + stroke + '" stroke-width="' + width + '" fill="none" opacity="' + opacity + '"' + dash + ' />';
+        })
+        .join('');
 
-      // Group nodes by column
-      var columns = {};
-      var maxCol = 0;
-      nodes.forEach(function(nd) {
-        var id = String(nd.id || '');
-        var c = col[id] || 0;
-        if (c > maxCol) maxCol = c;
-        if (!columns[c]) columns[c] = [];
-        columns[c].push(nd);
-      });
+      var repoRuntime = repo.runtime && typeof repo.runtime === 'object' ? repo.runtime : {};
+      var activeTaskIds = Array.isArray(repoRuntime.active_task_ids) && repoRuntime.active_task_ids.length
+        ? new Set(repoRuntime.active_task_ids.map(function(value) { return String(value); }))
+        : null;
+      var isRepoActive = String(repo.activity_state || '').toLowerCase() === 'active';
+      var nodeSvg = Object.values(model.pos).map(function(entry) {
+        var label = String(entry.node.label || entry.node.title || entry.node.id || '').slice(0, 28);
+        var status = String(entry.node.status || '').toLowerCase();
+        var statusClass = status.replace(/[^a-z0-9]+/g, '-');
+        var isInProgress = status === 'in-progress';
+        var isRuntimeActive = activeTaskIds ? activeTaskIds.has(String(entry.node.id || '')) : false;
+        var shouldPulse = activeTaskIds ? isRuntimeActive : (isInProgress && isRepoActive);
+        var age = Number.isFinite(Number(entry.node.age_days)) ? String(entry.node.age_days) + 'd' : '';
+        var isSelected = activeNodeId && String(entry.node.id) === String(activeNodeId);
+        var inPath = traversal ? traversal.pathNodes.has(String(entry.node.id)) : false;
+        var stroke = isSelected ? '#0f6f7c' : (inPath ? '#1b5f69' : '#fff');
+        var strokeW = isSelected ? 3 : (inPath ? 2 : 1);
+        var opacity = traversal ? (inPath ? 1 : 0.34) : 1;
+        return '<g class="graph-node status-' + escAttr(statusClass) + '" data-node-id="' + escAttr(entry.node.id) + '" style="opacity:' + opacity + '; cursor:pointer;">'
+          + (shouldPulse ? '<circle class="pulse-halo" cx="' + entry.x + '" cy="' + entry.y + '" r="14" fill="none" stroke="#0f6f7c" stroke-width="2.3" />' : '')
+          + '<circle class="base-node" cx="' + entry.x + '" cy="' + entry.y + '" r="10" fill="' + colorFor(entry.node) + '" stroke="' + stroke + '" stroke-width="' + strokeW + '" />'
+          + '<text x="' + (entry.x + 16) + '" y="' + (entry.y + 5) + '" fill="#2b3932" font-size="12">' + esc(entry.node.id) + '</text>'
+          + '<text x="' + (entry.x + 16) + '" y="' + (entry.y + 20) + '" fill="#6b776f" font-size="10">' + esc(label) + (age ? ' ' + esc(age) : '') + '</text>'
+          + '</g>';
+      }).join('');
 
-      // Layout constants
-      var colSpacing = 120;
-      var rowSpacing = 36;
-      var nodeRadius = 7;
-      var startX = 40;
-      var startY = 28;
+      var depthLabels = Array.from({ length: Math.max(1, model.maxDepth + 1) }, function(_v, idx) { return idx; })
+        .map(function(depth) {
+          return '<text x="' + (120 + depth * 230 - 16) + '" y="32" fill="#6b776f" font-size="12">D' + depth + '</text>';
+        })
+        .join('');
 
-      // Calculate positions
-      var pos = {};
-      var maxRowCount = 0;
-      for (var c = 0; c <= maxCol; c++) {
-        var colNodes = columns[c] || [];
-        if (colNodes.length > maxRowCount) maxRowCount = colNodes.length;
-        colNodes.forEach(function(nd, idx) {
-          var id = String(nd.id || '');
-          pos[id] = {
-            x: startX + c * colSpacing,
-            y: startY + idx * rowSpacing,
-            node: nd
-          };
-        });
-      }
+      svg.setAttribute('viewBox', '0 0 ' + model.width + ' ' + model.height);
+      svg.innerHTML =
+        '<rect x="0" y="0" width="' + model.width + '" height="' + model.height + '" fill="#fffdfa" pointer-events="none" />'
+        + '<g transform="translate(' + graphView.tx + ' ' + graphView.ty + ') scale(' + graphView.scale + ')">'
+        + depthLabels + edgeSvg + nodeSvg
+        + '</g>';
 
-      var svgWidth = 560;
-      var svgHeight = Math.max(60, startY + maxRowCount * rowSpacing + 16);
-
-      // Detect back-edges: edges where target is in same or earlier column
-      var backEdgeCount = 0;
-      var edgeSvg = '';
-      edges.forEach(function(e) {
-        var from = String(e.from || e.source || '');
-        var to = String(e.to || e.target || '');
-        if (!pos[from] || !pos[to]) return;
-        var isBackEdge = (col[to] || 0) <= (col[from] || 0);
-        if (isBackEdge) backEdgeCount++;
-        var a = pos[from];
-        var b = pos[to];
-        var stroke = isBackEdge ? '#9c2525' : '#b8b0a3';
-        var dash = isBackEdge ? ' stroke-dasharray="4,3"' : '';
-        edgeSvg += '<line x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '" stroke="' + stroke + '" stroke-width="1.2"' + dash + ' />';
-      });
-
-      // Render nodes
-      var nodeSvg = '';
-      nodes.forEach(function(nd) {
-        var id = String(nd.id || '');
-        if (!pos[id]) return;
-        var p = pos[id];
-        var fill = statusColor(nd);
-        var title = String(nd.title || nd.id || '');
-        var label = title.length > 20 ? title.slice(0, 19) + '\u2026' : title;
-        nodeSvg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="' + nodeRadius + '" fill="' + fill + '" stroke="#fff" stroke-width="1" />';
-        nodeSvg += '<text x="' + (p.x + nodeRadius + 4) + '" y="' + (p.y + 3) + '" fill="#2e3d35" font-size="9">' + esc(label) + '</text>';
-      });
-
-      var html = '<svg class="task-dag-svg" viewBox="0 0 ' + svgWidth + ' ' + svgHeight + '" preserveAspectRatio="xMinYMin meet">'
-        + '<rect x="0" y="0" width="' + svgWidth + '" height="' + svgHeight + '" fill="none" />'
-        + edgeSvg + nodeSvg + '</svg>';
-
-      if (backEdgeCount > 0) {
-        html += '<div class="loop-indicator">' + esc(String(backEdgeCount)) + ' break-fix loop' + (backEdgeCount !== 1 ? 's' : '') + ' detected</div>';
-      }
-
-      var filterNote = container.getAttribute('data-filtered');
-      if (filterNote) {
-        html += '<div style="font-size:0.75rem;color:var(--muted);margin-top:0.25rem">' + esc(filterNote) + '</div>';
-      }
-
-      container.innerHTML = html;
+      setGraphPathText(
+        out,
+        model,
+        activeNodeId,
+        traversal || { ancestors: new Set(), descendants: new Set(), pathNodes: new Set(), pathEdges: new Set() },
+        cycleEdges,
+        graphMode,
+        shaped.seed,
+        baseModel,
+      );
     }
 
     function renderBriefing(data) {
@@ -1481,9 +1434,11 @@ def render_dashboard_html() -> str:
         var driftHtml = driftScore > 0
           ? '<span class="drift-count' + (driftScore >= 20 ? ' high' : '') + '">' + esc(String(driftScore)) + '</span>'
           : '<span style="color:var(--muted)">0</span>';
+        var selectedClass = selectedRepo === repoName ? ' selected' : '';
+        var selectedAttr = selectedRepo === repoName ? ' aria-selected="true"' : ' aria-selected="false"';
 
         rows.push(
-          '<tr class="repo-row" data-repo-name="' + escAttr(repoName) + '">'
+          '<tr class="repo-row' + selectedClass + '" data-repo-name="' + escAttr(repoName) + '"' + selectedAttr + '>'
           + '<td><strong>' + esc(repoName) + '</strong></td>'
           + '<td>' + esc(role || '\u2014') + '</td>'
           + '<td><span class="status-dot ' + status + '"></span></td>'
@@ -1505,7 +1460,9 @@ def render_dashboard_html() -> str:
 
     function renderRepoExpanded(repo) {
       var repoName = String(repo.name || '');
+      var domId = repoDomId(repoName);
       var nodes = Array.isArray(repo.task_graph_nodes) ? repo.task_graph_nodes : [];
+      var edges = Array.isArray(repo.task_graph_edges) ? repo.task_graph_edges : [];
       var inProgress = 0;
       var ready = 0;
       var blocked = 0;
@@ -1546,52 +1503,51 @@ def render_dashboard_html() -> str:
           + '</div>';
       }
 
-      var dagDiv = '';
-      if (nodes.length > 0 && nodes.length <= 200) {
-        dagDiv = '<div class="task-dag" id="task-dag-' + escAttr(repoName) + '"></div>';
+      var graphControls = '<div class="graph-controls">'
+        + '<select data-graph-mode-for="' + escAttr(repoName) + '">'
+        + '<option value="full"' + (graphMode === 'full' ? ' selected' : '') + '>full graph</option>'
+        + '<option value="active"' + (graphMode === 'active' ? ' selected' : '') + '>active + blocked</option>'
+        + '<option value="focus"' + (graphMode === 'focus' ? ' selected' : '') + '>focus chain</option>'
+        + '</select>'
+        + '<button type="button" data-graph-zoom="out">-</button>'
+        + '<button type="button" data-graph-zoom="in">+</button>'
+        + '<button type="button" data-graph-zoom="reset">reset</button>'
+        + '</div>';
+      var dagDiv = '<div class="task-dag">'
+        + '<div class="section-header" style="margin-bottom:0.45rem">'
+        + '<h3>Task Graph</h3>'
+        + graphControls
+        + '</div>';
+      if (nodes.length > 0) {
+        dagDiv += '<div class="repo-graph-wrap">'
+          + '<svg class="task-dag-svg" id="task-graph-svg-' + domId + '" viewBox="0 0 1000 340" preserveAspectRatio="xMidYMin meet"></svg>'
+          + '</div>'
+          + '<div class="graph-legend" style="margin-top:0.35rem">'
+          + '<span><span class="dot" style="background:#2f6e39"></span>Done</span>'
+          + '<span><span class="dot" style="background:#0f6f7c"></span>In progress</span>'
+          + '<span><span class="dot" style="background:#a26c13"></span>Open</span>'
+          + '<span><span class="dot" style="background:#9c2525"></span>Blocked</span>'
+          + '<span>Pulsing = active</span>'
+          + '</div>'
+          + '<div class="graph-path" id="graph-path-' + domId + '" style="margin-top:0.3rem">Loading task graph...</div>';
+      } else {
+        dagDiv += '<div class="repo-graph-empty">No task graph for this repo yet.</div>';
       }
+      dagDiv += '</div>';
 
-      return '<tr class="repo-expanded-row" data-repo-expanded="' + escAttr(repoName) + '">'
+      return '<tr class="repo-expanded-row" id="repo-expanded-' + domId + '" data-repo-expanded="' + escAttr(repoName) + '">'
         + '<td colspan="7">'
         + '<div class="repo-expanded">'
+        + '<div class="repo-expanded-meta">'
         + '<div><strong>Tasks:</strong> ' + taskSummary + '</div>'
+        + '<div><strong>Graph:</strong> ' + esc(String(nodes.length)) + ' nodes / ' + esc(String(edges.length)) + ' edges</div>'
         + '<div><strong>Git:</strong> ' + gitState + '</div>'
+        + '</div>'
         + stalledText
         + dagDiv
         + '</div>'
         + '</td>'
         + '</tr>';
-    }
-
-    function refreshGraphSelector(data) {
-      const select = el('graph-repo');
-      const graphRepos = (data.repos || [])
-        .map((repo) => ({
-          name: repo.name,
-          nodes: (repo.task_graph_nodes || []).length,
-          edges: (repo.task_graph_edges || []).length,
-        }))
-        .sort((a, b) => (
-          b.edges - a.edges ||
-          b.nodes - a.nodes ||
-          String(a.name || '').localeCompare(String(b.name || ''))
-        ));
-      const repos = graphRepos.map((row) => String(row.name || ''));
-      const existing = new Set(Array.from(select.options).map((opt) => opt.value));
-      const expected = ["", ...repos];
-      const needsReset = expected.length !== existing.size || expected.some((name) => !existing.has(name));
-      if (needsReset) {
-        const opts = ['<option value="">select repo</option>'];
-        graphRepos.forEach((row) => {
-          const label = `${row.name} (${row.nodes}n/${row.edges}e)`;
-          opts.push(`<option value="${escAttr(row.name)}">${esc(label)}</option>`);
-        });
-        select.innerHTML = opts.join('');
-      }
-      if (selectedRepo && !repos.includes(selectedRepo)) {
-        selectedRepo = '';
-      }
-      select.value = selectedRepo;
     }
 
     function laneFor(node) {
@@ -1880,18 +1836,22 @@ def render_dashboard_html() -> str:
       return { ancestors, descendants, pathNodes, pathEdges };
     }
 
-    function setGraphPathText(model, activeNodeId, traversal, cycleEdges, mode, seed) {
-      const out = el('graph-path');
+    function setGraphPathText(out, model, activeNodeId, traversal, cycleEdges, mode, seed, baseModel) {
       if ((model.edges || []).length === 0) {
         if (!activeNodeId) {
           out.textContent = `Mode: ${mode}. No dependency edges found for this repo yet (tasks may not define "after" links).`;
           return;
         }
       }
+      const totalNodes = Number((baseModel && baseModel.nodes || []).length);
+      const totalEdges = Number((baseModel && baseModel.edges || []).length);
+      const scope = mode === 'full'
+        ? `${model.nodes.length} nodes, ${model.edges.length} edges`
+        : `${model.nodes.length}/${totalNodes} nodes, ${model.edges.length}/${totalEdges} edges`;
       if (!activeNodeId) {
         const loopCount = cycleEdges.size;
         out.textContent =
-          `Mode: ${mode}. Focus seed: ${seed || 'none'}.\n` +
+          `Mode: ${mode}. Scope: ${scope}. Focus seed: ${seed || 'none'}.\n` +
           (loopCount > 0
             ? `Detected ${loopCount} cycle edges. Select a node to inspect dependency chain.`
             : 'Select a node to inspect dependency chain.');
@@ -1907,6 +1867,7 @@ def render_dashboard_html() -> str:
         if (traversal.pathNodes.has(s) || traversal.pathNodes.has(t)) loopHits.push(edge);
       });
       out.textContent =
+        `Mode: ${mode}. Scope: ${scope}.\n` +
         `Node: ${activeNodeId} (${title})\n` +
         `Upstream chain (${up.length}): ${up.slice(0, 12).join(', ') || 'none'}\n` +
         `Downstream chain (${down.length}): ${down.slice(0, 12).join(', ') || 'none'}\n` +
@@ -1915,116 +1876,19 @@ def render_dashboard_html() -> str:
 
     function zoomGraph(multiplier) {
       graphView.scale = Math.min(3.6, Math.max(0.45, graphView.scale * multiplier));
-      if (currentData) drawGraph(currentData);
+      drawExpandedRepoGraph();
     }
 
     function resetGraphView() {
-      graphView.scale = 1;
-      graphView.tx = 0;
-      graphView.ty = 0;
-      if (currentData) drawGraph(currentData);
-    }
-
-    function drawGraph(data) {
-      const svg = el('graph');
-      if (!selectedRepo) {
-        svg.setAttribute('viewBox', '0 0 1000 340');
-        svg.innerHTML = '<text x="40" y="60" fill="#5f6f66" font-size="16">Select a repo to view its task graph.</text>';
-        el('graph-path').textContent = 'Select a repo to view its task graph.';
-        return;
-      }
-      const repo = (data.repos || []).find((r) => r.name === selectedRepo);
-      if (!repo || !Array.isArray(repo.task_graph_nodes) || repo.task_graph_nodes.length === 0) {
-        svg.setAttribute('viewBox', '0 0 1000 340');
-        svg.innerHTML = '<text x="40" y="60" fill="#5f6f66" font-size="16">No task graph for selected repo.</text>';
-        el('graph-path').textContent = 'No graph data for selected repo. This usually means tasks have not been written to .workgraph/graph.jsonl yet.';
-        return;
-      }
-
-      const baseModel = normalizeGraph(repo);
-      const shaped = subgraphForMode(baseModel, graphMode, selectedNodeId);
-      const model = layoutGraph(shaped);
-      if (selectedNodeId && !model.pos[selectedNodeId]) {
-        selectedNodeId = '';
-      }
-      const activeNodeId = selectedNodeId || shaped.seed || '';
-      const traversal = activeNodeId ? traverseSelection(model, activeNodeId) : null;
-      const cycleEdges = detectCycleEdges(baseModel.edges);
-
-      const edgeSvg = model.edges
-        .filter((edge) => model.pos[edge.source] && model.pos[edge.target])
-        .map((edge) => {
-          const a = model.pos[edge.source];
-          const b = model.pos[edge.target];
-          const cx1 = a.x + Math.max(24, Math.abs(b.x - a.x) * 0.35);
-          const cx2 = b.x - Math.max(24, Math.abs(b.x - a.x) * 0.35);
-          const edgeKey = `${edge.source}->${edge.target}`;
-          const inPath = traversal ? traversal.pathEdges.has(edgeKey) : false;
-          const isCycle = cycleEdges.has(edgeKey);
-          const stroke = inPath ? '#0f6f7c' : (isCycle ? '#8c2f2f' : '#b8b0a3');
-          const opacity = inPath ? 1.0 : (traversal ? 0.2 : 0.82);
-          const dash = isCycle ? ' stroke-dasharray="6 4"' : '';
-          const width = inPath ? 2.1 : 1.4;
-          return `<path d="M ${a.x} ${a.y} C ${cx1} ${a.y}, ${cx2} ${b.y}, ${b.x} ${b.y}" stroke="${stroke}" stroke-width="${width}" fill="none" opacity="${opacity}"${dash} />`;
-        })
-        .join('');
-
-      const repoObj = repoByName(selectedRepo) || {};
-      const repoRuntime = repoObj.runtime && typeof repoObj.runtime === 'object' ? repoObj.runtime : {};
-      const activeTaskIds = Array.isArray(repoRuntime.active_task_ids) && repoRuntime.active_task_ids.length
-        ? new Set(repoRuntime.active_task_ids.map((value) => String(value)))
-        : null;
-      const isRepoActive = String((repoObj.activity_state) || '').toLowerCase() === 'active';
-      const nodeSvg = Object.values(model.pos).map((entry) => {
-        const label = String(entry.node.label || entry.node.id || '').slice(0, 28);
-        const status = String(entry.node.status || '').toLowerCase();
-        const statusClass = status.replace(/[^a-z0-9]+/g, '-');
-        const isInProgress = status === 'in-progress';
-        const isRuntimeActive = activeTaskIds ? activeTaskIds.has(String(entry.node.id || '')) : false;
-        const shouldPulse = activeTaskIds ? isRuntimeActive : (isInProgress && isRepoActive);
-        const age = Number.isFinite(Number(entry.node.age_days)) ? `${entry.node.age_days}d` : '';
-        const isSelected = activeNodeId && String(entry.node.id) === String(activeNodeId);
-        const inPath = traversal ? traversal.pathNodes.has(String(entry.node.id)) : false;
-        const stroke = isSelected ? '#0f6f7c' : (inPath ? '#1b5f69' : '#fff');
-        const strokeW = isSelected ? 3 : (inPath ? 2 : 1);
-        const opacity = traversal ? (inPath ? 1 : 0.34) : 1;
-        return `
-          <g class="graph-node status-${statusClass}" data-node-id="${esc(entry.node.id)}" style="opacity:${opacity}; cursor:pointer;">
-            ${shouldPulse ? `<circle class="pulse-halo" cx="${entry.x}" cy="${entry.y}" r="14" fill="none" stroke="#0f6f7c" stroke-width="2.3" />` : ''}
-            <circle class="base-node" cx="${entry.x}" cy="${entry.y}" r="10" fill="${colorFor(entry.node)}" stroke="${stroke}" stroke-width="${strokeW}" />
-            <text x="${entry.x + 16}" y="${entry.y + 5}" fill="#2b3932" font-size="12">${esc(entry.node.id)}</text>
-            <text x="${entry.x + 16}" y="${entry.y + 20}" fill="#6b776f" font-size="10">${esc(label)} ${esc(age)}</text>
-          </g>
-        `;
-      }).join('');
-
-      const depthLabels = Array.from({ length: Math.max(1, model.maxDepth + 1) }, (_v, idx) => idx)
-        .map((depth) => `<text x="${120 + depth * 230 - 16}" y="32" fill="#6b776f" font-size="12">D${depth}</text>`)
-        .join('');
-
-      svg.setAttribute('viewBox', `0 0 ${model.width} ${model.height}`);
-      svg.innerHTML =
-        `<rect x="0" y="0" width="${model.width}" height="${model.height}" fill="#fffdfa" pointer-events="none" />` +
-        `<g id="graph-content" transform="translate(${graphView.tx} ${graphView.ty}) scale(${graphView.scale})">${depthLabels}${edgeSvg}${nodeSvg}</g>`;
-      const loopCount = cycleEdges.size;
-      const totalNodes = Number((baseModel.nodes || []).length);
-      const totalEdges = Number((baseModel.edges || []).length);
-      const scope = graphMode === 'full'
-        ? `${model.nodes.length} nodes, ${model.edges.length} edges`
-        : `${model.nodes.length}/${totalNodes} nodes, ${model.edges.length}/${totalEdges} edges`;
-      setGraphPathText(
-        model,
-        activeNodeId,
-        traversal || { ancestors: new Set(), descendants: new Set(), pathNodes: new Set(), pathEdges: new Set() },
-        cycleEdges,
-        graphMode,
-        shaped.seed,
-      );
+      resetGraphViewState();
+      drawExpandedRepoGraph();
     }
 
     function render(data, source) {
       currentData = data;
       window.currentData = data;
+      if (selectedRepo && !repoByName(selectedRepo)) selectedRepo = '';
+      if (expandedRepo && !repoByName(expandedRepo)) expandedRepo = '';
       el('meta').textContent =
         'Generated: ' + (data.generated_at || 'n/a') + ' | repos: ' + (data.repo_count || 0) + ' | transport: ' + source;
 
@@ -2032,13 +1896,7 @@ def render_dashboard_html() -> str:
       renderAttentionQueue(data);
       renderRepoTable(data);
       drawRepoDependencyOverview(data);
-      refreshGraphSelector(data);
-      drawGraph(data);
-
-      if (expandedRepo) {
-        var repo = repoByName(expandedRepo);
-        if (repo) drawTaskDag(repo);
-      }
+      drawExpandedRepoGraph();
     }
 
     async function refreshHttp() {
@@ -2111,7 +1969,8 @@ def render_dashboard_html() -> str:
     function applyRepoDepZoom() {
       const depSvg = el('repo-dep-graph');
       if (!depSvg) return;
-      const baseW = 800, baseH = 500;
+      const baseW = Number(depSvg.dataset.baseWidth || 800);
+      const baseH = Number(depSvg.dataset.baseHeight || 500);
       const w = baseW / repoDepView.scale;
       const h = baseH / repoDepView.scale;
       const ox = (baseW - w) / 2 - repoDepView.tx / repoDepView.scale;
@@ -2156,6 +2015,13 @@ def render_dashboard_html() -> str:
     }
     repoDepSvg.addEventListener('pointerup', endRepoDepDrag);
     repoDepSvg.addEventListener('pointercancel', endRepoDepDrag);
+    repoDepSvg.addEventListener('click', (event) => {
+      const nodeEl = event.target && event.target.closest ? event.target.closest('[data-focus-repo]') : null;
+      if (!nodeEl) return;
+      const name = String(nodeEl.getAttribute('data-focus-repo') || '');
+      if (!name) return;
+      selectRepo(name, { forceExpanded: true, scrollIntoView: true });
+    });
 
     el('attention-table').querySelectorAll('th[data-sort]').forEach(function(th) {
       th.addEventListener('click', function() {
@@ -2211,41 +2077,36 @@ def render_dashboard_html() -> str:
       if (!row) return;
       var name = String(row.getAttribute('data-repo-name') || '');
       if (!name) return;
-      expandedRepo = (expandedRepo === name) ? null : name;
-      selectedRepo = name;
-      el('graph-repo').value = name;
-      if (currentData) {
-        renderRepoTable(currentData);
-        drawGraph(currentData);
-        if (expandedRepo) {
-          var repo = repoByName(expandedRepo);
-          if (repo) drawTaskDag(repo);
-        }
-      }
+      selectRepo(name, { toggleExpanded: true });
     });
 
-    // Task graph controls
-    el('graph-repo').addEventListener('change', function(event) {
-      selectedRepo = String(event.target.value || '');
+    el('repo-body').addEventListener('change', function(event) {
+      var modeSelect = event.target.closest ? event.target.closest('[data-graph-mode-for]') : null;
+      if (!modeSelect) return;
+      graphMode = String(modeSelect.value || 'full');
       selectedNodeId = '';
-      if (currentData) drawGraph(currentData);
+      resetGraphViewState();
+      drawExpandedRepoGraph();
     });
-    el('graph-mode').addEventListener('change', function(event) {
-      graphMode = String(event.target.value || 'active');
-      selectedNodeId = '';
-      if (currentData) drawGraph(currentData);
-    });
-    el('graph-zoom-in').addEventListener('click', function() { zoomGraph(1.18); });
-    el('graph-zoom-out').addEventListener('click', function() { zoomGraph(1 / 1.18); });
-    el('graph-zoom-reset').addEventListener('click', function() { resetGraphView(); });
 
-    // Task graph SVG pan/drag and node selection
-    const graphSvg = el('graph');
-    graphSvg.addEventListener('pointerdown', function(event) {
+    el('repo-body').addEventListener('click', function(event) {
+      var zoomButton = event.target.closest ? event.target.closest('[data-graph-zoom]') : null;
+      if (!zoomButton) return;
+      event.preventDefault();
+      var action = String(zoomButton.getAttribute('data-graph-zoom') || '');
+      if (action === 'in') zoomGraph(1.18);
+      else if (action === 'out') zoomGraph(1 / 1.18);
+      else resetGraphView();
+    });
+
+    // Expanded task graph pan/drag and node selection
+    el('repo-body').addEventListener('pointerdown', function(event) {
+      const graphSvg = event.target.closest ? event.target.closest('.task-dag-svg') : null;
+      if (!graphSvg) return;
       const nodeEl = event.target && event.target.closest ? event.target.closest('[data-node-id]') : null;
       if (nodeEl) {
         selectedNodeId = String(nodeEl.getAttribute('data-node-id') || '');
-        if (currentData) drawGraph(currentData);
+        drawExpandedRepoGraph();
         return;
       }
       graphView.drag = true;
@@ -2256,20 +2117,24 @@ def render_dashboard_html() -> str:
       graphSvg.classList.add('dragging');
       try { graphSvg.setPointerCapture(event.pointerId); } catch (_err) {}
     });
-    graphSvg.addEventListener('pointermove', function(event) {
+    el('repo-body').addEventListener('pointermove', function(event) {
       if (!graphView.drag) return;
       graphView.tx = graphView.dragBaseX + (event.clientX - graphView.dragStartX);
       graphView.ty = graphView.dragBaseY + (event.clientY - graphView.dragStartY);
-      if (currentData) drawGraph(currentData);
+      drawExpandedRepoGraph();
     });
     function endGraphDrag(event) {
       if (!graphView.drag) return;
       graphView.drag = false;
-      graphSvg.classList.remove('dragging');
-      try { graphSvg.releasePointerCapture(event.pointerId); } catch (_err) {}
+      const graphSvg = (event.target && event.target.closest ? event.target.closest('.task-dag-svg') : null)
+        || document.querySelector('.task-dag-svg.dragging');
+      if (graphSvg) {
+        graphSvg.classList.remove('dragging');
+        try { graphSvg.releasePointerCapture(event.pointerId); } catch (_err) {}
+      }
     }
-    graphSvg.addEventListener('pointerup', endGraphDrag);
-    graphSvg.addEventListener('pointercancel', endGraphDrag);
+    el('repo-body').addEventListener('pointerup', endGraphDrag);
+    el('repo-body').addEventListener('pointercancel', endGraphDrag);
 
     loadFiltersFromUrl();
     refreshHttp().catch(() => {});

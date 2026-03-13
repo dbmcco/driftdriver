@@ -712,6 +712,8 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("repo-table", html)
         self.assertIn("repo-search", html)
         self.assertIn("Dependencies", html)
+        self.assertIn("repo-dep-meta", html)
+        self.assertIn("repo-expanded-row", html)
         self.assertIn("all roles", html)
         self.assertIn("all status", html)
         self.assertIn("drawTaskDag", html)
