@@ -167,6 +167,26 @@ Alerts go out simultaneously through all available channels.
 
 ---
 
+## 6. Protocol Compliance Enforcement
+
+All repos must use speedrift (workgraph + driftdriver). If an agent deviates — making commits without task references, working in a repo without `.workgraph`, or skipping drift checks — the system catches it and corrects course.
+
+**Detection signals:**
+- Git commits with no task reference (no `wg:`, `task-`, `#NNN`, or `[task-id]` in message)
+- Missing `.workgraph/` directory
+- Missing driftdriver wrappers (`.workgraph/drifts/check`)
+- Active work but no workgraph service running
+
+**Brain response:** When the brain detects compliance violations during its sweep, it:
+1. Flags the violation (emits `compliance.violation` event, tier 2)
+2. Attempts corrective action — `driftdriver install`, `wg init`, create retroactive tasks
+3. If the agent is actively in a session, surfaces the violation to the agent
+4. Persistent violations escalate to human via decision queue
+
+**Implementation:** A `check_compliance(project_dir)` function examines repo state and recent git history. The brain runs this during tier 2 sweeps. The `enforce_compliance` directive triggers it on demand.
+
+---
+
 ## What's NOT in This Design
 
 - **Dev/QA/Prod lifecycle modes** — deferred to a separate design
