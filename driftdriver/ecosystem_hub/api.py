@@ -144,6 +144,52 @@ class _HubHandler(BaseHTTPRequestHandler):
         finally:
             hub.unregister(client)
 
+    def do_POST(self) -> None:  # noqa: N802
+        route = self.path.split("?", 1)[0]
+        if route.startswith("/api/repo/") and route.endswith("/start"):
+            repo_name = route[len("/api/repo/"):-len("/start")]
+            if not repo_name:
+                self._send_json({"error": "missing_repo_name"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            snapshot = self._read_snapshot()
+            repos = snapshot.get("repos") or []
+            repo = None
+            for r in repos:
+                if isinstance(r, dict) and str(r.get("name") or "") == repo_name:
+                    repo = r
+                    break
+            if not repo:
+                self._send_json({"error": "repo_not_found", "repo": repo_name}, status=HTTPStatus.NOT_FOUND)
+                return
+            repo_path = str(repo.get("path") or "")
+            if not repo_path or not Path(repo_path).is_dir():
+                self._send_json({"error": "repo_path_invalid", "repo": repo_name}, status=HTTPStatus.BAD_REQUEST)
+                return
+            wg_dir = Path(repo_path) / ".workgraph"
+            if not wg_dir.is_dir():
+                self._send_json({"error": "no_workgraph", "repo": repo_name}, status=HTTPStatus.BAD_REQUEST)
+                return
+            import subprocess as _sp
+            try:
+                result = _sp.run(  # noqa: S603
+                    ["wg", "service", "start"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                self._send_json({
+                    "repo": repo_name,
+                    "action": "start",
+                    "returncode": result.returncode,
+                    "stdout": result.stdout[:500],
+                    "stderr": result.stderr[:500],
+                })
+            except Exception as exc:
+                self._send_json({"error": str(exc), "repo": repo_name}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+
     def do_GET(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
         if route in ("/", "/index.html"):

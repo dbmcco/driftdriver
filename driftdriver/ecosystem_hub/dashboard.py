@@ -240,45 +240,37 @@ def render_dashboard_html() -> str:
       line-height: 1.4;
     }
 
-    /* Zone 2: Attention Queue */
-    .attention-queue {
-      /* wrapper inherits .card */
-    }
-    .attention-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.88rem;
-    }
-    .attention-table th,
-    .attention-table td {
-      padding: 0.45rem 0.55rem;
-      text-align: left;
-      border-bottom: 1px solid var(--line);
-    }
-    .attention-table th {
-      font-size: 0.76rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--muted);
-      cursor: pointer;
-      user-select: none;
-    }
-    .attention-table th:hover {
-      color: var(--accent);
-    }
     .severity-high { color: var(--bad); font-weight: 600; }
     .severity-medium { color: var(--warn); font-weight: 600; }
     .severity-low { color: var(--good); }
-    .action-stub {
-      font-size: 0.78rem;
-      color: var(--muted);
-      font-style: italic;
+    .start-btn {
+      font: inherit;
+      font-size: 0.82rem;
+      padding: 0.3rem 0.7rem;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 600;
     }
-    .attention-empty {
-      color: var(--muted);
-      font-size: 0.88rem;
-      font-style: italic;
-      margin: 0.5rem 0 0;
+    .start-btn:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+    .start-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .stall-badge {
+      display: inline-block;
+      font-size: 0.74rem;
+      font-weight: 700;
+      color: var(--bad);
+      background: #f7dfdf;
+      padding: 0.1rem 0.45rem;
+      border-radius: 6px;
+      margin-left: 0.5rem;
     }
 
     /* Zone 3: Dependencies */
@@ -403,6 +395,27 @@ def render_dashboard_html() -> str:
     .task-dag-svg.dragging {
       cursor: grabbing;
     }
+    /* Task Graph Drawer (full-width below repo table) */
+    .task-graph-drawer {
+      display: none;
+    }
+    .task-graph-drawer.open {
+      display: block;
+    }
+    .task-graph-drawer .repo-graph-wrap {
+      resize: vertical;
+      overflow: hidden;
+      min-height: 300px;
+      height: 800px;
+    }
+    .task-graph-drawer .task-dag-svg {
+      height: 100%;
+      min-height: 0;
+    }
+    .drawer-repo-name {
+      font-weight: 400;
+      color: var(--accent);
+    }
     .repo-graph-empty {
       color: var(--muted);
       font-size: 0.84rem;
@@ -480,30 +493,7 @@ def render_dashboard_html() -> str:
       <div id="briefing-details"></div>
     </section>
 
-    <!-- Zone 2: Attention Queue -->
-    <section class="attention-queue card" id="attention-section">
-      <div class="section-header">
-        <h2>Attention Queue</h2>
-        <span class="badge" id="attention-count">0</span>
-      </div>
-      <table class="attention-table" id="attention-table">
-        <thead>
-          <tr>
-            <th data-sort="repo">Repo</th>
-            <th data-sort="issue">Issue</th>
-            <th data-sort="severity">Severity</th>
-            <th data-sort="age">Age</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="attention-body"></tbody>
-      </table>
-      <p class="attention-empty" id="attention-empty" style="display:none">
-        Nothing needs your attention right now.
-      </p>
-    </section>
-
-    <!-- Zone 3: Dependencies -->
+    <!-- Zone 2: Dependencies -->
     <section class="dependency-panel card" id="dependencies-section">
       <div class="section-header">
         <h2>Dependencies</h2>
@@ -550,6 +540,12 @@ def render_dashboard_html() -> str:
             <option value="has-drift">has drift</option>
             <option value="clean">clean</option>
           </select>
+          <select id="repo-health-filter">
+            <option value="all">all health</option>
+            <option value="risk">risk</option>
+            <option value="watch">watch</option>
+            <option value="healthy">healthy</option>
+          </select>
         </div>
         <table class="repo-table" id="repo-table">
           <thead>
@@ -560,11 +556,42 @@ def render_dashboard_html() -> str:
               <th data-sort="drift">Drift</th>
               <th data-sort="tasks">Tasks</th>
               <th>Trend</th>
+              <th data-sort="health">Health</th>
               <th data-sort="activity">Last Activity</th>
             </tr>
           </thead>
           <tbody id="repo-body"></tbody>
         </table>
+    </section>
+
+    <!-- Task Graph Drawer (full-width, opens when repo expanded) -->
+    <section class="task-graph-drawer card" id="task-graph-drawer">
+      <div class="section-header">
+        <h2>Task Graph: <span class="drawer-repo-name" id="drawer-repo-name"></span></h2>
+        <div class="graph-controls">
+          <select id="drawer-graph-mode">
+            <option value="active">active + blocked</option>
+            <option value="full">full graph</option>
+            <option value="focus">focus chain</option>
+          </select>
+          <button type="button" id="drawer-zoom-out">&#x2212;</button>
+          <button type="button" id="drawer-zoom-in">+</button>
+          <button type="button" id="drawer-zoom-reset">reset</button>
+        </div>
+      </div>
+      <div class="repo-graph-wrap">
+        <svg class="task-dag-svg" id="drawer-graph-svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMin meet"></svg>
+      </div>
+      <div class="graph-legend" style="margin-top:0.35rem">
+        <span><span class="dot" style="background:#2f6e39"></span>Done</span>
+        <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
+        <span><span class="dot" style="background:#a26c13"></span>Open</span>
+        <span><span class="dot" style="background:#b85c1c"></span>Aging 3d+</span>
+        <span><span class="dot" style="background:#8c2f2f"></span>Aging 7d+</span>
+        <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
+        <span>Pulsing = active runtime task</span>
+      </div>
+      <div class="graph-path" id="drawer-graph-path" style="margin-top:0.3rem">Select a repo to view its task graph.</div>
     </section>
 
     <!-- Chat Panel stub (Approach C) -->
@@ -581,7 +608,7 @@ def render_dashboard_html() -> str:
     let currentData = null;
     let selectedRepo = '';
     let expandedRepo = '';
-    let graphMode = 'full';
+    let graphMode = 'active';
     let selectedNodeId = '';
     const graphView = {
       scale: 1,
@@ -594,13 +621,11 @@ def render_dashboard_html() -> str:
       dragBaseY: 0,
     };
 
-    let attentionSortCol = 'severity';
-    let attentionSortAsc = false;
-
     let repoSearchText = '';
     let repoRoleFilter = 'all';
     let repoStatusFilter = 'all';
     let repoDriftFilter = 'all';
+    let repoHealthFilter = 'all';
     let repoSortCol = 'name';
     let repoSortAsc = true;
 
@@ -640,9 +665,20 @@ def render_dashboard_html() -> str:
       }
     }
     function drawExpandedRepoGraph() {
-      if (!currentData || !expandedRepo) return;
-      const repo = repoByName(expandedRepo);
-      if (repo) drawTaskDag(repo);
+      var drawer = el('task-graph-drawer');
+      if (!currentData || !expandedRepo) {
+        drawer.classList.remove('open');
+        return;
+      }
+      drawer.classList.add('open');
+      var repo = repoByName(expandedRepo);
+      var nameEl = el('drawer-repo-name');
+      nameEl.innerHTML = esc(expandedRepo)
+        + (repo && repo.stalled ? '<span class="stall-badge">STALLED</span>' : '');
+      var modeSelect = el('drawer-graph-mode');
+      if (modeSelect) modeSelect.value = graphMode;
+      var repo = repoByName(expandedRepo);
+      if (repo) drawTaskDag(repo, el('drawer-graph-svg'), el('drawer-graph-path'));
     }
     function selectRepo(name, options) {
       const nextRepo = String(name || '');
@@ -678,6 +714,7 @@ def render_dashboard_html() -> str:
       if (repoRoleFilter !== 'all') params.set('role', repoRoleFilter);
       if (repoStatusFilter !== 'all') params.set('status', repoStatusFilter);
       if (repoDriftFilter !== 'all') params.set('drift', repoDriftFilter);
+      if (repoHealthFilter !== 'all') params.set('health', repoHealthFilter);
       var qs = params.toString();
       var url = qs ? '?' + qs : window.location.pathname;
       window.history.replaceState({}, '', url);
@@ -689,10 +726,12 @@ def render_dashboard_html() -> str:
       repoRoleFilter = params.get('role') || 'all';
       repoStatusFilter = params.get('status') || 'all';
       repoDriftFilter = params.get('drift') || 'all';
+      repoHealthFilter = params.get('health') || 'all';
       el('repo-search').value = repoSearchText;
       el('repo-role-filter').value = repoRoleFilter;
       el('repo-status-filter').value = repoStatusFilter;
       el('repo-drift-filter').value = repoDriftFilter;
+      el('repo-health-filter').value = repoHealthFilter;
     }
 
     function qualityPill(repo) {
@@ -1013,11 +1052,9 @@ def render_dashboard_html() -> str:
         `Edge A -> B means repo A has dependency signals pointing to repo B. Pulsing repo nodes have in-progress tasks. Top outbound: <code>${esc(outText)}</code>. Top inbound: <code>${esc(inText)}</code>.`;
     }
 
-    function drawTaskDag(repo) {
-      var repoName = String(repo.name || '');
-      var domId = repoDomId(repoName);
-      var svg = document.getElementById('task-graph-svg-' + domId);
-      var out = document.getElementById('graph-path-' + domId);
+    function drawTaskDag(repo, targetSvg, targetOut) {
+      var svg = targetSvg || null;
+      var out = targetOut || null;
       if (!svg || !out) return;
       var baseModel = normalizeGraph(repo);
       if (!baseModel.nodes.length) {
@@ -1165,134 +1202,6 @@ def render_dashboard_html() -> str:
       });
     }
 
-    function renderAttentionQueue(data) {
-      var attentionRepos = (data.overview && Array.isArray(data.overview.attention_repos))
-        ? data.overview.attention_repos : [];
-      var repos = Array.isArray(data.repos) ? data.repos : [];
-      var items = [];
-      var seenRepos = {};
-
-      // 1. Attention repos
-      attentionRepos.forEach(function(ar) {
-        var repoName = String(ar.repo || '');
-        seenRepos[repoName] = true;
-        var score = n(ar.score);
-        var severity = score >= 22 ? 'high' : (score >= 10 ? 'medium' : 'low');
-        var severityNum = score >= 22 ? 3 : (score >= 10 ? 2 : 1);
-        var reasons = Array.isArray(ar.reasons) ? ar.reasons : [];
-        var issueText = reasons.length
-          ? reasons.slice(0, 2).join('; ')
-          : 'elevated attention score';
-        items.push({
-          repo: repoName,
-          issue: issueText,
-          severity: severity,
-          severityNum: severityNum,
-          ageNum: score,
-          ageText: 'score ' + String(score),
-          action: 'Review'
-        });
-      });
-
-      // 2. Stalled repos not already in attention
-      repos.forEach(function(r) {
-        var repoName = String(r.name || '');
-        if (seenRepos[repoName]) return;
-        if (!r.stalled) return;
-        seenRepos[repoName] = true;
-        var stallReasons = Array.isArray(r.stall_reasons) ? r.stall_reasons : [];
-        var issueText = stallReasons.length
-          ? 'Stalled: ' + stallReasons.slice(0, 2).join('; ')
-          : 'Stalled: no active execution';
-        items.push({
-          repo: repoName,
-          issue: issueText,
-          severity: 'high',
-          severityNum: 3,
-          ageNum: 99,
-          ageText: 'stalled',
-          action: 'Unblock'
-        });
-      });
-
-      // 3. Aging in-progress tasks from repos not in attention
-      var now = Date.now();
-      repos.forEach(function(r) {
-        var repoName = String(r.name || '');
-        if (seenRepos[repoName]) return;
-        var tasks = Array.isArray(r.in_progress) ? r.in_progress : [];
-        tasks.forEach(function(task) {
-          var created = task.created || task.started || '';
-          if (!created) return;
-          var createdMs = new Date(created).getTime();
-          if (isNaN(createdMs)) return;
-          var ageDays = Math.floor((now - createdMs) / 86400000);
-          if (ageDays < 3) return;
-          var severity = ageDays >= 7 ? 'high' : 'medium';
-          var severityNum = ageDays >= 7 ? 3 : 2;
-          var title = String(task.title || task.id || 'unknown task');
-          items.push({
-            repo: repoName,
-            issue: title + ' (' + String(ageDays) + 'd old)',
-            severity: severity,
-            severityNum: severityNum,
-            ageNum: ageDays,
-            ageText: String(ageDays) + 'd',
-            action: 'Check'
-          });
-        });
-      });
-
-      // Sort
-      items.sort(function(a, b) {
-        var col = attentionSortCol;
-        var dir = attentionSortAsc ? 1 : -1;
-        if (col === 'severity') {
-          var d = a.severityNum - b.severityNum;
-          return d !== 0 ? d * dir : String(a.repo || '').localeCompare(String(b.repo || ''));
-        }
-        if (col === 'age') {
-          var d2 = a.ageNum - b.ageNum;
-          return d2 !== 0 ? d2 * dir : String(a.repo || '').localeCompare(String(b.repo || ''));
-        }
-        if (col === 'repo') {
-          return String(a.repo || '').localeCompare(String(b.repo || '')) * dir;
-        }
-        if (col === 'issue') {
-          return String(a.issue || '').localeCompare(String(b.issue || '')) * dir;
-        }
-        return (b.severityNum - a.severityNum);
-      });
-
-      var shown = items.slice(0, 15);
-
-      var table = el('attention-table');
-      var body = el('attention-body');
-      var countBadge = el('attention-count');
-      var emptyEl = el('attention-empty');
-
-      if (!shown.length) {
-        table.style.display = 'none';
-        emptyEl.style.display = '';
-        countBadge.textContent = '0';
-        return;
-      }
-      table.style.display = '';
-      emptyEl.style.display = 'none';
-      countBadge.textContent = String(shown.length);
-
-      body.innerHTML = shown.map(function(item) {
-        var sevClass = 'severity-' + item.severity;
-        return '<tr>'
-          + '<td><code>' + esc(item.repo) + '</code></td>'
-          + '<td>' + esc(item.issue) + '</td>'
-          + '<td><span class="' + sevClass + '">' + esc(item.severity) + '</span></td>'
-          + '<td>' + esc(item.ageText) + '</td>'
-          + '<td><span class="action-stub">' + esc(item.action) + '</span></td>'
-          + '</tr>';
-      }).join('');
-    }
-
     function repoRole(repo) {
       var src = String(repo.source || '');
       if (repo.ecosystem_role) return String(repo.ecosystem_role).toLowerCase();
@@ -1330,6 +1239,10 @@ def render_dashboard_html() -> str:
         var hasDrift = repoHasDrift(repo);
         if (repoDriftFilter === 'has-drift' && !hasDrift) return false;
         if (repoDriftFilter === 'clean' && hasDrift) return false;
+      }
+      if (repoHealthFilter !== 'all') {
+        var health = qualityPill(repo)[0];
+        if (health !== repoHealthFilter) return false;
       }
       return true;
     }
@@ -1408,6 +1321,13 @@ def render_dashboard_html() -> str:
           var dt = tb.total - ta.total;
           return dt !== 0 ? dt * dir : String(a.name || '').localeCompare(String(b.name || ''));
         }
+        if (repoSortCol === 'health') {
+          var healthOrder = { risk: 0, watch: 1, healthy: 2 };
+          var ha = healthOrder[qualityPill(a)[0]] || 2;
+          var hb = healthOrder[qualityPill(b)[0]] || 2;
+          var dh = ha - hb;
+          return dh !== 0 ? dh * dir : String(a.name || '').localeCompare(String(b.name || ''));
+        }
         if (repoSortCol === 'activity') {
           var aa = (a.heartbeat_age_seconds != null) ? Number(a.heartbeat_age_seconds) : 999999;
           var ab = (b.heartbeat_age_seconds != null) ? Number(b.heartbeat_age_seconds) : 999999;
@@ -1437,6 +1357,10 @@ def render_dashboard_html() -> str:
         var selectedClass = selectedRepo === repoName ? ' selected' : '';
         var selectedAttr = selectedRepo === repoName ? ' aria-selected="true"' : ' aria-selected="false"';
 
+        var healthPill = qualityPill(repo);
+        var healthLabel = healthPill[0];
+        var healthClass = 'severity-' + (healthPill[1] === 'bad' ? 'high' : (healthPill[1] === 'warn' ? 'medium' : 'low'));
+
         rows.push(
           '<tr class="repo-row' + selectedClass + '" data-repo-name="' + escAttr(repoName) + '"' + selectedAttr + '>'
           + '<td><strong>' + esc(repoName) + '</strong></td>'
@@ -1445,6 +1369,7 @@ def render_dashboard_html() -> str:
           + '<td>' + driftHtml + '</td>'
           + '<td>' + esc(String(tc.done)) + '/' + esc(String(tc.total)) + '</td>'
           + '<td>' + sparkSvg + '</td>'
+          + '<td><span class="' + healthClass + '">' + esc(healthLabel) + '</span></td>'
           + '<td>' + esc(lastActivity) + '</td>'
           + '</tr>'
         );
@@ -1498,45 +1423,21 @@ def render_dashboard_html() -> str:
       var stalledText = '';
       if (repo.stalled) {
         var stallReasons = Array.isArray(repo.stall_reasons) ? repo.stall_reasons : [];
-        stalledText = '<div style="margin-top:0.25rem;color:var(--bad);font-weight:600">Stalled'
+        stalledText = '<div style="margin-top:0.25rem;display:flex;align-items:center;gap:0.6rem">'
+          + '<span style="color:var(--bad);font-weight:600">Stalled'
           + (stallReasons.length ? ': ' + stallReasons.map(function(r) { return esc(String(r)); }).join('; ') : '')
+          + '</span>'
+          + '<button class="start-btn" data-start-repo="' + escAttr(repoName) + '">Start Service</button>'
+          + '</div>';
+      } else if (!repo.service_running && repo.workgraph_exists) {
+        stalledText = '<div style="margin-top:0.25rem;display:flex;align-items:center;gap:0.6rem">'
+          + '<span style="color:var(--muted)">Service not running</span>'
+          + '<button class="start-btn" data-start-repo="' + escAttr(repoName) + '">Start Service</button>'
           + '</div>';
       }
 
-      var graphControls = '<div class="graph-controls">'
-        + '<select data-graph-mode-for="' + escAttr(repoName) + '">'
-        + '<option value="full"' + (graphMode === 'full' ? ' selected' : '') + '>full graph</option>'
-        + '<option value="active"' + (graphMode === 'active' ? ' selected' : '') + '>active + blocked</option>'
-        + '<option value="focus"' + (graphMode === 'focus' ? ' selected' : '') + '>focus chain</option>'
-        + '</select>'
-        + '<button type="button" data-graph-zoom="out">-</button>'
-        + '<button type="button" data-graph-zoom="in">+</button>'
-        + '<button type="button" data-graph-zoom="reset">reset</button>'
-        + '</div>';
-      var dagDiv = '<div class="task-dag">'
-        + '<div class="section-header" style="margin-bottom:0.45rem">'
-        + '<h3>Task Graph</h3>'
-        + graphControls
-        + '</div>';
-      if (nodes.length > 0) {
-        dagDiv += '<div class="repo-graph-wrap">'
-          + '<svg class="task-dag-svg" id="task-graph-svg-' + domId + '" viewBox="0 0 1000 340" preserveAspectRatio="xMidYMin meet"></svg>'
-          + '</div>'
-          + '<div class="graph-legend" style="margin-top:0.35rem">'
-          + '<span><span class="dot" style="background:#2f6e39"></span>Done</span>'
-          + '<span><span class="dot" style="background:#0f6f7c"></span>In progress</span>'
-          + '<span><span class="dot" style="background:#a26c13"></span>Open</span>'
-          + '<span><span class="dot" style="background:#9c2525"></span>Blocked</span>'
-          + '<span>Pulsing = active</span>'
-          + '</div>'
-          + '<div class="graph-path" id="graph-path-' + domId + '" style="margin-top:0.3rem">Loading task graph...</div>';
-      } else {
-        dagDiv += '<div class="repo-graph-empty">No task graph for this repo yet.</div>';
-      }
-      dagDiv += '</div>';
-
       return '<tr class="repo-expanded-row" id="repo-expanded-' + domId + '" data-repo-expanded="' + escAttr(repoName) + '">'
-        + '<td colspan="7">'
+        + '<td colspan="8">'
         + '<div class="repo-expanded">'
         + '<div class="repo-expanded-meta">'
         + '<div><strong>Tasks:</strong> ' + taskSummary + '</div>'
@@ -1544,7 +1445,6 @@ def render_dashboard_html() -> str:
         + '<div><strong>Git:</strong> ' + gitState + '</div>'
         + '</div>'
         + stalledText
-        + dagDiv
         + '</div>'
         + '</td>'
         + '</tr>';
@@ -1564,6 +1464,9 @@ def render_dashboard_html() -> str:
       if (node.blocked) return '#9c2525';
       if (status === 'done') return '#2f6e39';
       if (status === 'in-progress') return '#0f6f7c';
+      var ageDays = Number(node.age_days || 0);
+      if ((status === 'open' || status === 'ready') && ageDays >= 7) return '#8c2f2f';
+      if ((status === 'open' || status === 'ready') && ageDays >= 3) return '#b85c1c';
       if (status === 'open' || status === 'ready') return '#a26c13';
       return '#5f6f66';
     }
@@ -1893,7 +1796,6 @@ def render_dashboard_html() -> str:
         'Generated: ' + (data.generated_at || 'n/a') + ' | repos: ' + (data.repo_count || 0) + ' | transport: ' + source;
 
       renderBriefing(data);
-      renderAttentionQueue(data);
       renderRepoTable(data);
       drawRepoDependencyOverview(data);
       drawExpandedRepoGraph();
@@ -2023,20 +1925,6 @@ def render_dashboard_html() -> str:
       selectRepo(name, { forceExpanded: true, scrollIntoView: true });
     });
 
-    el('attention-table').querySelectorAll('th[data-sort]').forEach(function(th) {
-      th.addEventListener('click', function() {
-        var col = String(th.getAttribute('data-sort') || '');
-        if (!col) return;
-        if (attentionSortCol === col) {
-          attentionSortAsc = !attentionSortAsc;
-        } else {
-          attentionSortCol = col;
-          attentionSortAsc = false;
-        }
-        if (currentData) renderAttentionQueue(currentData);
-      });
-    });
-
     el('repo-search').addEventListener('input', function(e) {
       repoSearchText = String(e.target.value || '');
       if (currentData) renderRepoTable(currentData);
@@ -2057,6 +1945,11 @@ def render_dashboard_html() -> str:
       if (currentData) renderRepoTable(currentData);
       syncFiltersToUrl();
     });
+    el('repo-health-filter').addEventListener('change', function(e) {
+      repoHealthFilter = String(e.target.value || 'all');
+      if (currentData) renderRepoTable(currentData);
+      syncFiltersToUrl();
+    });
 
     el('repo-table').querySelectorAll('th[data-sort]').forEach(function(th) {
       th.addEventListener('click', function() {
@@ -2073,6 +1966,35 @@ def render_dashboard_html() -> str:
     });
 
     el('repo-body').addEventListener('click', function(e) {
+      var startBtn = e.target.closest('[data-start-repo]');
+      if (startBtn) {
+        e.stopPropagation();
+        var repoName = String(startBtn.getAttribute('data-start-repo') || '');
+        if (!repoName) return;
+        startBtn.disabled = true;
+        startBtn.textContent = 'Starting...';
+        fetch('/api/repo/' + encodeURIComponent(repoName) + '/start', { method: 'POST' })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.returncode === 0) {
+              startBtn.textContent = 'Started';
+              startBtn.style.background = 'var(--good)';
+              startBtn.style.color = '#fff';
+              startBtn.style.borderColor = 'var(--good)';
+            } else {
+              startBtn.textContent = 'Failed';
+              startBtn.style.background = 'var(--bad)';
+              startBtn.style.color = '#fff';
+              startBtn.style.borderColor = 'var(--bad)';
+              startBtn.disabled = false;
+            }
+          })
+          .catch(function() {
+            startBtn.textContent = 'Error';
+            startBtn.disabled = false;
+          });
+        return;
+      }
       var row = e.target.closest('.repo-row');
       if (!row) return;
       var name = String(row.getAttribute('data-repo-name') || '');
@@ -2080,30 +2002,21 @@ def render_dashboard_html() -> str:
       selectRepo(name, { toggleExpanded: true });
     });
 
-    el('repo-body').addEventListener('change', function(event) {
-      var modeSelect = event.target.closest ? event.target.closest('[data-graph-mode-for]') : null;
-      if (!modeSelect) return;
-      graphMode = String(modeSelect.value || 'full');
+    // Drawer graph controls
+    el('drawer-graph-mode').addEventListener('change', function() {
+      graphMode = String(el('drawer-graph-mode').value || 'full');
       selectedNodeId = '';
       resetGraphViewState();
       drawExpandedRepoGraph();
     });
+    el('drawer-zoom-in').addEventListener('click', function() { zoomGraph(1.18); });
+    el('drawer-zoom-out').addEventListener('click', function() { zoomGraph(1 / 1.18); });
+    el('drawer-zoom-reset').addEventListener('click', function() { resetGraphView(); });
 
-    el('repo-body').addEventListener('click', function(event) {
-      var zoomButton = event.target.closest ? event.target.closest('[data-graph-zoom]') : null;
-      if (!zoomButton) return;
-      event.preventDefault();
-      var action = String(zoomButton.getAttribute('data-graph-zoom') || '');
-      if (action === 'in') zoomGraph(1.18);
-      else if (action === 'out') zoomGraph(1 / 1.18);
-      else resetGraphView();
-    });
-
-    // Expanded task graph pan/drag and node selection
-    el('repo-body').addEventListener('pointerdown', function(event) {
-      const graphSvg = event.target.closest ? event.target.closest('.task-dag-svg') : null;
-      if (!graphSvg) return;
-      const nodeEl = event.target && event.target.closest ? event.target.closest('[data-node-id]') : null;
+    // Drawer task graph pan/drag and node selection
+    var drawerSvg = el('drawer-graph-svg');
+    drawerSvg.addEventListener('pointerdown', function(event) {
+      var nodeEl = event.target && event.target.closest ? event.target.closest('[data-node-id]') : null;
       if (nodeEl) {
         selectedNodeId = String(nodeEl.getAttribute('data-node-id') || '');
         drawExpandedRepoGraph();
@@ -2114,10 +2027,10 @@ def render_dashboard_html() -> str:
       graphView.dragStartY = event.clientY;
       graphView.dragBaseX = graphView.tx;
       graphView.dragBaseY = graphView.ty;
-      graphSvg.classList.add('dragging');
-      try { graphSvg.setPointerCapture(event.pointerId); } catch (_err) {}
+      drawerSvg.classList.add('dragging');
+      try { drawerSvg.setPointerCapture(event.pointerId); } catch (_err) {}
     });
-    el('repo-body').addEventListener('pointermove', function(event) {
+    drawerSvg.addEventListener('pointermove', function(event) {
       if (!graphView.drag) return;
       graphView.tx = graphView.dragBaseX + (event.clientX - graphView.dragStartX);
       graphView.ty = graphView.dragBaseY + (event.clientY - graphView.dragStartY);
@@ -2126,15 +2039,11 @@ def render_dashboard_html() -> str:
     function endGraphDrag(event) {
       if (!graphView.drag) return;
       graphView.drag = false;
-      const graphSvg = (event.target && event.target.closest ? event.target.closest('.task-dag-svg') : null)
-        || document.querySelector('.task-dag-svg.dragging');
-      if (graphSvg) {
-        graphSvg.classList.remove('dragging');
-        try { graphSvg.releasePointerCapture(event.pointerId); } catch (_err) {}
-      }
+      drawerSvg.classList.remove('dragging');
+      try { drawerSvg.releasePointerCapture(event.pointerId); } catch (_err) {}
     }
-    el('repo-body').addEventListener('pointerup', endGraphDrag);
-    el('repo-body').addEventListener('pointercancel', endGraphDrag);
+    drawerSvg.addEventListener('pointerup', endGraphDrag);
+    drawerSvg.addEventListener('pointercancel', endGraphDrag);
 
     loadFiltersFromUrl();
     refreshHttp().catch(() => {});
