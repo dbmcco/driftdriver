@@ -257,7 +257,7 @@ Five checks, in order of importance:
 
 Look for evolve-run directories in `.workgraph/evolve-runs/`. If the directory doesn't exist or is empty, emit an `info` finding: "Evolver has never run in this repo" and suppress all other evolverdrift checks (consumption, impact, regression) — there's nothing to monitor yet. If the most recent run is older than a configurable threshold (default 7 days) and there are unprocessed drift evaluations (files with `source: "drift"` newer than the last run), emit a finding: "Evolver has not run in {N} days. {M} drift evaluations await processing."
 
-Severity: `info` for no history, `warning` if 7-14 days stale, `high` if 14+ days stale.
+Severity: `info` for no history, `warning` if 7-14 days stale, `error` if 14+ days stale.
 
 **2. Consumption — Are our evaluations being picked up?**
 
@@ -278,7 +278,7 @@ If drift scores improved (fewer/lower severity findings post-mutation): emit `in
 
 After a role mutation, did drift finding severity *increase* for that role's agents? This is a subset of impact tracking but elevated to its own check because it's actionable — the evolver made a bad call and the next round of evaluations should push back.
 
-Severity: `high` if post-mutation drift scores are 0.2+ lower than pre-mutation average.
+Severity: `error` if post-mutation drift scores are 0.2+ lower than pre-mutation average.
 
 **5. Deferred Queue — Are there unanswered decisions?**
 
@@ -524,7 +524,7 @@ secdrift = true
 [bridge]
 enabled = true
 attribution_strategy = "assignment"  # "assignment" | "git-blame" | "both"
-min_severity = "medium"              # don't bridge low/info findings
+min_severity = "warning"             # don't bridge info findings
 
 # New: evolverdrift
 [lanes.evolverdrift]
