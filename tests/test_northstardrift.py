@@ -7,6 +7,7 @@ from pathlib import Path
 
 from driftdriver.northstardrift import (
     apply_northstardrift,
+    compute_alignment_score,
     compute_northstardrift,
     emit_northstar_review_tasks,
     load_previous_northstardrift,
@@ -422,6 +423,61 @@ class NorthstarDriftLaneTests(unittest.TestCase):
         self.assertEqual(len(result.findings), 1)
         self.assertEqual(result.findings[0].severity, "error")
         self.assertIn("boom", result.findings[0].message)
+
+
+class AlignmentScoringTests(unittest.TestCase):
+    def test_aligned_task_scores_high(self) -> None:
+        config = {
+            "statement": "Understand relationships with perfect memory",
+            "keywords": ["relationships", "memory", "context"],
+            "anti_patterns": ["pipeline", "funnel"],
+        }
+        task = {"id": "t1", "title": "Add relationship context to actor view", "status": "done"}
+        score = compute_alignment_score(task, config)
+        self.assertGreater(score, 0.5)
+
+    def test_anti_pattern_task_scores_low(self) -> None:
+        config = {
+            "statement": "Understand relationships with perfect memory",
+            "keywords": ["relationships", "memory"],
+            "anti_patterns": ["pipeline", "funnel", "conversion"],
+        }
+        task = {"id": "t2", "title": "Add deal pipeline funnel stage conversion tracking", "status": "done"}
+        score = compute_alignment_score(task, config)
+        self.assertLess(score, 0.5)
+
+    def test_neutral_task_scores_middle(self) -> None:
+        config = {"statement": "Understand relationships", "keywords": ["relationships"], "anti_patterns": ["pipeline"]}
+        task = {"id": "t3", "title": "Fix CSS button styling", "status": "done"}
+        score = compute_alignment_score(task, config)
+        self.assertGreaterEqual(score, 0.3)
+        self.assertLessEqual(score, 0.7)
+
+    def test_empty_config_returns_neutral(self) -> None:
+        config: dict = {"statement": "", "keywords": [], "anti_patterns": []}
+        task = {"id": "t4", "title": "Anything", "status": "done"}
+        score = compute_alignment_score(task, config)
+        self.assertAlmostEqual(score, 0.5)
+
+
+class AlignmentIntegrationTests(unittest.TestCase):
+    def test_compute_northstardrift_includes_alignment_section(self) -> None:
+        snapshot = _snapshot(_repo("lfw", in_progress=1))
+        alignment_config = {
+            "statement": "Understand relationships with perfect memory",
+            "keywords": ["relationships", "memory"],
+            "anti_patterns": ["pipeline"],
+        }
+        northstar = compute_northstardrift(snapshot, alignment_config=alignment_config)
+        self.assertIn("alignment", northstar)
+        self.assertIn("overall_alignment", northstar["alignment"])
+        self.assertTrue(northstar["alignment"]["configured"])
+
+    def test_compute_northstardrift_without_alignment_config(self) -> None:
+        snapshot = _snapshot(_repo("lfw", in_progress=1))
+        northstar = compute_northstardrift(snapshot)
+        self.assertIn("alignment", northstar)
+        self.assertFalse(northstar["alignment"]["configured"])
 
 
 if __name__ == "__main__":

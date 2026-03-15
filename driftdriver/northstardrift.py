@@ -651,11 +651,61 @@ def _build_narrative(
     return " ".join(parts)
 
 
+def compute_alignment_score(task: dict[str, Any], alignment_config: dict[str, Any]) -> float:
+    """Score how well a task aligns with the declared North Star.
+
+    Returns a float in [0.0, 1.0].  0.5 is neutral (empty config or no signal).
+    """
+    keywords: list[str] = alignment_config.get("keywords") or []
+    anti_patterns: list[str] = alignment_config.get("anti_patterns") or []
+
+    if not keywords and not anti_patterns:
+        return 0.5
+
+    text = " ".join([
+        str(task.get("title") or ""),
+        str(task.get("description") or ""),
+    ]).lower()
+
+    text_words = text.split()
+
+    def _fuzzy_match(term: str, corpus: str, corpus_words: list[str]) -> bool:
+        """Check if term appears in corpus, allowing prefix/stem overlap."""
+        t = term.lower()
+        if t in corpus:
+            return True
+        # Check if any word in the corpus shares a common stem (prefix match)
+        for w in corpus_words:
+            if w.startswith(t) or t.startswith(w):
+                if min(len(w), len(t)) >= 3:  # avoid trivial prefix matches
+                    return True
+        return False
+
+    # Keyword hits
+    if keywords:
+        keyword_hits = sum(1 for kw in keywords if _fuzzy_match(kw, text, text_words))
+        alignment_ratio = keyword_hits / len(keywords)
+    else:
+        alignment_ratio = 0.5
+
+    # Anti-pattern penalty (0.2 per hit, capped at 0.5)
+    anti_hits = sum(1 for ap in anti_patterns if _fuzzy_match(ap, text, text_words))
+    penalty = min(anti_hits * 0.2, 0.5)
+
+    # When no signal in either direction, return neutral
+    if keyword_hits == 0 and anti_hits == 0 and keywords:
+        return 0.5
+
+    score = max(0.0, min(1.0, alignment_ratio - penalty))
+    return score
+
+
 def compute_northstardrift(
     snapshot: dict[str, Any],
     *,
     previous: dict[str, Any] | None = None,
     config: dict[str, Any] | None = None,
+    alignment_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     cfg = default_northstardrift_cfg()
     if isinstance(config, dict):
@@ -1061,6 +1111,38 @@ def compute_northstardrift(
         largest_gap=priority_gaps[0] if priority_gaps else None,
     )
 
+    # -- Alignment v2 layer --------------------------------------------------
+    alignment_configured = (
+        isinstance(alignment_config, dict)
+        and bool(str(alignment_config.get("statement") or "").strip())
+    )
+    if alignment_configured:
+        assert alignment_config is not None  # narrow type for mypy
+        all_tasks: list[dict[str, Any]] = []
+        for repo in repos:
+            if isinstance(repo, dict):
+                all_tasks.extend(repo.get("in_progress") or [])
+                all_tasks.extend(repo.get("ready") or [])
+        task_scores: list[dict[str, Any]] = []
+        for t in all_tasks:
+            ts = compute_alignment_score(t, alignment_config)
+            task_scores.append({"task_id": str(t.get("id") or ""), "score": ts})
+        if task_scores:
+            overall_alignment = sum(ts["score"] for ts in task_scores) / len(task_scores)
+        else:
+            overall_alignment = 0.5
+        alignment_section: dict[str, Any] = {
+            "overall_alignment": round(overall_alignment, 4),
+            "configured": True,
+            "task_scores": task_scores,
+        }
+    else:
+        alignment_section = {
+            "overall_alignment": 0.5,
+            "configured": False,
+            "task_scores": [],
+        }
+
     return {
         "schema": 1,
         "generated_at": str(snapshot.get("generated_at") or ""),
@@ -1102,6 +1184,7 @@ def compute_northstardrift(
             "summary": target_summary,
             "priority_gaps": priority_gaps,
         },
+        "alignment": alignment_section,
         "calibration": {
             "quality_population": quality_population,
             "coordination_population": coordination_population,
