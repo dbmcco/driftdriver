@@ -75,6 +75,7 @@ from .doctor import (
     cmd_doctor,
     cmd_queue,
 )
+from .decisions_cmd import cmd_decisions, handle_decisions_answer, handle_decisions_pending, format_decisions_text
 from .install_cmd import cmd_install
 from .run import (
     _invoke_check_json,
@@ -443,6 +444,31 @@ def cmd_run_validation_gates(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plan(args: argparse.Namespace) -> int:
+    """Generate a quality-aware workgraph from a spec file."""
+    from driftdriver.quality_planner import plan_from_spec
+
+    spec_path = Path(args.spec_file).resolve()
+    repo_path = Path(args.repo).resolve() if args.repo else Path.cwd()
+
+    if not spec_path.exists():
+        print(f"error: spec file not found: {spec_path}", file=sys.stderr)
+        return 1
+
+    output = plan_from_spec(
+        spec_path=spec_path,
+        repo_path=repo_path,
+        dry_run=args.dry_run,
+        model=args.model or "sonnet",
+    )
+
+    if args.dry_run:
+        print(output.to_json())
+    else:
+        print(f"Created {len(output.tasks)} task(s) in workgraph")
+    return 0
+
+
 def cmd_decompose(args: argparse.Namespace) -> int:
     from driftdriver.decompose import decompose_goal
     from driftdriver.directives import DirectiveLog
@@ -470,6 +496,16 @@ def cmd_ecosystem_hub_proxy(args: argparse.Namespace) -> int:
     if not forwarded:
         forwarded = ["--help"]
     return int(ecosystem_hub_main(forwarded))
+
+
+def cmd_intent_set(args: argparse.Namespace) -> int:
+    from driftdriver.cli.intent_cmd import handle_intent_set
+    return handle_intent_set(args)
+
+
+def cmd_intent_read(args: argparse.Namespace) -> int:
+    from driftdriver.cli.intent_cmd import handle_intent_read
+    return handle_intent_read(args)
 
 
 def cmd_brain_status(args: argparse.Namespace) -> int:
@@ -1351,6 +1387,13 @@ def _build_parser() -> argparse.ArgumentParser:
     run_vg_p.add_argument("--task-id", required=True, help="Task ID to validate")
     run_vg_p.set_defaults(func=cmd_run_validation_gates)
 
+    plan_p = sub.add_parser("plan", help="Generate quality-aware workgraph from spec (Speedrift Quality Planner)")
+    plan_p.add_argument("spec_file", help="Path to spec or plan file")
+    plan_p.add_argument("--repo", default="", help="Target repo path (default: cwd)")
+    plan_p.add_argument("--dry-run", action="store_true", help="Show plan without creating tasks")
+    plan_p.add_argument("--model", default="sonnet", help="LLM model (default: sonnet)")
+    plan_p.set_defaults(func=cmd_plan)
+
     decompose_p = sub.add_parser("decompose", help="Decompose a goal into workgraph tasks via LLM")
     decompose_p.add_argument("--goal", required=True, help="High-level goal to decompose")
     decompose_p.add_argument("--repo", default="", help="Repo name for directive metadata")
@@ -1482,6 +1525,39 @@ def _build_parser() -> argparse.ArgumentParser:
     attractor_p.add_argument("target", nargs="?", default="", help="Attractor target name (for 'set')")
     attractor_p.add_argument("--json", action="store_true", help="JSON output")
     attractor_p.set_defaults(func=cmd_attractor)
+
+    # -- Intent commands --
+    intent_p = sub.add_parser("intent", help="Manage continuation intent (set/read)")
+    intent_sub = intent_p.add_subparsers(dest="intent_action", required=True)
+
+    intent_set_p = intent_sub.add_parser("set", help="Set continuation intent")
+    intent_set_p.add_argument("--intent", required=True, choices=["continue", "parked", "needs_human"],
+                              help="Intent value")
+    intent_set_p.add_argument("--set-by", required=True, choices=["agent", "brain", "human"],
+                              help="Who is setting the intent")
+    intent_set_p.add_argument("--reason", required=True, help="Reason for setting intent")
+    intent_set_p.add_argument("--decision-id", default=None, help="Optional decision ID")
+    intent_set_p.add_argument("--json", action="store_true", help="JSON output")
+    intent_set_p.set_defaults(func=cmd_intent_set)
+
+    intent_read_p = intent_sub.add_parser("read", help="Read current continuation intent")
+    intent_read_p.add_argument("--json", action="store_true", help="JSON output")
+    intent_read_p.set_defaults(func=cmd_intent_read)
+
+    # -- Decision queue commands --
+    decisions_p = sub.add_parser("decisions", help="Manage decision queue (pending/answer)")
+    decisions_sub = decisions_p.add_subparsers(dest="action", required=True)
+
+    decisions_pending_p = decisions_sub.add_parser("pending", help="List pending decisions")
+    decisions_pending_p.add_argument("--json", action="store_true", help="JSON output")
+    decisions_pending_p.set_defaults(func=cmd_decisions)
+
+    decisions_answer_p = decisions_sub.add_parser("answer", help="Answer a pending decision")
+    decisions_answer_p.add_argument("decision_id", help="Decision ID to answer")
+    decisions_answer_p.add_argument("answer_text", help="The answer text")
+    decisions_answer_p.add_argument("--answered-via", default="cli", help="Channel (cli, telegram, dashboard)")
+    decisions_answer_p.add_argument("--json", action="store_true", help="JSON output")
+    decisions_answer_p.set_defaults(func=cmd_decisions)
 
     return p
 

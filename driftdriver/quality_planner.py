@@ -240,18 +240,54 @@ def plan_from_spec(
     raw = _call_llm(prompt, model=model)
     output = _parse_plan_output(raw)
 
-    # Write tasks via wg add
+    # Write tasks via wg add with quality-gate structuring
     for task in output.tasks:
         cmd = ["wg", "add", task.title]
         if task.after:
             for dep in task.after:
                 cmd.extend(["--after", dep])
+
+        # Build description with quality gate context
+        desc_parts = []
         if task.description:
-            cmd.extend(["-d", task.description])
+            desc_parts.append(task.description)
+
+        if task.pattern and task.pattern in BUILTIN_PATTERNS:
+            pattern = BUILTIN_PATTERNS[task.pattern]
+            desc_parts.append(f"\n## Quality Pattern: {task.pattern}")
+            desc_parts.append(f"{pattern['description']}")
+            desc_parts.append(f"Structure: {pattern['structure']}")
+            if task.max_iterations:
+                desc_parts.append(f"Max iterations: {task.max_iterations}")
+
+        if desc_parts:
+            cmd.extend(["-d", "\n".join(desc_parts)])
+
+        # Add verification command for quality gates
+        if task.task_type == "quality-gate" and task.pattern:
+            if task.pattern == "e2e-breakfix":
+                cmd.extend(["--verify", "run tests and confirm all pass"])
+            elif task.pattern == "ux-eval":
+                cmd.extend(["--verify", "evaluate UX criteria and confirm acceptable"])
+            elif task.pattern == "data-eval":
+                cmd.extend(["--verify", "validate schema and run migration dry-run"])
+            elif task.pattern == "contract-test":
+                cmd.extend(["--verify", "run contract tests and confirm API matches spec"])
+        elif task.task_type == "northstar-checkpoint":
+            cmd.extend(["--verify", "assess North Star alignment and confirm score > 0.7"])
+
+        # Tag quality gates and checkpoints
+        if task.task_type in ("quality-gate", "northstar-checkpoint"):
+            cmd.extend(["--tag", f"quality,{task.pattern or task.task_type}"])
+
         try:
-            subprocess.run(
+            result = subprocess.run(
                 cmd, cwd=str(repo_path), capture_output=True, text=True, timeout=30
             )
+            if result.returncode != 0:
+                stderr = result.stderr.strip()
+                if stderr:
+                    print(f"warning: wg add for '{task.id}': {stderr}", file=sys.stderr)
         except Exception as e:
             print(f"warning: wg add failed for {task.id}: {e}", file=sys.stderr)
 
