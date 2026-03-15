@@ -45,6 +45,7 @@ INTERNAL_LANES = {
     "plandrift": "driftdriver.plandrift",
     "factorydrift": "driftdriver.factorydrift",
     "northstardrift": "driftdriver.northstardrift",
+    "evolverdrift": "driftdriver.evolverdrift",
 }
 
 ALL_LANES = EXTERNAL_LANES + list(INTERNAL_LANES.keys())

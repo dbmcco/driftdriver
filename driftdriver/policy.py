@@ -201,6 +201,17 @@ def _default_northstardrift_cfg() -> dict[str, Any]:
         "target_gap_watch": 5.0,
         "target_gap_critical": 12.0,
         "dirty_repo_review_task_mode": "workgraph-only",
+        "alignment": {
+            "statement": "",
+            "keywords": [],
+            "anti_patterns": [],
+            "last_reviewed": "",
+            "review_interval_days": 30,
+            "alignment_model": "haiku",
+            "alignment_threshold_proceed": 0.7,
+            "alignment_threshold_pause": 0.4,
+            "decision_category": "alignment",
+        },
         "targets": {
             "overall": 82.0,
             "axes": {
@@ -211,6 +222,23 @@ def _default_northstardrift_cfg() -> dict[str, Any]:
                 "self_improvement": 76.0,
             },
         },
+    }
+
+
+def _default_evolverdrift_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "evolver_stale_days": 7,
+        "impact_window_days": 14,
+        "regression_threshold": 0.2,
+    }
+
+
+def _default_bridge_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "attribution_strategy": "assignment",
+        "min_severity": "warning",
     }
 
 
@@ -256,6 +284,8 @@ class DriftPolicy:
     speedriftd: dict[str, Any]
     plandrift: dict[str, Any]
     northstardrift: dict[str, Any]
+    evolverdrift: dict[str, Any]
+    bridge: dict[str, Any]
     enforcement: dict[str, Any]
     autonomy_default: dict[str, Any]
     autonomy_repos: list[dict[str, Any]]
@@ -504,6 +534,8 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             speedriftd=_default_speedriftd_cfg(),
             plandrift=_default_plandrift_cfg(),
             northstardrift=_default_northstardrift_cfg(),
+            evolverdrift=_default_evolverdrift_cfg(),
+            bridge=_default_bridge_cfg(),
             enforcement=_default_enforcement_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
@@ -543,6 +575,8 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             speedriftd=_default_speedriftd_cfg(),
             plandrift=_default_plandrift_cfg(),
             northstardrift=_default_northstardrift_cfg(),
+            evolverdrift=_default_evolverdrift_cfg(),
+            bridge=_default_bridge_cfg(),
             enforcement=_default_enforcement_cfg(),
             autonomy_default=_default_autonomy_default_cfg(),
             autonomy_repos=[],
@@ -960,6 +994,42 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     targets["axes"] = axis_targets
     northstardrift["targets"] = targets
 
+    # Parse [northstardrift.alignment] sub-table
+    alignment_raw = northstardrift_raw.get("alignment") if isinstance(northstardrift_raw.get("alignment"), dict) else {}
+    alignment_defaults = _default_northstardrift_cfg()["alignment"]
+    northstardrift["alignment"] = {
+        "statement": str(alignment_raw.get("statement", alignment_defaults["statement"])),
+        "keywords": list(alignment_raw.get("keywords", alignment_defaults["keywords"])),
+        "anti_patterns": list(alignment_raw.get("anti_patterns", alignment_defaults["anti_patterns"])),
+        "last_reviewed": str(alignment_raw.get("last_reviewed", alignment_defaults["last_reviewed"])),
+        "review_interval_days": int(alignment_raw.get("review_interval_days", alignment_defaults["review_interval_days"])),
+        "alignment_model": str(alignment_raw.get("alignment_model", alignment_defaults["alignment_model"])),
+        "alignment_threshold_proceed": float(alignment_raw.get("alignment_threshold_proceed", alignment_defaults["alignment_threshold_proceed"])),
+        "alignment_threshold_pause": float(alignment_raw.get("alignment_threshold_pause", alignment_defaults["alignment_threshold_pause"])),
+        "decision_category": str(alignment_raw.get("decision_category", alignment_defaults["decision_category"])),
+    }
+
+    # Parse [lanes.evolverdrift]
+    evolverdrift_raw = data.get("evolverdrift") if isinstance(data.get("evolverdrift"), dict) else {}
+    if not evolverdrift_raw:
+        lanes_raw = data.get("lanes") if isinstance(data.get("lanes"), dict) else {}
+        evolverdrift_raw = lanes_raw.get("evolverdrift") if isinstance(lanes_raw.get("evolverdrift"), dict) else {}
+    evolverdrift = _default_evolverdrift_cfg()
+    evolverdrift["enabled"] = bool(evolverdrift_raw.get("enabled", evolverdrift["enabled"]))
+    evolverdrift["evolver_stale_days"] = max(1, int(evolverdrift_raw.get("evolver_stale_days", evolverdrift["evolver_stale_days"])))
+    evolverdrift["impact_window_days"] = max(1, int(evolverdrift_raw.get("impact_window_days", evolverdrift["impact_window_days"])))
+    try:
+        evolverdrift["regression_threshold"] = float(evolverdrift_raw.get("regression_threshold", evolverdrift["regression_threshold"]))
+    except Exception:
+        evolverdrift["regression_threshold"] = _default_evolverdrift_cfg()["regression_threshold"]
+
+    # Parse [bridge]
+    bridge_raw = data.get("bridge") if isinstance(data.get("bridge"), dict) else {}
+    bridge = _default_bridge_cfg()
+    bridge["enabled"] = bool(bridge_raw.get("enabled", bridge["enabled"]))
+    bridge["attribution_strategy"] = str(bridge_raw.get("attribution_strategy", bridge["attribution_strategy"]))
+    bridge["min_severity"] = str(bridge_raw.get("min_severity", bridge["min_severity"]))
+
     enforcement_raw = data.get("enforcement") if isinstance(data.get("enforcement"), dict) else {}
     enforcement = _default_enforcement_cfg()
     enforcement["enabled"] = bool(enforcement_raw.get("enabled", enforcement["enabled"]))
@@ -1034,6 +1104,8 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         speedriftd=speedriftd,
         plandrift=plandrift,
         northstardrift=northstardrift,
+        evolverdrift=evolverdrift,
+        bridge=bridge,
         enforcement=enforcement,
         autonomy_default=autonomy_default,
         autonomy_repos=autonomy_repos,

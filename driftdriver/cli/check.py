@@ -113,6 +113,7 @@ INTERNAL_LANES: dict[str, str] = {
     "plandrift": "driftdriver.plandrift",
     "factorydrift": "driftdriver.factorydrift",
     "northstardrift": "driftdriver.northstardrift",
+    "evolverdrift": "driftdriver.evolverdrift",
 }
 
 LANE_STRATEGIES = ("auto", "fences", "all", "smart")
@@ -878,6 +879,44 @@ def cmd_check(args: argparse.Namespace) -> int:
         }
 
     has_findings = any(rc == ExitCode.findings for rc in rc_by_plugin.values())
+
+    # Bridge: translate attributed drift findings into WG evaluations.
+    bridge_cfg = policy.bridge if hasattr(policy, "bridge") else {}
+    if bridge_cfg.get("enabled", True):
+        try:
+            from driftdriver.wg_eval_bridge import bridge_findings_to_evaluations
+            from speedrift_lane_sdk.lane_contract import LaneFinding as _BF, LaneResult as _BR
+
+            bridge_lane_results = []
+            for lane_name, lane_data in internal_plugins_json.items():
+                report = lane_data.get("report")
+                if isinstance(report, dict) and report.get("findings"):
+                    findings = [
+                        _BF(
+                            message=f.get("message", ""),
+                            severity=f.get("severity", "info"),
+                            file=f.get("file", ""),
+                            line=f.get("line", 0),
+                            tags=f.get("tags", []),
+                        )
+                        for f in report["findings"]
+                    ]
+                    bridge_lane_results.append(_BR(
+                        lane=lane_name,
+                        findings=findings,
+                        exit_code=int(lane_data.get("exit_code", 0)),
+                        summary=report.get("summary", ""),
+                    ))
+            if bridge_lane_results:
+                bridge_report = bridge_findings_to_evaluations(
+                    project_dir,
+                    bridge_lane_results,
+                    min_severity=str(bridge_cfg.get("min_severity", "warning")),
+                )
+                if bridge_report.evaluations_written > 0:
+                    print(f"bridge: wrote {bridge_report.evaluations_written} evaluation(s)")
+        except Exception as exc:
+            print(f"note: bridge failed: {exc}", file=sys.stderr)
 
     # Enforcement quality gates (text path) — evaluate internal lane findings.
     enforcement_findings = collect_enforcement_findings(internal_plugins_json)
