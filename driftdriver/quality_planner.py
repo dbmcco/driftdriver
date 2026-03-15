@@ -1,0 +1,258 @@
+# ABOUTME: Speedrift Quality Planner — structures workgraphs with quality intelligence.
+# ABOUTME: Reads specs, applies quality patterns from repertoire, produces task graphs.
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+BUILTIN_PATTERNS: dict[str, dict[str, str]] = {
+    "e2e-breakfix": {
+        "description": "Run end-to-end tests, diagnose failures, fix, retest. Max N iterations.",
+        "when": "Any code that has testable behavior.",
+        "structure": "implement -> test -> [fail? -> fix -> retest, max N] -> proceed",
+    },
+    "ux-eval": {
+        "description": "Evaluate UI against UX criteria (accessibility, responsiveness, interaction patterns).",
+        "when": "User-facing changes.",
+        "structure": "implement -> UX eval -> [issues? -> fix -> re-eval, max N] -> proceed",
+    },
+    "data-eval": {
+        "description": "Validate data model changes against integrity constraints, migration safety, rollback.",
+        "when": "Schema changes, migrations, data pipeline changes.",
+        "structure": "implement -> validate schema + dry-run -> [issues? -> fix -> re-validate] -> proceed",
+    },
+    "contract-test": {
+        "description": "Verify API contracts match spec.",
+        "when": "API endpoints, inter-service communication.",
+        "structure": "implement -> contract test -> [drift? -> fix -> retest] -> proceed",
+    },
+    "northstar-checkpoint": {
+        "description": "Invoke NorthStarDrift v2 alignment check scoped to this graph's completed work.",
+        "when": "Phase boundaries, after significant directional decisions.",
+        "structure": "assess alignment -> [aligned? proceed | drifting? warn | lost? pause + escalate]",
+    },
+}
+
+
+@dataclass
+class PlannedTask:
+    id: str
+    title: str
+    after: list[str] = field(default_factory=list)
+    task_type: str = "code"
+    risk: str = "medium"
+    description: str = ""
+    pattern: str | None = None
+    max_iterations: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "id": self.id,
+            "title": self.title,
+            "after": self.after,
+            "type": self.task_type,
+            "risk": self.risk,
+        }
+        if self.description:
+            d["description"] = self.description
+        if self.pattern:
+            d["pattern"] = self.pattern
+        if self.max_iterations is not None:
+            d["max_iterations"] = self.max_iterations
+        return d
+
+
+@dataclass
+class PlannerOutput:
+    tasks: list[PlannedTask] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"tasks": [t.to_dict() for t in self.tasks]}
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
+
+
+def load_repertoire() -> dict[str, dict[str, str]]:
+    """Return a copy of the built-in quality pattern repertoire."""
+    return dict(BUILTIN_PATTERNS)
+
+
+def build_planner_prompt(
+    *,
+    spec_content: str,
+    north_star: str,
+    repertoire: dict[str, dict[str, str]],
+    drift_policy_summary: str = "",
+) -> str:
+    """Build the LLM prompt that instructs the planner to produce a quality-aware task graph."""
+    repertoire_text = ""
+    for name, pattern in repertoire.items():
+        repertoire_text += f"\n### {name}\n"
+        repertoire_text += f"- **Description:** {pattern['description']}\n"
+        repertoire_text += f"- **When to use:** {pattern['when']}\n"
+        repertoire_text += f"- **Structure:** {pattern['structure']}\n"
+
+    return f"""You are the Speedrift Quality Planner. Your job is to take a specification and produce a workgraph task list with quality intelligence baked in.
+
+## North Star
+{north_star}
+
+## Specification
+{spec_content}
+
+{f"## Drift Policy Summary{chr(10)}{drift_policy_summary}" if drift_policy_summary else ""}
+
+## Quality Pattern Repertoire
+These are the quality patterns available. Use your judgment about which to apply and where.
+{repertoire_text}
+
+## Your Task
+Analyze the specification and produce a structured task graph as JSON. For each implementation task, decide:
+1. What type of work is it? (code, UI, data, API, infrastructure, config)
+2. What is the risk profile? (low, medium, high)
+3. Which quality patterns should follow it, if any?
+4. Where should NorthStar checkpoints go? (phase boundaries, after significant decisions)
+
+Use break/fix loops where appropriate. Don't over-test trivial changes. Think about risk.
+
+## Output Format
+Respond with ONLY a JSON object:
+```json
+{{
+  "tasks": [
+    {{
+      "id": "task-slug",
+      "title": "Human-readable title",
+      "after": ["dependency-task-id"],
+      "type": "code|quality-gate|northstar-checkpoint",
+      "risk": "low|medium|high",
+      "description": "What the agent should do",
+      "pattern": "e2e-breakfix|ux-eval|data-eval|contract-test|northstar-checkpoint (if quality-gate)",
+      "max_iterations": 3
+    }}
+  ]
+}}
+```
+"""
+
+
+def _read_north_star(repo_path: Path) -> str:
+    """Read the North Star alignment statement from drift-policy.toml."""
+    policy_path = repo_path / ".workgraph" / "drift-policy.toml"
+    if not policy_path.exists():
+        policy_path = repo_path / "drift-policy.toml"
+    if not policy_path.exists():
+        return ""
+    try:
+        import tomllib
+
+        data = tomllib.loads(policy_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    alignment = (data.get("northstardrift") or {}).get("alignment") or {}
+    return str(alignment.get("statement", ""))
+
+
+def _call_llm(prompt: str, model: str = "sonnet") -> str:
+    """Call an LLM via `claude --print` and return the response text."""
+    try:
+        result = subprocess.run(
+            ["claude", "--print", "--model", model, "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        print(f"warning: LLM call failed: {e}", file=sys.stderr)
+        return ""
+
+
+def _parse_plan_output(raw: str) -> PlannerOutput:
+    """Extract and parse JSON task list from LLM response, handling markdown code blocks."""
+    text = raw.strip()
+    if not text:
+        return PlannerOutput()
+
+    if "```json" in text:
+        text = text.split("```json", 1)[1]
+        text = text.split("```", 1)[0]
+    elif "```" in text:
+        text = text.split("```", 1)[1]
+        text = text.split("```", 1)[0]
+
+    try:
+        data = json.loads(text.strip())
+    except json.JSONDecodeError:
+        return PlannerOutput()
+
+    tasks: list[PlannedTask] = []
+    for t in data.get("tasks", []):
+        tasks.append(
+            PlannedTask(
+                id=t.get("id", ""),
+                title=t.get("title", ""),
+                after=t.get("after", []),
+                task_type=t.get("type", "code"),
+                risk=t.get("risk", "medium"),
+                description=t.get("description", ""),
+                pattern=t.get("pattern"),
+                max_iterations=t.get("max_iterations"),
+            )
+        )
+    return PlannerOutput(tasks=tasks)
+
+
+def plan_from_spec(
+    *,
+    spec_path: Path,
+    repo_path: Path,
+    dry_run: bool = False,
+    model: str = "sonnet",
+) -> PlannerOutput:
+    """Read a spec file and produce a quality-aware workgraph task plan.
+
+    In dry_run mode, prints a summary and returns an empty PlannerOutput
+    without making any LLM calls.
+    """
+    spec_content = spec_path.read_text(encoding="utf-8")
+    north_star = _read_north_star(repo_path)
+    repertoire = load_repertoire()
+
+    prompt = build_planner_prompt(
+        spec_content=spec_content,
+        north_star=north_star,
+        repertoire=repertoire,
+    )
+
+    if dry_run:
+        print(f"[planner dry-run] Would call {model} with {len(prompt)} char prompt")
+        print(f"[planner dry-run] North Star: {north_star or '(not configured)'}")
+        print(f"[planner dry-run] Patterns available: {', '.join(repertoire.keys())}")
+        return PlannerOutput()
+
+    raw = _call_llm(prompt, model=model)
+    output = _parse_plan_output(raw)
+
+    # Write tasks via wg add
+    for task in output.tasks:
+        cmd = ["wg", "add", task.title]
+        if task.after:
+            for dep in task.after:
+                cmd.extend(["--after", dep])
+        if task.description:
+            cmd.extend(["-d", task.description])
+        try:
+            subprocess.run(
+                cmd, cwd=str(repo_path), capture_output=True, text=True, timeout=30
+            )
+        except Exception as e:
+            print(f"warning: wg add failed for {task.id}: {e}", file=sys.stderr)
+
+    return output
