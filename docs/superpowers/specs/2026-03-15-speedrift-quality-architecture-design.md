@@ -105,10 +105,12 @@ Findings that can't be attributed (e.g., "repo has no North Star", "graph has or
 | plandrift | `completeness`, `downstream_usability` | `coordination_overhead` |
 | secdrift | `correctness` | `blocking_impact` |
 | northstardrift v2 | `strategic_alignment` (new) | `downstream_usability` |
+| factorydrift | `coordination_overhead` | `blocking_impact` |
+| northstardrift v1 (operational) | `coordination_overhead` | `efficiency` |
 | uxdrift (external) | `style_adherence` | `downstream_usability` |
 | yagnidrift (external) | `efficiency` | `completeness` |
 
-Severity maps to score: critical=0.0, high=0.2, medium=0.5, low=0.8, no finding=1.0.
+Severity maps to score (using the speedrift-lane-sdk `LaneFinding.severity` vocabulary): critical=0.0, error=0.2, warning=0.5, info=0.8, no finding=1.0.
 
 **Step 3 — Write evaluation JSON.** One file per attributable finding:
 
@@ -147,13 +149,31 @@ Key fields: `evaluator` is always `speedrift:<lane_name>`, `source` is always `"
 
 `driftdriver/wg_eval_bridge.py` with:
 ```python
+@dataclass
+class BridgeReport:
+    evaluations_written: int
+    unattributable_findings: int
+    attribution_failures: list[str]  # task_ids where assignment YAML was missing
+    evaluation_ids: list[str]        # IDs of written evaluation files
+
 def bridge_findings_to_evaluations(
     repo_path: Path,
     lane_results: list[LaneResult],
 ) -> BridgeReport
 ```
 
-Called by factorydrift after lane execution completes.
+**Call site:** The bridge is invoked at the end of the drift check cycle in `cli/check.py`, after all lane results have been collected. This ensures it has findings from all lanes (qadrift, coredrift, secdrift, plandrift, northstardrift, etc.), not just one. It is NOT called from within factorydrift's `run_as_lane()` — factorydrift only has its own results at that point.
+
+**Unattributable scenarios:** Findings are skipped (not bridged) when:
+- No task reference in finding tags and no file path to trace
+- Task reference exists but no assignment YAML at `.workgraph/agency/assignments/{task_id}.yaml` (task may predate the agency system or was manually created)
+- Assignment YAML exists but has no `role_id` or `composition_id`
+
+These are counted in `BridgeReport.unattributable_findings` for observability.
+
+### Evaluation Accumulation
+
+The "no duplicate suppression" policy means evaluation files accumulate. At the expected factorydrift cycle frequency (~90 seconds), a persistent unfixed finding could generate ~960 evaluations/day. This is intentional — the evolver aggregates by computing running averages, so volume-weighted signal correctly reflects persistent problems. However, repos with very fast drift cycles may want to configure `min_severity = "warning"` in `[bridge]` to reduce noise from `info`-level findings.
 
 ---
 
@@ -165,10 +185,10 @@ NorthStarDrift v1 is an ecosystem health scorecard (continuity, autonomy, qualit
 
 ### North Star Declaration
 
-Each repo declares its North Star in `drift-policy.toml`:
+Each repo declares its North Star in `drift-policy.toml` under the existing `[northstardrift]` section (which already exists in the policy schema — see `policy.py`). The alignment fields are added as a sub-table:
 
 ```toml
-[northstar]
+[northstardrift.alignment]
 statement = "The system understands your relationships the way you would if you had perfect memory and unlimited attention"
 keywords = ["relationships", "context", "memory", "presence", "genuine", "texture"]
 anti_patterns = ["pipeline", "funnel", "deal stages", "conversion rates", "lead scoring"]
@@ -210,7 +230,7 @@ When the Planner inserts NorthStar checkpoints into a workgraph, those checkpoin
 3. Scores alignment
 4. If aligned (score > 0.7): marks itself done, execution continues
 5. If drifting (score 0.4-0.7): emits a finding, adds a log message to downstream tasks with the drift warning, continues
-6. If lost (score < 0.4): writes `intent: "needs_human"` to the decision queue with context and options, pauses remaining graph until human responds
+6. If lost (score < 0.4): writes `intent: "needs_human"` to the decision queue with context and options, and pauses remaining graph by emitting `block_task` directives for all immediate downstream tasks (with `until: "decision-{id}-resolved"`). When the human answers via the decision queue, an unblock handler removes the blocks. This uses the existing directive vocabulary from the boundary design.
 7. If the Planner is available (runtime mode): the Planner evaluates whether remaining tasks need restructuring based on the checkpoint's findings
 
 ### Bridge Integration
@@ -235,9 +255,9 @@ Five checks, in order of importance:
 
 **1. Liveness — Is the evolver running?**
 
-Look for evolve-run directories in `.workgraph/evolve-runs/`. If the most recent run is older than a configurable threshold (default 7 days) and there are unprocessed drift evaluations (files with `source: "drift"` newer than the last run), emit a finding: "Evolver has not run in {N} days. {M} drift evaluations await processing."
+Look for evolve-run directories in `.workgraph/evolve-runs/`. If the directory doesn't exist or is empty, emit an `info` finding: "Evolver has never run in this repo" and suppress all other evolverdrift checks (consumption, impact, regression) — there's nothing to monitor yet. If the most recent run is older than a configurable threshold (default 7 days) and there are unprocessed drift evaluations (files with `source: "drift"` newer than the last run), emit a finding: "Evolver has not run in {N} days. {M} drift evaluations await processing."
 
-Severity: `warning` if 7-14 days, `high` if 14+ days.
+Severity: `info` for no history, `warning` if 7-14 days stale, `high` if 14+ days stale.
 
 **2. Consumption — Are our evaluations being picked up?**
 
@@ -479,13 +499,13 @@ The components have dependencies. Ship in this order:
 **Phase 3 — NorthStarDrift v2** (strategic alignment)
 - Depends on: Bridge (alignment findings need to flow as evaluations)
 - Extends existing `northstardrift.py` with alignment layer
-- Adds `[northstar]` section to drift-policy.toml schema
+- Adds `[northstardrift.alignment]` sub-table to drift-policy.toml schema
 - Adds LLM-driven alignment scoring (Haiku)
 - Test: repo with declared North Star + completed tasks, verify alignment scores
 
 **Phase 4 — Planner** (quality-aware graph structuring)
 - Depends on: NorthStarDrift v2 (for meaningful checkpoints), Bridge (so quality gates produce evaluations)
-- `driftdriver/planner.py`: spec reader, repertoire, LLM-driven graph structuring
+- `driftdriver/quality_planner.py`: spec reader, repertoire, LLM-driven graph structuring (note: `planner.py` already exists with a simpler goal decomposition system — the quality planner supersedes it for structured planning but the existing module can remain for lightweight decomposition)
 - Runtime mode: brain integration for graph evolution at checkpoints
 - Test: give it a spec, verify output graph has appropriate quality patterns
 
@@ -513,8 +533,8 @@ evolver_stale_days = 7               # warn if evolver hasn't run
 impact_window_days = 14              # compare drift rates in this window
 regression_threshold = 0.2           # score drop that triggers regression finding
 
-# New: North Star alignment (extends existing northstar section)
-[northstar]
+# New: North Star alignment (sub-table of existing [northstardrift] section)
+[northstardrift.alignment]
 statement = "..."
 keywords = ["..."]
 anti_patterns = ["..."]
@@ -523,20 +543,22 @@ review_interval_days = 30
 alignment_model = "haiku"            # LLM for alignment scoring
 alignment_threshold_proceed = 0.7    # checkpoint proceeds
 alignment_threshold_pause = 0.4     # checkpoint escalates to decision queue
+decision_category = "alignment"      # category for decision queue entries
 
 # New: Planner
 [planner]
 enabled = true
 model = "sonnet"                     # LLM for graph structuring
 breakfix_max_iterations = 3          # default cap on break/fix loops
-checkpoint_interval = 5              # NorthStar checkpoint every N implementation tasks
+# Note: NorthStar checkpoint placement is determined by Planner judgment
+# (phase boundaries, directional decisions), not by a fixed interval.
 ```
 
 ### Factory Brain Integration
 
 The brain's tick loop gains two new capabilities, both using the existing directive interface:
 
-- **WG workaround directives**: when evolverdrift detects orphaned tasks or deadlocked daemons, the brain issues `unclaim_task` or `restart_service` directives as workarounds. These retire naturally when Erik ships fixes for [#5](https://github.com/graphwork/workgraph/issues/5), [#6](https://github.com/graphwork/workgraph/issues/6), [#7](https://github.com/graphwork/workgraph/issues/7).
+- **WG workaround directives**: when evolverdrift detects orphaned tasks or deadlocked daemons, the brain issues directives using the existing vocabulary — `ABANDON_TASK` for orphaned in-progress tasks (from `directives.py`), `stop_dispatch_loop` + `start_dispatch_loop` for deadlocked daemons (from `factory_brain/directives.py`). These workarounds retire naturally when Erik ships fixes for [#5](https://github.com/graphwork/workgraph/issues/5), [#6](https://github.com/graphwork/workgraph/issues/6), [#7](https://github.com/graphwork/workgraph/issues/7).
 - **Planner runtime invocation**: when a NorthStar checkpoint escalates (score < 0.4 or requests graph restructuring), the brain invokes the Planner in runtime mode. The Planner produces graph modifications, the brain issues them as directives.
 
 ---
