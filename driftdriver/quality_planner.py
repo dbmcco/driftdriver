@@ -79,6 +79,7 @@ class PlannedTask:
 @dataclass
 class PlannerOutput:
     tasks: list[PlannedTask] = field(default_factory=list)
+    added_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {"tasks": [t.to_dict() for t in self.tasks]}
@@ -297,6 +298,7 @@ def plan_from_spec(
     output = _parse_plan_output(raw)
 
     # Write tasks via wg add with quality-gate structuring
+    added_count = 0
     for task in output.tasks:
         cmd = ["wg", "add", task.title, "--immediate"]
         if task.after:
@@ -340,13 +342,18 @@ def plan_from_spec(
 
         try:
             result = subprocess.run(
-                cmd, cwd=str(repo_path), capture_output=True, text=True, timeout=30
+                cmd, cwd=str(repo_path), capture_output=True, text=True, timeout=5
             )
-            if result.returncode != 0:
+            if result.returncode == 0:
+                added_count += 1
+            else:
                 stderr = result.stderr.strip()
                 if stderr:
                     print(f"warning: wg add for '{task.id}': {stderr}", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            print(f"warning: wg add timed out for '{task.id}' (workgraph daemon may be unresponsive)", file=sys.stderr)
         except Exception as e:
             print(f"warning: wg add failed for {task.id}: {e}", file=sys.stderr)
 
+    output.added_count = added_count
     return output

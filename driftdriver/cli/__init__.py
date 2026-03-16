@@ -465,7 +465,14 @@ def cmd_plan(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(output.to_json())
     else:
-        print(f"Created {len(output.tasks)} task(s) in workgraph")
+        planned = len(output.tasks)
+        added = output.added_count
+        if planned > 0 and added == 0:
+            print(f"Planned {planned} task(s) but wg add failed for all (daemon may be unresponsive). Tasks parsed successfully.")
+        elif added < planned:
+            print(f"Created {added}/{planned} task(s) in workgraph ({planned - added} failed)")
+        else:
+            print(f"Created {added} task(s) in workgraph")
     return 0
 
 
