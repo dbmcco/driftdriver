@@ -720,8 +720,12 @@ def collect_ecosystem_snapshot(
 
     repos: list[RepoSnapshot] = []
     upstream: list[UpstreamCandidate] = []
-    for name, path in sorted(repo_map.items()):
-        repo_snap = collect_repo_snapshot(
+
+    # Per-repo timeout: prevent one stuck daemon from blocking the entire collector.
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutTimeout
+
+    def _collect_one(name: str, path: Path) -> RepoSnapshot:
+        snap = collect_repo_snapshot(
             name,
             path,
             max_next=max_next,
@@ -729,9 +733,42 @@ def collect_ecosystem_snapshot(
             secdrift_policy=secdrift_policy,
             qadrift_policy=qadrift_policy,
         )
-        repo_snap.source = repo_sources.get(name, "ecosystem-toml")
-        repos.append(repo_snap)
-        upstream.extend(generate_upstream_candidates(name, path))
+        snap.source = repo_sources.get(name, "ecosystem-toml")
+        return snap
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for name, path in sorted(repo_map.items()):
+            future = pool.submit(_collect_one, name, path)
+            try:
+                repo_snap = future.result(timeout=15)
+            except _FutTimeout:
+                repo_snap = RepoSnapshot(name=name, path=str(path), exists=path.exists())
+                repo_snap.errors.append("snapshot_timeout: repo scan exceeded 15s")
+                repo_snap.source = repo_sources.get(name, "ecosystem-toml")
+            except Exception as exc:
+                repo_snap = RepoSnapshot(name=name, path=str(path), exists=path.exists())
+                repo_snap.errors.append(f"snapshot_error: {str(exc)[:200]}")
+                repo_snap.source = repo_sources.get(name, "ecosystem-toml")
+            repos.append(repo_snap)
+            upstream.extend(generate_upstream_candidates(name, path))
+
+    # Auto-heal: unclaim orphaned tasks and purge dead agents across ecosystem.
+    try:
+        from .heal import heal_repo_graph
+        for snap in repos:
+            snap_path = Path(snap.path)
+            if snap.workgraph_exists and snap.stale_in_progress:
+                heal_result = heal_repo_graph(snap_path)
+                if heal_result.get("unclaimed_tasks", 0) > 0 or heal_result.get("purged_agents", 0) > 0:
+                    import sys
+                    print(
+                        f"heal: {snap.name}: unclaimed {heal_result['unclaimed_tasks']} task(s), "
+                        f"purged {heal_result['purged_agents']} agent(s), "
+                        f"fixed {heal_result['fixed_log_entries']} log(s)",
+                        file=sys.stderr,
+                    )
+    except Exception:
+        pass  # Healing is best-effort — never break the collector
 
     updates: dict[str, Any] = {"has_updates": False, "has_discoveries": False, "summary": ""}
     if include_updates:
