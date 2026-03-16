@@ -191,10 +191,11 @@ def _call_llm(prompt: str, model: str = "sonnet") -> str:
     """Call an LLM via `claude --print` and return the response text."""
     try:
         result = subprocess.run(
-            ["claude", "--print", "--model", model, "-p", prompt],
+            ["claude", "--print", "--model", model, "-p", "-"],
+            input=prompt,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
         return result.stdout.strip()
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
@@ -208,16 +209,40 @@ def _parse_plan_output(raw: str) -> PlannerOutput:
     if not text:
         return PlannerOutput()
 
-    if "```json" in text:
-        text = text.split("```json", 1)[1]
-        text = text.split("```", 1)[0]
-    elif "```" in text:
-        text = text.split("```", 1)[1]
-        text = text.split("```", 1)[0]
+    # Strategy: try direct JSON parse first, then extract from code blocks.
+    # The direct parse handles cases where the JSON contains backticks in string values.
+    data = None
 
+    # 1. Try parsing the raw text directly (may work if no wrapping code block)
     try:
-        data = json.loads(text.strip())
+        data = json.loads(text)
     except json.JSONDecodeError:
+        pass
+
+    # 2. Try extracting from ```json ... ``` by finding the outermost block
+    if data is None and "```json" in text:
+        start = text.index("```json") + len("```json")
+        # Find the LAST ``` (the closing one for the outermost block)
+        last_fence = text.rfind("```")
+        if last_fence > start:
+            candidate = text[start:last_fence].strip()
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+    # 3. Try finding { ... } spanning the largest balanced region
+    if data is None:
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace >= 0 and last_brace > first_brace:
+            candidate = text[first_brace : last_brace + 1]
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+    if data is None:
         return PlannerOutput()
 
     tasks: list[PlannedTask] = []
