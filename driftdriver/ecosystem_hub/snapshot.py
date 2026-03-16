@@ -208,6 +208,10 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
     if in_progress > 0:
         if service_agents_alive and service_agents_alive > 0:
             return "active", []
+        # Service running with in-progress tasks = assume active even if agents
+        # haven't registered yet (wg coordinator is slow to update registry).
+        if snap.service_running and not snap.stale_in_progress:
+            return "active", []
         reasons: list[str] = []
         if snap.service_running:
             reasons.append("workgraph service running but no live agents")
@@ -489,6 +493,11 @@ def collect_repo_snapshot(
             snap.runtime = {"control": load_control_state(repo_path)}
         except Exception:
             snap.runtime = {}
+
+    # Continuation intent from control.json.
+    control_data = _read_json(wg_dir / "service" / "runtime" / "control.json")
+    if isinstance(control_data, dict) and isinstance(control_data.get("continuation_intent"), dict):
+        snap.continuation_intent = control_data["continuation_intent"]
 
     # Service status is best-effort; missing wg is non-fatal.
     rc, status_json, _ = _run_cmd(["wg", "--dir", str(wg_dir), "service", "status", "--json"], cwd=repo_path)
