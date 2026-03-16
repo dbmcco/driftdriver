@@ -49,6 +49,9 @@ class PlannedTask:
     description: str = ""
     pattern: str | None = None
     max_iterations: int | None = None
+    verify: str = ""
+    touch: list[str] = field(default_factory=list)
+    acceptance: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -64,6 +67,12 @@ class PlannedTask:
             d["pattern"] = self.pattern
         if self.max_iterations is not None:
             d["max_iterations"] = self.max_iterations
+        if self.verify:
+            d["verify"] = self.verify
+        if self.touch:
+            d["touch"] = self.touch
+        if self.acceptance:
+            d["acceptance"] = self.acceptance
         return d
 
 
@@ -134,11 +143,30 @@ Respond with ONLY a JSON object:
       "risk": "low|medium|high",
       "description": "What the agent should do",
       "pattern": "e2e-breakfix|ux-eval|data-eval|contract-test|northstar-checkpoint (if quality-gate)",
-      "max_iterations": 3
+      "max_iterations": 3,
+      "touch": ["src/path/to/file.ts"],
+      "acceptance": ["Build passes", "Tests pass"],
+      "verify": "npm run typecheck"
     }}
   ]
 }}
 ```
+
+## CRITICAL: wg-contract blocks
+Every code-type task description MUST begin with a wg-contract fenced block so coredrift can check it:
+````
+```wg-contract
+schema = 1
+mode = "core"
+objective = "The task title"
+non_goals = ["Things explicitly out of scope"]
+touch = ["src/file1.ts", "src/file2.ts"]
+acceptance = ["Acceptance criterion 1", "Acceptance criterion 2"]
+max_files = 15
+max_loc = 500
+```
+````
+Include the wg-contract block as the FIRST thing in the description field. Put the human-readable instructions after it.
 """
 
 
@@ -204,6 +232,9 @@ def _parse_plan_output(raw: str) -> PlannerOutput:
                 description=t.get("description", ""),
                 pattern=t.get("pattern"),
                 max_iterations=t.get("max_iterations"),
+                verify=t.get("verify", ""),
+                touch=t.get("touch", []),
+                acceptance=t.get("acceptance", []),
             )
         )
     return PlannerOutput(tasks=tasks)
@@ -242,7 +273,7 @@ def plan_from_spec(
 
     # Write tasks via wg add with quality-gate structuring
     for task in output.tasks:
-        cmd = ["wg", "add", task.title]
+        cmd = ["wg", "add", task.title, "--immediate"]
         if task.after:
             for dep in task.after:
                 cmd.extend(["--after", dep])
@@ -263,8 +294,10 @@ def plan_from_spec(
         if desc_parts:
             cmd.extend(["-d", "\n".join(desc_parts)])
 
-        # Add verification command for quality gates
-        if task.task_type == "quality-gate" and task.pattern:
+        # Add verification command — prefer explicit verify from LLM, fall back to pattern defaults
+        if task.verify:
+            cmd.extend(["--verify", task.verify])
+        elif task.task_type == "quality-gate" and task.pattern:
             if task.pattern == "e2e-breakfix":
                 cmd.extend(["--verify", "run tests and confirm all pass"])
             elif task.pattern == "ux-eval":
