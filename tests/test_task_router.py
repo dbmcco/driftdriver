@@ -479,7 +479,7 @@ class TestDispatchTask(unittest.TestCase):
 
     @patch("driftdriver.task_router.subprocess")
     def test_claude_dispatch(self, mock_subprocess: MagicMock) -> None:
-        mock_subprocess.Popen.return_value = MagicMock()
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stdout="Spawned agent-1", stderr="")
 
         executor = ExecutorConfig(
             name="claude-runner",
@@ -487,11 +487,14 @@ class TestDispatchTask(unittest.TestCase):
             endpoint="",
             tag_match="executor:claude",
         )
-        result = dispatch_task(self._make_task(), executor, Path("/fake/repo"))
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            result = dispatch_task(self._make_task(), executor, repo)
 
         self.assertTrue(result.dispatched)
         self.assertEqual(result.executor, "claude-runner")
-        mock_subprocess.Popen.assert_called_once()
+        mock_subprocess.run.assert_called_once()
 
     def test_unknown_executor_type(self) -> None:
         executor = ExecutorConfig(

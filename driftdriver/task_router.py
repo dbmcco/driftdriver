@@ -262,21 +262,57 @@ def _dispatch_http(
 def _dispatch_claude(
     task: dict, executor: ExecutorConfig, repo_path: Path
 ) -> DispatchResult:
-    """Spawn a Claude subprocess to handle the task."""
+    """Spawn a full wg agent via `wg spawn` for proper context, lifecycle, and registration.
+
+    Uses wg's executor pipeline (prompt assembly, agent registration, output logging)
+    without the coordinator LLM that hangs. Clears stale graph locks before spawning.
+    """
     task_id = str(task.get("id", "unknown"))
-    description = task.get("description", task.get("title", ""))
+    wg_dir = repo_path / ".workgraph"
+
+    # Clear stale graph lock (crashed processes leave empty lock files)
+    lock_path = wg_dir / "graph.lock"
+    if lock_path.exists():
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
+    cmd = ["wg", "--dir", str(wg_dir), "spawn", task_id, "--executor", "claude"]
+
+    # Use task model if specified, otherwise let wg resolve
+    model = task.get("model")
+    if model:
+        cmd.extend(["--model", model])
 
     try:
-        subprocess.Popen(
-            ["claude", "--print", "-p", description],
+        result = subprocess.run(
+            cmd,
             cwd=str(repo_path),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
+        if result.returncode == 0:
+            return DispatchResult(
+                task_id=task_id,
+                dispatched=True,
+                executor=executor.name,
+            )
+        else:
+            error = result.stderr.strip()[:200] or result.stdout.strip()[:200] or "spawn failed"
+            return DispatchResult(
+                task_id=task_id,
+                dispatched=False,
+                executor=executor.name,
+                error=error,
+            )
+    except subprocess.TimeoutExpired:
         return DispatchResult(
             task_id=task_id,
-            dispatched=True,
+            dispatched=False,
             executor=executor.name,
+            error="wg spawn timed out (30s) — possible graph lock or daemon issue",
         )
     except (OSError, FileNotFoundError) as exc:
         return DispatchResult(
@@ -445,8 +481,8 @@ def route_ready_tasks(
                 tag_match="",
             )
 
-        # Claim before dispatch (only for non-skip executors)
-        if executor.type != "wg-daemon":
+        # Claim before dispatch (HTTP executors only — wg spawn handles its own claiming)
+        if executor.type == "http":
             claimed = claim_task(str(task["id"]), repo_path)
             if not claimed:
                 results.append(DispatchResult(
@@ -459,8 +495,8 @@ def route_ready_tasks(
 
         result = dispatch_task(task, executor, repo_path)
 
-        # Unclaim on failure so the task is retried next tick
-        if not result.dispatched and result.error and executor.type != "wg-daemon":
+        # Unclaim on failure so the task is retried next tick (HTTP only — wg spawn doesn't claim on failure)
+        if not result.dispatched and result.error and executor.type == "http":
             _unclaim_task(str(task["id"]), repo_path)
 
         results.append(result)
