@@ -770,6 +770,33 @@ def collect_ecosystem_snapshot(
     except Exception:
         pass  # Healing is best-effort — never break the collector
 
+    # Task routing: dispatch tagged tasks to appropriate executors (paia agents, schedules, etc.)
+    try:
+        from driftdriver.task_router import load_routing_config, route_ready_tasks
+        hub_policy_path = project_dir / ".workgraph" / "drift-policy.toml"
+        hub_routing = load_routing_config(hub_policy_path)
+        if hub_routing.enabled:
+            import sys
+            for snap in repos:
+                snap_path = Path(snap.path)
+                if not snap.workgraph_exists:
+                    continue
+                # Load per-repo routing config if available, else use hub-level
+                repo_policy = snap_path / ".workgraph" / "drift-policy.toml"
+                repo_routing = load_routing_config(repo_policy) if repo_policy.exists() else hub_routing
+                if not repo_routing.enabled:
+                    continue
+                results = route_ready_tasks(snap_path, repo_routing)
+                dispatched = [r for r in results if r.dispatched]
+                if dispatched:
+                    print(
+                        f"router: {snap.name}: dispatched {len(dispatched)} task(s) "
+                        f"({', '.join(r.executor + ':' + r.task_id for r in dispatched)})",
+                        file=sys.stderr,
+                    )
+    except Exception:
+        pass  # Routing is best-effort — never break the collector
+
     updates: dict[str, Any] = {"has_updates": False, "has_discoveries": False, "summary": ""}
     if include_updates:
         checker = update_checker or _default_update_checker
