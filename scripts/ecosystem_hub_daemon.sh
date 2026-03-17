@@ -27,6 +27,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HUB="$ROOT/scripts/ecosystem_hub.sh"
 
+# Ensure PATH includes user tools (claude, cargo/wg, homebrew) — launchd doesn't inherit shell profile
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 PROJECT_DIR="${PROJECT_DIR:-$ROOT}"
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
