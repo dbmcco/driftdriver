@@ -771,23 +771,39 @@ def collect_ecosystem_snapshot(
         pass  # Healing is best-effort — never break the collector
 
     # Task routing: dispatch tagged tasks to appropriate executors (paia agents, schedules, etc.)
+    # Smart routing: hub config applies to ALL repos — no per-repo config needed.
+    # If a repo has tasks with agent: tags and the hub knows those executors, it routes them.
     try:
         from driftdriver.task_router import load_routing_config, route_ready_tasks, check_agent_completions
+        import sys
+
         hub_policy_path = project_dir / ".workgraph" / "drift-policy.toml"
         hub_routing = load_routing_config(hub_policy_path)
         if hub_routing.enabled:
-            import sys
             for snap in repos:
                 snap_path = Path(snap.path)
                 if not snap.workgraph_exists:
                     continue
-                # Load per-repo routing config if available, else use hub-level
+
+                # Per-repo config takes priority if it exists and is enabled.
+                # Otherwise, fall back to hub-level routing config (smart default).
                 repo_policy = snap_path / ".workgraph" / "drift-policy.toml"
-                repo_routing = load_routing_config(repo_policy) if repo_policy.exists() else hub_routing
-                if not repo_routing.enabled:
-                    continue
+                if repo_policy.exists():
+                    repo_routing = load_routing_config(repo_policy)
+                    if repo_routing.enabled:
+                        effective_routing = repo_routing
+                    elif repo_routing.executors:
+                        # Has routing section but disabled — respect that
+                        continue
+                    else:
+                        # No routing section — use hub config
+                        effective_routing = hub_routing
+                else:
+                    # No policy file — use hub config
+                    effective_routing = hub_routing
+
                 # Check completions first (mark done before dispatching new work)
-                completions = check_agent_completions(snap_path, repo_routing)
+                completions = check_agent_completions(snap_path, effective_routing)
                 completed = [c for c in completions if c.completed]
                 if completed:
                     print(
@@ -797,7 +813,7 @@ def collect_ecosystem_snapshot(
                     )
 
                 # Then dispatch new ready tasks
-                results = route_ready_tasks(snap_path, repo_routing)
+                results = route_ready_tasks(snap_path, effective_routing)
                 dispatched = [r for r in results if r.dispatched]
                 if dispatched:
                     print(

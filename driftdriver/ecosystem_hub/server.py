@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -58,6 +59,58 @@ from .websocket import LiveStreamHub
 _log = __import__("logging").getLogger(__name__)
 
 _CHILD_PROCS: dict[int, subprocess.Popen[str]] = {}
+
+
+def _clear_stale_graph_locks(workspace_root: Path, *, max_depth: int = 3) -> int:
+    """Remove zero-byte graph.lock files left by crashed wg processes.
+
+    These stale locks cause every ``wg`` CLI command to hang indefinitely,
+    which in turn crashes the factory execution cycle.  Runs at hub startup
+    and at the beginning of each collector tick.
+
+    Returns the number of lock files removed.
+    """
+    cleared = 0
+
+    def _scan(directory: Path, depth: int) -> None:
+        nonlocal cleared
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(directory.iterdir())
+        except (PermissionError, OSError):
+            return
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith(".") and entry.name != ".workgraph":
+                continue
+            if entry.name == ".workgraph":
+                lock = entry / "graph.lock"
+                try:
+                    if lock.exists() and lock.stat().st_size == 0:
+                        lock.unlink()
+                        cleared += 1
+                except OSError:
+                    pass
+                continue
+            _scan(entry, depth + 1)
+
+    _scan(workspace_root, 0)
+    if cleared:
+        _log.info("Cleared %d stale graph.lock file(s) under %s", cleared, workspace_root)
+    return cleared
+
+
+def _port_is_available(host: str, port: int) -> bool:
+    """Check whether *port* can be bound. Returns False if already in use."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+            return True
+    except OSError:
+        return False
 
 
 def start_service_process(
@@ -232,7 +285,7 @@ def run_service_foreground(
     try:
         from driftdriver.factory_brain.hub_integration import FactoryBrain
 
-        brain_data_dir = paths["dir"] / "factory-brain"
+        brain_data_dir = Path.home() / ".config" / "workgraph" / "factory-brain"
         brain_data_dir.mkdir(parents=True, exist_ok=True)
         _factory_brain = FactoryBrain(
             hub_data_dir=brain_data_dir,
@@ -243,8 +296,48 @@ def run_service_foreground(
     except Exception:
         _log.debug("Factory brain not available — skipping", exc_info=True)
 
+    # Clear stale locks at startup before anything else
+    _clear_stale_graph_locks(workspace_root)
+
+    # Auto-restart: track source file timestamps at startup.
+    # If any driftdriver source changes, the hub restarts itself.
+    _driftdriver_src = Path(__file__).resolve().parent.parent
+    _startup_mtimes: dict[str, float] = {}
+    for _pyf in _driftdriver_src.rglob("*.py"):
+        try:
+            _startup_mtimes[str(_pyf)] = _pyf.stat().st_mtime
+        except OSError:
+            pass
+    _startup_time = time.time()
+
+    def _source_changed() -> bool:
+        """Check if any driftdriver source file changed since startup."""
+        for path_str, mtime in _startup_mtimes.items():
+            try:
+                if Path(path_str).stat().st_mtime > mtime:
+                    return True
+            except OSError:
+                pass
+        # Also check for new files
+        for pyf in _driftdriver_src.rglob("*.py"):
+            if str(pyf) not in _startup_mtimes and pyf.stat().st_mtime > _startup_time:
+                return True
+        return False
+
     def _collector_loop() -> None:
         while not stop_event.is_set():
+            # Auto-restart check: if source code changed, restart the process.
+            try:
+                if _source_changed():
+                    _log.info("Source code changed — restarting hub process")
+                    import os
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+            except Exception:
+                pass  # Never crash the collector for a restart check
+
+            # Sweep stale graph.lock files each tick — crashed wg processes
+            # leave empty lock files that hang all subsequent wg commands.
+            _clear_stale_graph_locks(workspace_root)
             try:
                 snapshot = write_snapshot_once(
                     project_dir=project_dir,
@@ -455,6 +548,15 @@ def run_service_foreground(
 
     collector = threading.Thread(target=_collector_loop, name="ecosystem-hub-collector", daemon=True)
     collector.start()
+
+    if not _port_is_available(host, port):
+        _log.error(
+            "Port %d on %s is already in use — refusing to start a second hub. "
+            "Kill the existing process or choose a different port.",
+            port,
+            host,
+        )
+        raise SystemExit(1)
 
     handler_cls = _handler_factory(paths["snapshot"], paths["state"], live_hub)
     server = ThreadingHTTPServer((host, port), handler_cls)
