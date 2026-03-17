@@ -52,4 +52,17 @@ if command -v driftdriver >/dev/null 2>&1; then
     --actor-id "${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}" \
     --actor-class interactive \
     --name "$CLI_TOOL" 2>/dev/null || true
+
+  # Surface any pending human decisions
+  DECISIONS=$(driftdriver --dir "$PROJECT_DIR" decisions pending 2>/dev/null || echo "")
+  if [[ -n "$DECISIONS" && "$DECISIONS" != "No pending decisions." ]]; then
+    echo "$DECISIONS"
+  fi
+
+  # Emit session.started to events.jsonl so the factory brain knows to back off
+  EVENTS_FILE="$PROJECT_DIR/.workgraph/service/runtime/events.jsonl"
+  mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || true
+  REPO_NAME="$(basename "$PROJECT_DIR")"
+  TS="$(date +%s.%N 2>/dev/null || date +%s)"
+  echo "{\"kind\":\"session.started\",\"repo\":\"$REPO_NAME\",\"ts\":$TS,\"payload\":{\"cli\":\"$CLI_TOOL\",\"actor_id\":\"${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}\"}}" >> "$EVENTS_FILE" 2>/dev/null || true
 fi

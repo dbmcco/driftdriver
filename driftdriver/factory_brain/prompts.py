@@ -1,5 +1,5 @@
-# ABOUTME: Prompt templates and tool schemas for the factory brain's three-tier model invocation.
-# ABOUTME: Defines the adversarial persona, tier-specific additions, and the directive tool schema.
+# ABOUTME: Prompt templates for the factory brain's three-tier model invocation.
+# ABOUTME: Defines the adversarial persona, tier-specific additions, and action vocabulary.
 from __future__ import annotations
 
 from driftdriver.factory_brain.directives import DIRECTIVE_SCHEMA
@@ -15,7 +15,32 @@ ADVERSARY_SYSTEM = (
     "You have heuristic recommendations from a rules-based system. "
     "Treat them as a naive first guess. They follow playbooks. You think. "
     "Act decisively. Log your reasoning. "
-    "When you're wrong, say so \u2014 then fix it harder."
+    "When you're wrong, say so \u2014 then fix it harder.\n\n"
+    "Available actions: " + ", ".join(sorted(DIRECTIVE_SCHEMA.keys())) + "\n"
+    "Each action takes params. Use the action names exactly as listed."
+)
+
+SELF_HEAL_ADDENDUM = (
+    "\n\n## Self-Healing Protocol\n"
+    "Before escalating ANY issue to a human, attempt to self-heal:\n"
+    "1. **Blocked cascade** \u2014 diagnose the failing task, create fix tasks, execute\n"
+    "2. **Awaiting validation** \u2014 run verify commands, report pass/fail\n"
+    "3. **Lane boundary** \u2014 start the next lane if current is done\n"
+    "4. **Agent failure** \u2014 restart the worker, if it fails again create a diagnostic task\n"
+    "5. **Task loop** (same task failed 3+ times) \u2014 analyze pattern, create new approach\n"
+    "6. **Drift plateau** (2+ passes, no improvement) \u2014 re-diagnose, adjust strategy\n\n"
+    "Only escalate to human when:\n"
+    "- Self-heal failed (you tried and it didn't work)\n"
+    "- The decision is inherently human: aesthetics, UX judgment, feature direction, business logic\n"
+    "- External dependency needed (API keys, credentials, third-party access)\n\n"
+    "When escalating, use `create_decision` with a specific question and options.\n"
+    "Every escalation must include: what happened, what you tried, why it failed, "
+    "and a specific question with options when possible.\n\n"
+    "## Protocol Compliance\n"
+    "All repos must use speedrift (workgraph + driftdriver). If you detect an agent "
+    "working outside the protocol (commits without task references, missing .workgraph, "
+    "no driftdriver installed), use `enforce_compliance` to flag it. "
+    "Then use existing directives to bring the repo back on track.\n"
 )
 
 TIER_ADDITIONS: dict[int, str] = {
@@ -30,59 +55,11 @@ TIER_MODELS: dict[int, str] = {
     3: "claude-opus-4-6",
 }
 
-# Build the action enum from the directive schema keys
-_ACTION_ENUM = sorted(DIRECTIVE_SCHEMA.keys())
-
-DIRECTIVE_TOOL: dict = {
-    "name": "issue_directives",
-    "description": (
-        "Issue operational directives based on your analysis of the factory state. "
-        "Each directive maps to a concrete action the factory supervisor will execute."
-    ),
-    "input_schema": {
-        "type": "object",
-        "required": ["reasoning", "directives", "escalate"],
-        "properties": {
-            "reasoning": {
-                "type": "string",
-                "description": "Your adversarial analysis of the situation. What's wrong, what's about to break, what you're doing about it.",
-            },
-            "directives": {
-                "type": "array",
-                "description": "Ordered list of actions to execute.",
-                "items": {
-                    "type": "object",
-                    "required": ["action"],
-                    "properties": {
-                        "action": {
-                            "type": "string",
-                            "enum": _ACTION_ENUM,
-                            "description": "The action to perform.",
-                        },
-                        "params": {
-                            "type": "object",
-                            "description": "Action-specific parameters.",
-                        },
-                    },
-                },
-            },
-            "telegram": {
-                "type": ["string", "null"],
-                "description": "Optional message to send to the operator via Telegram.",
-            },
-            "escalate": {
-                "type": "boolean",
-                "description": "Whether this situation requires escalation to a higher tier.",
-            },
-        },
-    },
-}
-
 
 def build_system_prompt(tier: int) -> str:
-    """Combine the adversary persona with tier-specific instructions."""
+    """Combine the adversary persona with tier-specific instructions and self-heal protocol."""
     addition = TIER_ADDITIONS.get(tier, "")
-    return f"{ADVERSARY_SYSTEM}\n\n{addition}"
+    return f"{ADVERSARY_SYSTEM}{SELF_HEAL_ADDENDUM}\n\n{addition}"
 
 
 def build_user_prompt(
@@ -129,6 +106,6 @@ def build_user_prompt(
     if tier2_reasoning is not None:
         sections.append(f"## Tier 2 Reasoning\n{tier2_reasoning}")
 
-    sections.append("Analyze the situation. Issue directives via the issue_directives tool.")
+    sections.append("Analyze the situation and respond with your directives.")
 
     return "\n\n".join(sections)

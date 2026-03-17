@@ -932,5 +932,132 @@ class EcosystemHubTests(unittest.TestCase):
                 stop_service_process(project)
 
 
+class DashboardDecisionDisplayTests(unittest.TestCase):
+    """Tests for needs_human badge in dashboard and /api/decisions endpoint."""
+
+    def test_repo_snapshot_includes_continuation_intent(self) -> None:
+        """Repo snapshot should include continuation_intent field from control.json."""
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            _write_graph(repo, [{"id": "t1", "title": "ready", "status": "open"}])
+
+            # Write continuation intent to control.json
+            runtime_dir = repo / ".workgraph" / "service" / "runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            (runtime_dir / "control.json").write_text(
+                json.dumps({
+                    "continuation_intent": {
+                        "intent": "needs_human",
+                        "reason": "awaiting approval",
+                        "set_by": "agent",
+                        "set_at": "2026-03-13T12:00:00+00:00",
+                        "decision_id": "dec-20260313-abc123",
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            snap = collect_repo_snapshot("repo", repo)
+            self.assertEqual(snap.continuation_intent.get("intent"), "needs_human")
+            self.assertEqual(snap.continuation_intent.get("decision_id"), "dec-20260313-abc123")
+
+    def test_repo_snapshot_continuation_intent_empty_when_not_set(self) -> None:
+        """Repo snapshot should have empty dict when no continuation intent."""
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            _write_graph(repo, [{"id": "t1", "title": "ready", "status": "open"}])
+            snap = collect_repo_snapshot("repo", repo)
+            self.assertEqual(snap.continuation_intent, {})
+
+    def test_dashboard_contains_needs_human_badge_function(self) -> None:
+        """Dashboard HTML should contain the needsHumanBadge JS function."""
+        html = render_dashboard_html()
+        self.assertIn("needsHumanBadge", html)
+
+    def test_dashboard_repo_rows_invoke_needs_human_badge(self) -> None:
+        """The renderRepoTable function should call needsHumanBadge."""
+        html = render_dashboard_html()
+        self.assertIn("needsHumanBadge(repo)", html)
+
+    def test_api_decisions_endpoint_aggregates_pending(self) -> None:
+        """The /api/decisions endpoint should aggregate pending decisions across repos."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "driftdriver"
+            project.mkdir(parents=True)
+            _init_repo(project)
+            _write_graph(project, [{"id": "a", "title": "A", "status": "open"}])
+
+            # Write a pending decision for the repo
+            decisions_dir = project / ".workgraph" / "service" / "runtime"
+            decisions_dir.mkdir(parents=True, exist_ok=True)
+            (decisions_dir / "decisions.jsonl").write_text(
+                json.dumps({
+                    "id": "dec-20260313-aaa111",
+                    "repo": "driftdriver",
+                    "status": "pending",
+                    "question": "Should we upgrade?",
+                    "context": {},
+                    "category": "external_dep",
+                    "created_at": "2026-03-13T12:00:00+00:00",
+                    "notified_via": [],
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            ecosystem_root = root / "speedrift-ecosystem"
+            ecosystem_root.mkdir()
+            (ecosystem_root / "ecosystem.toml").write_text(
+                "schema = 1\n[repos.driftdriver]\nrole='orchestrator'\nurl='https://example.com'\n",
+                encoding="utf-8",
+            )
+
+            # Start the service and query the endpoint
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+
+            start_service_process(
+                project_dir=project,
+                workspace_root=root,
+                host="127.0.0.1",
+                port=port,
+                interval_seconds=2,
+                include_updates=False,
+                max_next=3,
+                ecosystem_toml=None,
+                central_repo=None,
+                execute_draft_prs=False,
+                draft_pr_title_prefix="speedrift",
+            )
+            try:
+                # Wait for snapshot to be written (repos list populated)
+                deadline = time.time() + 6.0
+                while time.time() < deadline:
+                    try:
+                        with urlopen(f"http://127.0.0.1:{port}/api/repos", timeout=1.0) as resp:  # noqa: S310
+                            repos_data = json.loads(resp.read().decode("utf-8"))
+                            if isinstance(repos_data, list) and len(repos_data) > 0:
+                                break
+                    except Exception:
+                        pass
+                    time.sleep(0.1)
+
+                # Now query decisions
+                with urlopen(f"http://127.0.0.1:{port}/api/decisions", timeout=2.0) as resp:  # noqa: S310
+                    payload = json.loads(resp.read().decode("utf-8"))
+                self.assertIn("decisions", payload)
+                self.assertIsInstance(payload["decisions"], list)
+                pending = [d for d in payload["decisions"] if d.get("status") == "pending"]
+                self.assertGreaterEqual(len(pending), 1)
+                self.assertEqual(pending[0]["id"], "dec-20260313-aaa111")
+            finally:
+                stop_service_process(project)
+
+
 if __name__ == "__main__":
     unittest.main()

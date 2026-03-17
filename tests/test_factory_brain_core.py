@@ -1,18 +1,17 @@
-# ABOUTME: Tests for the factory brain core — prompt assembly, model invocation, and logging.
-# ABOUTME: Uses mocked Anthropic API to avoid real API calls during testing.
+# ABOUTME: Tests for the factory brain core — prompt assembly, CLI invocation, and logging.
+# ABOUTME: Uses mocked subprocess.run to avoid real claude CLI calls during testing.
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from driftdriver.factory_brain.directives import DIRECTIVE_SCHEMA
 from driftdriver.factory_brain.prompts import (
     ADVERSARY_SYSTEM,
-    DIRECTIVE_TOOL,
+    SELF_HEAL_ADDENDUM,
     TIER_ADDITIONS,
     TIER_MODELS,
     build_system_prompt,
@@ -20,15 +19,28 @@ from driftdriver.factory_brain.prompts import (
 )
 
 
-def _mock_anthropic_response(tool_input: dict) -> SimpleNamespace:
-    """Build a SimpleNamespace mimicking an Anthropic messages.create() response."""
-    tool_block = SimpleNamespace(
-        type="tool_use",
-        name="issue_directives",
-        input=tool_input,
-    )
-    usage = SimpleNamespace(input_tokens=150, output_tokens=80)
-    return SimpleNamespace(content=[tool_block], usage=usage)
+def _mock_cli_result(directive_data: dict, *, returncode: int = 0) -> object:
+    """Build a mock subprocess.CompletedProcess mimicking claude CLI --output-format json."""
+    cli_output = {
+        "type": "result",
+        "subtype": "success",
+        "result": "Done.",
+        "structured_output": directive_data,
+        "cost_usd": 0.003,
+        "is_error": False,
+        "duration_ms": 1200,
+        "num_turns": 1,
+        "session_id": "test-session",
+    }
+
+    class FakeResult:
+        pass
+
+    r = FakeResult()
+    r.returncode = returncode
+    r.stdout = json.dumps(cli_output)
+    r.stderr = ""
+    return r
 
 
 # --- Prompt tests ---
@@ -36,7 +48,6 @@ def _mock_anthropic_response(tool_input: dict) -> SimpleNamespace:
 
 def test_build_system_prompt_includes_adversary():
     prompt = build_system_prompt(1)
-    assert ADVERSARY_SYSTEM in prompt
     assert "Factory Adversary" in prompt
 
 
@@ -55,6 +66,38 @@ def test_build_system_prompt_tier_specific():
     assert "judgment" in p3
 
 
+def test_build_system_prompt_includes_action_vocab():
+    prompt = build_system_prompt(1)
+    assert "noop" in prompt
+    assert "kill_daemon" in prompt
+    assert "spawn_agent" in prompt
+
+
+def test_system_prompt_includes_self_heal():
+    prompt = build_system_prompt(tier=2)
+    assert "self-heal" in prompt.lower()
+    assert "create_decision" in prompt
+
+
+def test_system_prompt_includes_compliance():
+    prompt = build_system_prompt(tier=2)
+    assert "enforce_compliance" in prompt
+
+
+def test_system_prompt_self_heal_scenarios():
+    """Verify all four self-heal scenarios are mentioned."""
+    prompt = build_system_prompt(tier=1)
+    for scenario in ["blocked cascade", "agent failure", "task loop", "drift plateau"]:
+        assert scenario.lower() in prompt.lower(), f"Missing scenario: {scenario}"
+
+
+def test_system_prompt_escalation_criteria():
+    """Brain must try self-heal before escalating."""
+    prompt = build_system_prompt(tier=2)
+    assert "before" in prompt.lower() or "first" in prompt.lower()
+    assert "escalat" in prompt.lower()
+
+
 def test_build_user_prompt_includes_sections():
     prompt = build_user_prompt(
         trigger_event={"kind": "agent.died", "repo": "paia-os"},
@@ -66,7 +109,6 @@ def test_build_user_prompt_includes_sections():
     assert "## Factory Snapshot" in prompt
     assert "## Heuristic Recommendation" in prompt
     assert "restart agent" in prompt
-    assert "issue_directives tool" in prompt
 
 
 def test_build_user_prompt_escalation_context():
@@ -90,17 +132,11 @@ def test_tier_models():
     assert TIER_MODELS[3] == "claude-opus-4-6"
 
 
-def test_directive_tool_has_all_actions():
-    tool_actions = DIRECTIVE_TOOL["input_schema"]["properties"]["directives"]["items"]["properties"]["action"]["enum"]
-    schema_actions = sorted(DIRECTIVE_SCHEMA.keys())
-    assert tool_actions == schema_actions
-
-
 # --- Brain invocation tests ---
 
 
 def test_invoke_brain_returns_directives(tmp_path: Path):
-    tool_input = {
+    directive_data = {
         "reasoning": "Agent died in paia-os. Restarting.",
         "directives": [
             {"action": "spawn_agent", "params": {"repo": "paia-os", "task_id": "t-42"}},
@@ -108,15 +144,8 @@ def test_invoke_brain_returns_directives(tmp_path: Path):
         "telegram": None,
         "escalate": False,
     }
-    mock_response = _mock_anthropic_response(tool_input)
 
-    mock_client = MagicMock()
-    mock_client.messages.create.return_value = mock_response
-
-    mock_anthropic_mod = MagicMock()
-    mock_anthropic_mod.Anthropic.return_value = mock_client
-
-    with patch.dict("sys.modules", {"anthropic": mock_anthropic_mod}):
+    with patch("driftdriver.factory_brain.brain.subprocess.run", return_value=_mock_cli_result(directive_data)):
         from driftdriver.factory_brain.brain import invoke_brain
 
         result = invoke_brain(
@@ -133,7 +162,7 @@ def test_invoke_brain_returns_directives(tmp_path: Path):
 
 
 def test_invoke_brain_escalation(tmp_path: Path):
-    tool_input = {
+    directive_data = {
         "reasoning": "Repeated failures across repos. Need higher-tier analysis.",
         "directives": [
             {"action": "noop", "params": {"reason": "deferring to tier 2"}},
@@ -141,15 +170,8 @@ def test_invoke_brain_escalation(tmp_path: Path):
         "telegram": "Multiple repos failing — escalating to Sonnet.",
         "escalate": True,
     }
-    mock_response = _mock_anthropic_response(tool_input)
 
-    mock_client = MagicMock()
-    mock_client.messages.create.return_value = mock_response
-
-    mock_anthropic_mod = MagicMock()
-    mock_anthropic_mod.Anthropic.return_value = mock_client
-
-    with patch.dict("sys.modules", {"anthropic": mock_anthropic_mod}):
+    with patch("driftdriver.factory_brain.brain.subprocess.run", return_value=_mock_cli_result(directive_data)):
         from driftdriver.factory_brain.brain import invoke_brain
 
         result = invoke_brain(
@@ -164,7 +186,7 @@ def test_invoke_brain_escalation(tmp_path: Path):
 
 
 def test_invoke_brain_writes_log(tmp_path: Path):
-    tool_input = {
+    directive_data = {
         "reasoning": "All clear. No action needed.",
         "directives": [
             {"action": "noop", "params": {"reason": "steady state"}},
@@ -172,15 +194,8 @@ def test_invoke_brain_writes_log(tmp_path: Path):
         "telegram": None,
         "escalate": False,
     }
-    mock_response = _mock_anthropic_response(tool_input)
 
-    mock_client = MagicMock()
-    mock_client.messages.create.return_value = mock_response
-
-    mock_anthropic_mod = MagicMock()
-    mock_anthropic_mod.Anthropic.return_value = mock_client
-
-    with patch.dict("sys.modules", {"anthropic": mock_anthropic_mod}):
+    with patch("driftdriver.factory_brain.brain.subprocess.run", return_value=_mock_cli_result(directive_data)):
         from driftdriver.factory_brain.brain import invoke_brain
 
         invoke_brain(
@@ -198,8 +213,6 @@ def test_invoke_brain_writes_log(tmp_path: Path):
     assert records[0]["tier"] == 2
     assert records[0]["model"] == "claude-sonnet-4-6"
     assert records[0]["reasoning"] == "All clear. No action needed."
-    assert records[0]["input_tokens"] == 150
-    assert records[0]["output_tokens"] == 80
 
     # Check markdown log
     md_path = tmp_path / "brain-log.md"
@@ -208,28 +221,46 @@ def test_invoke_brain_writes_log(tmp_path: Path):
     assert "Tier 2" in md_content
     assert "claude-sonnet-4-6" in md_content
     assert "All clear. No action needed." in md_content
-    assert "150 in / 80 out" in md_content
     assert "noop" in md_content
 
 
-def test_invoke_brain_no_tool_use_returns_noop():
-    """When the model doesn't return a tool_use block, we get a noop."""
-    # Response with only a text block, no tool_use
-    text_block = SimpleNamespace(type="text", text="I'm confused")
-    usage = SimpleNamespace(input_tokens=100, output_tokens=50)
-    mock_response = SimpleNamespace(content=[text_block], usage=usage)
+def test_invoke_brain_cli_error_returns_noop():
+    """When claude CLI exits non-zero, we get a noop."""
 
-    mock_client = MagicMock()
-    mock_client.messages.create.return_value = mock_response
+    class FailResult:
+        returncode = 1
+        stdout = ""
+        stderr = "error: model overloaded"
 
-    mock_anthropic_mod = MagicMock()
-    mock_anthropic_mod.Anthropic.return_value = mock_client
-
-    with patch.dict("sys.modules", {"anthropic": mock_anthropic_mod}):
+    with patch("driftdriver.factory_brain.brain.subprocess.run", return_value=FailResult()):
         from driftdriver.factory_brain.brain import invoke_brain
 
         result = invoke_brain(tier=1, trigger_event={"kind": "loop.started", "repo": "test"})
 
-    assert "did not return a tool_use block" in result.reasoning
+    assert "exit 1" in result.reasoning
     assert len(result.directives) == 1
+    assert result.directives[0].action == "noop"
+
+
+def test_invoke_brain_cli_timeout_returns_noop():
+    """When claude CLI times out, we get a noop."""
+    import subprocess as sp
+
+    with patch("driftdriver.factory_brain.brain.subprocess.run", side_effect=sp.TimeoutExpired(cmd="claude", timeout=120)):
+        from driftdriver.factory_brain.brain import invoke_brain
+
+        result = invoke_brain(tier=1, trigger_event={"kind": "loop.started", "repo": "test"})
+
+    assert "timed out" in result.reasoning
+    assert result.directives[0].action == "noop"
+
+
+def test_invoke_brain_cli_not_found_returns_noop():
+    """When claude CLI is not installed, we get a noop."""
+    with patch("driftdriver.factory_brain.brain.subprocess.run", side_effect=FileNotFoundError("claude not found")):
+        from driftdriver.factory_brain.brain import invoke_brain
+
+        result = invoke_brain(tier=1, trigger_event={"kind": "loop.started", "repo": "test"})
+
+    assert "found" in result.reasoning
     assert result.directives[0].action == "noop"

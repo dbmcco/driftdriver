@@ -898,7 +898,7 @@ class TestAdapterBlockReplacement:
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
         # Manually edit inside the block
-        modified = content.replace("Speedrift Ecosystem Protocol", "MODIFIED MARKER")
+        modified = content.replace("Speedrift Ecosystem", "MODIFIED MARKER")
         # Keep the start/end markers intact so _replace_marked_block can find the block
         assert CLAUDE_ADAPTER_START in modified
         claude_md.write_text(modified, encoding="utf-8")

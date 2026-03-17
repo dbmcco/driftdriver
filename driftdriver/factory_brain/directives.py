@@ -28,6 +28,8 @@ DIRECTIVE_SCHEMA: dict[str, list[str]] = {
     "send_telegram": ["message"],
     "escalate": ["reason"],
     "noop": ["reason"],
+    "create_decision": ["repo", "question", "category"],
+    "enforce_compliance": ["repo"],
 }
 
 
@@ -170,11 +172,12 @@ def _handle_stop_dispatch_loop(d: Directive, *, dry_run: bool, repo_paths: dict[
 def _handle_spawn_agent(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
     repo_dir = _resolve_repo_dir(d.params["repo"], repo_paths)
     task_id = d.params["task_id"]
+    executor = d.params.get("executor", os.environ.get("WG_EXECUTOR", "claude"))
     if repo_dir is None:
         return {"status": "error", "error": f"unknown repo: {d.params['repo']}"}
     if dry_run:
         return {"status": "dry_run", "action": "spawn_agent", "repo": d.params["repo"], "task_id": task_id}
-    code, output = _run_cmd(["wg", "spawn", "--executor", "claude", task_id], timeout=60)
+    code, output = _run_cmd(["wg", "spawn", "--executor", executor, task_id], timeout=60)
     return {"status": "ok" if code == 0 else "error", "exit_code": code, "output": output}
 
 
@@ -269,6 +272,42 @@ def _handle_escalate(d: Directive, *, dry_run: bool, repo_paths: dict[str, str])
     return {"status": "ok", "action": "escalate", "reason": reason}
 
 
+def _handle_create_decision(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
+    repo = d.params["repo"]
+    question = d.params["question"]
+    category = d.params["category"]
+    context = d.params.get("context", {})
+    repo_dir = _resolve_repo_dir(repo, repo_paths)
+    if repo_dir is None:
+        return {"status": "error", "error": f"unknown repo: {repo}"}
+    if dry_run:
+        return {"status": "dry_run", "action": "create_decision", "repo": repo, "question": question}
+    from driftdriver.decision_queue import create_decision as dq_create
+
+    record = dq_create(repo_dir, repo=repo, question=question, category=category, context=context)
+    return {"status": "ok", "action": "create_decision", "decision_id": record.id, "repo": repo}
+
+
+def _handle_enforce_compliance(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
+    repo = d.params["repo"]
+    check_commits = d.params.get("check_recent_commits", 0)
+    repo_dir = _resolve_repo_dir(repo, repo_paths)
+    if repo_dir is None:
+        return {"status": "error", "error": f"unknown repo: {repo}"}
+    if dry_run:
+        return {"status": "dry_run", "action": "enforce_compliance", "repo": repo}
+    from driftdriver.protocol_compliance import check_compliance
+
+    report = check_compliance(repo_dir, check_recent_commits=check_commits)
+    return {
+        "status": "ok",
+        "action": "enforce_compliance",
+        "repo": repo,
+        "compliant": report.compliant,
+        "violations": report.violations,
+    }
+
+
 _HANDLERS: dict[str, Any] = {
     "noop": _handle_noop,
     "kill_process": _handle_kill_process,
@@ -284,6 +323,8 @@ _HANDLERS: dict[str, Any] = {
     "set_attractor_target": _handle_set_attractor_target,
     "send_telegram": _handle_send_telegram,
     "escalate": _handle_escalate,
+    "create_decision": _handle_create_decision,
+    "enforce_compliance": _handle_enforce_compliance,
 }
 
 

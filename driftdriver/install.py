@@ -11,7 +11,7 @@ from pathlib import Path
 CODEX_ADAPTER_MARKER = "## Driftdriver Integration Protocol"
 CODEX_ADAPTER_START = "<!-- driftdriver-codex:start -->"
 CODEX_ADAPTER_END = "<!-- driftdriver-codex:end -->"
-CLAUDE_ADAPTER_MARKER = "## Speedrift Ecosystem Protocol"
+CLAUDE_ADAPTER_MARKER = "## Speedrift Ecosystem"
 CLAUDE_ADAPTER_START = "<!-- driftdriver-claude:start -->"
 CLAUDE_ADAPTER_END = "<!-- driftdriver-claude:end -->"
 COREDRIFT_MARKER = "## Coredrift Protocol"

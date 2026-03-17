@@ -1,0 +1,78 @@
+{
+  "name": "Factory Chatbot - Telegram ↔ Hub",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "darkly-factory-bot",
+          "name": "DarklyFactory_bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8777/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: $json.message.text, chat_id: String($json.message.chat.id), user_name: $json.message.from.first_name || 'unknown' }) }}",
+        "options": {
+          "timeout": 30000,
+          "fullResponse": true
+        }
+      },
+      "id": "post-to-hub",
+      "name": "POST to Hub /api/chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ String($('Telegram Trigger').item.json.message.chat.id) }}",
+        "text": "={{ $json.body.reply }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-reply",
+      "name": "Send Reply to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [720, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "darkly-factory-bot",
+          "name": "DarklyFactory_bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [{ "node": "POST to Hub /api/chat", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST to Hub /api/chat": {
+      "main": [
+        [{ "node": "Send Reply to Telegram", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Routes Telegram messages from DarklyFactory_bot to the driftdriver ecosystem hub chat endpoint. Receives user messages, POSTs them to http://127.0.0.1:8777/api/chat with message text, chat_id, and user_name, then sends the hub's reply back to the originating Telegram chat. Auth and decision pre-screening are handled server-side by the hub."
+  }
+}

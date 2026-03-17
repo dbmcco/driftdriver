@@ -132,6 +132,10 @@ def test_aggregate_events_skips_missing_repos(tmp_path: Path) -> None:
 
 
 def test_tier_routing() -> None:
+    # Tier 0 — informational (never routed to brain)
+    assert TIER_ROUTING["session.started"] == 0
+    assert TIER_ROUTING["session.ended"] == 0
+
     # Tier 1 spot checks
     assert TIER_ROUTING["loop.started"] == 1
     assert TIER_ROUTING["agent.spawned"] == 1
@@ -145,6 +149,10 @@ def test_tier_routing() -> None:
     assert TIER_ROUTING["repo.discovered"] == 2
     assert TIER_ROUTING["snapshot.collected"] == 2
     assert TIER_ROUTING["tier1.escalation"] == 2
+    assert TIER_ROUTING["intent.continue"] == 2
+    assert TIER_ROUTING["intent.parked"] == 2
+    assert TIER_ROUTING["intent.needs_human"] == 2
+    assert TIER_ROUTING["compliance.violation"] == 2
 
     # Tier 3
     assert TIER_ROUTING["tier2.escalation"] == 3
@@ -154,6 +162,15 @@ def test_events_file_for_repo(tmp_path: Path) -> None:
     repo = tmp_path / "my-repo"
     result = events_file_for_repo(repo)
     assert result == repo / EVENTS_REL_PATH
+
+
+def test_intent_events_route_to_tier2() -> None:
+    for kind in ("intent.continue", "intent.parked", "intent.needs_human"):
+        assert TIER_ROUTING[kind] == 2, f"{kind} should be tier 2"
+
+
+def test_compliance_violation_routes_to_tier2() -> None:
+    assert TIER_ROUTING["compliance.violation"] == 2
 
 
 def test_event_dataclass_fields() -> None:

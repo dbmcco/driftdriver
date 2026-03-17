@@ -11,6 +11,9 @@ EVENTS_FILENAME = "events.jsonl"
 EVENTS_REL_PATH = Path(".workgraph") / "service" / "runtime" / EVENTS_FILENAME
 
 TIER_ROUTING: dict[str, int] = {
+    # Tier 0 — informational (never routed to brain, audit trail only)
+    "session.started": 0,
+    "session.ended": 0,
     # Tier 1 — critical lifecycle events
     "loop.started": 1,
     "loop.exited": 1,
@@ -30,6 +33,10 @@ TIER_ROUTING: dict[str, int] = {
     "attractor.plateaued": 2,
     "snapshot.collected": 2,
     "tier1.escalation": 2,
+    "intent.continue": 2,
+    "intent.parked": 2,
+    "intent.needs_human": 2,
+    "compliance.violation": 2,
     # Tier 3 — escalation
     "tier2.escalation": 3,
 }

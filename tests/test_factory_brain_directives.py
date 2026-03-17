@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from driftdriver.factory_brain.directives import (
     DIRECTIVE_SCHEMA,
@@ -33,8 +34,16 @@ class TestDirectiveSchema(unittest.TestCase):
             "send_telegram",
             "escalate",
             "noop",
+            "create_decision",
+            "enforce_compliance",
         }
         self.assertEqual(set(DIRECTIVE_SCHEMA.keys()), expected_actions)
+
+    def test_create_decision_schema(self) -> None:
+        self.assertEqual(DIRECTIVE_SCHEMA["create_decision"], ["repo", "question", "category"])
+
+    def test_enforce_compliance_schema(self) -> None:
+        self.assertEqual(DIRECTIVE_SCHEMA["enforce_compliance"], ["repo"])
 
 
 class TestParseBrainResponse(unittest.TestCase):
@@ -111,6 +120,100 @@ class TestExecuteDirective(unittest.TestCase):
         self.assertEqual(results[1]["reason"], "second")
         self.assertEqual(results[2]["status"], "ok")
         self.assertEqual(results[2]["action"], "escalate")
+
+
+class TestCreateDecisionDirective(unittest.TestCase):
+    def test_create_decision_dry_run(self) -> None:
+        d = Directive(action="create_decision", params={
+            "repo": "test-repo",
+            "question": "Should we upgrade?",
+            "category": "feature",
+        })
+        result = execute_directive(d, dry_run=True, repo_paths={"test-repo": "/tmp/test-repo"})
+        self.assertEqual(result["status"], "dry_run")
+        self.assertEqual(result["action"], "create_decision")
+        self.assertEqual(result["repo"], "test-repo")
+
+    def test_create_decision_unknown_repo(self) -> None:
+        d = Directive(action="create_decision", params={
+            "repo": "missing-repo",
+            "question": "Should we upgrade?",
+            "category": "feature",
+        })
+        result = execute_directive(d, dry_run=False, repo_paths={})
+        self.assertEqual(result["status"], "error")
+        self.assertIn("unknown repo", result["error"])
+
+    def test_create_decision_executes(self, tmp_path: Path = None) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            repo_dir = Path(td) / "test-repo"
+            repo_dir.mkdir()
+            d = Directive(action="create_decision", params={
+                "repo": "test-repo",
+                "question": "Should we upgrade deps?",
+                "category": "external_dep",
+            })
+            result = execute_directive(d, dry_run=False, repo_paths={"test-repo": str(repo_dir)})
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["action"], "create_decision")
+            self.assertIn("decision_id", result)
+            self.assertTrue(result["decision_id"].startswith("dec-"))
+
+    def test_validate_create_decision(self) -> None:
+        valid = Directive(action="create_decision", params={
+            "repo": "r", "question": "q?", "category": "feature",
+        })
+        self.assertTrue(validate_directive(valid))
+
+        missing = Directive(action="create_decision", params={"repo": "r"})
+        self.assertFalse(validate_directive(missing))
+
+
+class TestEnforceComplianceDirective(unittest.TestCase):
+    def test_enforce_compliance_dry_run(self) -> None:
+        d = Directive(action="enforce_compliance", params={"repo": "test-repo"})
+        result = execute_directive(d, dry_run=True, repo_paths={"test-repo": "/tmp/test-repo"})
+        self.assertEqual(result["status"], "dry_run")
+        self.assertEqual(result["action"], "enforce_compliance")
+
+    def test_enforce_compliance_unknown_repo(self) -> None:
+        d = Directive(action="enforce_compliance", params={"repo": "gone"})
+        result = execute_directive(d, dry_run=False, repo_paths={})
+        self.assertEqual(result["status"], "error")
+
+    def test_enforce_compliance_compliant_repo(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            repo_dir = Path(td) / "compliant-repo"
+            repo_dir.mkdir()
+            wg = repo_dir / ".workgraph" / "drifts" / "check"
+            wg.parent.mkdir(parents=True)
+            wg.write_text("#!/bin/sh\necho ok\n")
+            d = Directive(action="enforce_compliance", params={"repo": "compliant-repo"})
+            result = execute_directive(d, dry_run=False, repo_paths={"compliant-repo": str(repo_dir)})
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue(result["compliant"])
+            self.assertEqual(result["violations"], [])
+
+    def test_enforce_compliance_noncompliant_repo(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            repo_dir = Path(td) / "bad-repo"
+            repo_dir.mkdir()
+            # No .workgraph at all
+            d = Directive(action="enforce_compliance", params={"repo": "bad-repo"})
+            result = execute_directive(d, dry_run=False, repo_paths={"bad-repo": str(repo_dir)})
+            self.assertEqual(result["status"], "ok")
+            self.assertFalse(result["compliant"])
+            self.assertTrue(len(result["violations"]) > 0)
+
+    def test_validate_enforce_compliance(self) -> None:
+        valid = Directive(action="enforce_compliance", params={"repo": "r"})
+        self.assertTrue(validate_directive(valid))
+
+        missing = Directive(action="enforce_compliance", params={})
+        self.assertFalse(validate_directive(missing))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,117 @@
+{
+  "name": "Factory Decision Queue - Telegram Reply Router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "factory-decision-reply",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Telegram Update Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "" },
+          "conditions": [
+            {
+              "id": "has-reply",
+              "leftValue": "={{ $json.body.message.reply_to_message.text }}",
+              "rightValue": "dec-",
+              "operator": { "type": "string", "operation": "contains" }
+            }
+          ]
+        }
+      },
+      "id": "check-decision-reply",
+      "name": "Is Decision Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Extract decision ID from the original message text\nconst originalText = $input.item.json.body.message.reply_to_message.text || '';\nconst match = originalText.match(/dec-\\d{8}-[a-f0-9]{6}/);\n\nif (!match) {\n  return { json: { error: 'no_decision_id_found' } };\n}\n\nreturn {\n  json: {\n    decision_id: match[0],\n    answer: $input.item.json.body.message.text || '',\n    answered_via: 'telegram',\n    chat_id: $input.item.json.body.message.chat.id,\n    from_user: $input.item.json.body.message.from.first_name || 'unknown'\n  }\n};"
+      },
+      "id": "extract-decision",
+      "name": "Extract Decision ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8777/api/decisions/answer",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ decision_id: $json.decision_id, answer: $json.answer, answered_via: $json.answered_via }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "post-answer",
+      "name": "POST Answer to Hub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, decision_id: $json.decision_id }) }}"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, skipped: 'not_a_decision_reply' }) }}"
+      },
+      "id": "respond-skip",
+      "name": "Respond Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 420]
+    }
+  ],
+  "connections": {
+    "Telegram Update Webhook": {
+      "main": [
+        [{ "node": "Is Decision Reply?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Decision Reply?": {
+      "main": [
+        [{ "node": "Extract Decision ID", "type": "main", "index": 0 }],
+        [{ "node": "Respond Skip", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Decision ID": {
+      "main": [
+        [{ "node": "POST Answer to Hub", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST Answer to Hub": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Routes Telegram replies to factory decision notifications back to the driftdriver ecosystem hub. When a user replies to a message containing a decision ID (dec-YYYYMMDD-XXXXXX), extracts the ID and POSTs the answer to http://127.0.0.1:8777/api/decisions/answer. The hub finds the decision across all enrolled repos, marks it answered, and flips the repo's continuation intent back to 'continue'."
+  }
+}

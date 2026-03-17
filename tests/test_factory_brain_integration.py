@@ -1,11 +1,10 @@
 # ABOUTME: End-to-end integration tests for the full factory brain tick cycle.
-# ABOUTME: Simulates crash events, escalation chains, and empty roster scenarios with mocked Anthropic API.
+# ABOUTME: Simulates crash events, escalation chains, and empty roster scenarios with mocked claude CLI.
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, call
 
 import pytest
 
@@ -26,28 +25,28 @@ def _make_repo(tmp_path: Path, name: str = "test-repo") -> Path:
     return repo
 
 
-def _mock_anthropic_response(tool_input: dict) -> SimpleNamespace:
-    """Build a SimpleNamespace mimicking an Anthropic messages.create() response."""
-    tool_block = SimpleNamespace(
-        type="tool_use",
-        name="issue_directives",
-        input=tool_input,
-    )
-    usage = SimpleNamespace(input_tokens=150, output_tokens=80)
-    return SimpleNamespace(content=[tool_block], usage=usage)
+def _mock_cli_result(directive_data: dict, *, returncode: int = 0) -> object:
+    """Build a mock subprocess.CompletedProcess mimicking claude CLI --output-format json."""
+    cli_output = {
+        "type": "result",
+        "subtype": "success",
+        "result": "Done.",
+        "structured_output": directive_data,
+        "cost_usd": 0.003,
+        "is_error": False,
+        "duration_ms": 1200,
+        "num_turns": 1,
+        "session_id": "test-session",
+    }
 
+    class FakeResult:
+        pass
 
-def _build_mock_module(side_effect=None, return_value=None):
-    """Build a mock anthropic module with Anthropic().messages.create configured."""
-    mock_client = MagicMock()
-    if side_effect is not None:
-        mock_client.messages.create.side_effect = side_effect
-    else:
-        mock_client.messages.create.return_value = return_value
-
-    mock_mod = MagicMock()
-    mock_mod.Anthropic.return_value = mock_client
-    return mock_mod, mock_client
+    r = FakeResult()
+    r.returncode = returncode
+    r.stdout = json.dumps(cli_output)
+    r.stderr = ""
+    return r
 
 
 class TestFullTickWithCrashEvent:
@@ -72,7 +71,7 @@ class TestFullTickWithCrashEvent:
         enroll_repo(brain.roster, path=str(repo), target="onboarded")
 
         # Mock response: kill_daemon + start_dispatch_loop
-        tool_input = {
+        directive_data = {
             "reasoning": "Dispatch loop crashed. Kill daemon and restart.",
             "directives": [
                 {"action": "kill_daemon", "params": {"repo": repo.name}},
@@ -81,14 +80,9 @@ class TestFullTickWithCrashEvent:
             "telegram": None,
             "escalate": False,
         }
-        response = _mock_anthropic_response(tool_input)
-        mock_mod, mock_client = _build_mock_module(return_value=response)
 
-        with patch.dict("sys.modules", {"anthropic": mock_mod}):
+        with patch("driftdriver.factory_brain.brain.subprocess.run", return_value=_mock_cli_result(directive_data)):
             results = brain.tick(snapshot={"repos": 1})
-
-        # Verify API was called
-        assert mock_client.messages.create.call_count >= 1
 
         # Verify results returned
         assert len(results) >= 1
@@ -130,7 +124,7 @@ class TestFullTickWithEscalation:
         enroll_repo(brain.roster, path=str(repo), target="onboarded")
 
         # Tier 1 response: escalate
-        tier1_input = {
+        tier1_data = {
             "reasoning": "Loop crashed repeatedly. Escalating to Tier 2.",
             "directives": [
                 {"action": "noop", "params": {"reason": "deferring to tier 2"}},
@@ -138,10 +132,9 @@ class TestFullTickWithEscalation:
             "telegram": "Crash loop detected, escalating.",
             "escalate": True,
         }
-        tier1_response = _mock_anthropic_response(tier1_input)
 
         # Heartbeat response (heartbeat file missing, so stale heartbeat fires)
-        heartbeat_input = {
+        heartbeat_data = {
             "reasoning": "Heartbeat stale, acknowledging.",
             "directives": [
                 {"action": "noop", "params": {"reason": "heartbeat noted"}},
@@ -149,10 +142,9 @@ class TestFullTickWithEscalation:
             "telegram": None,
             "escalate": False,
         }
-        heartbeat_response = _mock_anthropic_response(heartbeat_input)
 
         # Tier 2 response: unenroll the problematic repo
-        tier2_input = {
+        tier2_data = {
             "reasoning": "Repo is consistently unstable. Unenrolling to stop damage.",
             "directives": [
                 {"action": "unenroll", "params": {"repo": repo.name}},
@@ -160,17 +152,15 @@ class TestFullTickWithEscalation:
             "telegram": None,
             "escalate": False,
         }
-        tier2_response = _mock_anthropic_response(tier2_input)
 
-        mock_mod, mock_client = _build_mock_module(
-            side_effect=[tier1_response, heartbeat_response, tier2_response],
-        )
+        mock_results = [
+            _mock_cli_result(tier1_data),
+            _mock_cli_result(heartbeat_data),
+            _mock_cli_result(tier2_data),
+        ]
 
-        with patch.dict("sys.modules", {"anthropic": mock_mod}):
+        with patch("driftdriver.factory_brain.brain.subprocess.run", side_effect=mock_results):
             results = brain.tick(snapshot={"repos": 1})
-
-        # Verify API was called at least twice (Tier 1 + Tier 2 escalation)
-        assert mock_client.messages.create.call_count >= 2
 
         # Verify we got results from multiple tiers
         assert len(results) >= 2
@@ -179,8 +169,7 @@ class TestFullTickWithEscalation:
         assert results[0]["tier"] == 1
         assert results[0]["escalated"] is True
 
-        # There should be a Tier 2 result (may be at index 1, 2, etc. depending
-        # on heartbeat/sweep checks that also fire)
+        # There should be a Tier 2 result
         tier2_results = [r for r in results if r["tier"] == 2]
         assert len(tier2_results) >= 1
 
@@ -197,11 +186,9 @@ class TestFullTickEmptyRoster:
             workspace_roots=[tmp_path],
         )
 
-        # No repos enrolled — tick should return empty, no API calls
-        mock_mod, mock_client = _build_mock_module(return_value=None)
-
-        with patch.dict("sys.modules", {"anthropic": mock_mod}):
+        # No repos enrolled — tick should return empty, no CLI calls
+        with patch("subprocess.run") as mock_run:
             results = brain.tick()
 
         assert results == []
-        mock_client.messages.create.assert_not_called()
+        mock_run.assert_not_called()

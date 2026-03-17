@@ -7,13 +7,55 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from driftdriver.continuation_intent import read_intent
 from driftdriver.factory_brain.brain import invoke_brain
 from driftdriver.factory_brain.directives import BrainResponse, execute_directives
 from driftdriver.factory_brain.events import TIER_ROUTING, Event, aggregate_events
+from driftdriver.presence import active_actors
 
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_REL_PATH = Path(".workgraph") / "service" / "runtime" / "heartbeat"
+
+# Interactive session presence stale timeout (10 minutes).
+# If a Claude Code session crashes without firing Stop hook,
+# the brain resumes control after this many seconds.
+SESSION_STALE_SECONDS = 600
+
+
+def repos_with_active_sessions(
+    repo_paths: list[Path],
+    *,
+    max_age_seconds: int = SESSION_STALE_SECONDS,
+) -> set[str]:
+    """Return repo names that have an active interactive session.
+
+    Checks the presence system for actors with actor_class == "interactive"
+    whose heartbeat is not stale. These repos should be excluded from
+    Tier 1 event processing and heartbeat checks — the human is handling it.
+    """
+    active: set[str] = set()
+    for repo_path in repo_paths:
+        try:
+            actors = active_actors(repo_path, max_age_seconds=max_age_seconds)
+            if any(a.actor.actor_class == "interactive" for a in actors):
+                active.add(repo_path.name)
+        except (OSError, ValueError):
+            continue
+    return active
+
+
+def repos_needing_human(repo_paths: list[Path]) -> set[str]:
+    """Return repo names where continuation intent is 'needs_human'."""
+    result: set[str] = set()
+    for repo_path in repo_paths:
+        try:
+            intent = read_intent(repo_path)
+            if intent and intent.intent == "needs_human":
+                result.add(repo_path.name)
+        except (OSError, ValueError):
+            continue
+    return result
 
 
 @dataclass
@@ -130,13 +172,30 @@ def run_brain_tick(
     if events:
         state.last_event_ts = str(events[-1].ts)
 
-    # 2. Route events to tiers
+    # 1b. Detect repos with active interactive sessions
+    session_repos = repos_with_active_sessions(roster_repos)
+    if session_repos:
+        logger.info("Active interactive sessions on: %s — suppressing Tier 1", session_repos)
+
+    # 1c. Check continuation intents for repos without active sessions
+    needs_human = repos_needing_human(
+        [rp for rp in roster_repos if rp.name not in session_repos]
+    )
+    if needs_human:
+        logger.info("Repos awaiting human decision: %s", needs_human)
+
+    # 2. Route events to tiers (skip tier 0 info events, suppress tier 1 for session repos)
     tier1_events: list[Event] = []
     tier2_events: list[Event] = []
     tier3_events: list[Event] = []
 
     for ev in events:
         tier = route_event(ev)
+        if tier == 0:
+            continue  # informational (session.started/ended), skip
+        if tier == 1 and ev.repo in session_repos:
+            logger.debug("Suppressed tier 1 event %s for %s (active session)", ev.kind, ev.repo)
+            continue
         if tier == 1:
             tier1_events.append(ev)
         elif tier == 2:
@@ -176,7 +235,7 @@ def run_brain_tick(
                 payload={"original_kind": ev.kind, "reason": response.reasoning},
             ))
 
-    # 4. Heartbeat check (60s timer)
+    # 4. Heartbeat check (60s timer) — skip repos with active sessions
     now = datetime.now(timezone.utc)
     run_heartbeat = (
         state.last_heartbeat_check is None
@@ -186,6 +245,9 @@ def run_brain_tick(
         state.last_heartbeat_check = now
         stale_repos = check_heartbeats(roster_repos)
         for repo_path in stale_repos:
+            if repo_path.name in session_repos:
+                logger.debug("Skipped stale heartbeat for %s (active session)", repo_path.name)
+                continue
             trigger = {
                 "kind": "heartbeat.stale",
                 "repo": str(repo_path),
@@ -223,13 +285,19 @@ def run_brain_tick(
         roster = {
             "repos": [str(rp) for rp in roster_repos],
         }
+        # Enrich snapshot with session/intent info so Tier 2 brain has full visibility
+        tier2_snapshot = dict(snapshot) if snapshot else {}
+        if session_repos:
+            tier2_snapshot["active_interactive_sessions"] = sorted(session_repos)
+        if needs_human:
+            tier2_snapshot["needs_human_repos"] = sorted(needs_human)
         tier1_reasoning = "\n".join(tier1_reasoning_parts) if tier1_reasoning_parts else None
 
         response = invoke_brain(
             tier=2,
             trigger_event=tier2_trigger_events[0] if tier2_trigger_events else None,
             recent_events=recent_as_dicts,
-            snapshot=snapshot,
+            snapshot=tier2_snapshot or None,
             heuristic_recommendation=heuristic_recommendation,
             recent_directives=state.recent_directives,
             roster=roster,

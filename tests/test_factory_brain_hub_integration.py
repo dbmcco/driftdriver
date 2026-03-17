@@ -19,7 +19,7 @@ def test_factory_brain_init(tmp_path: Path) -> None:
         workspace_roots=[tmp_path],
     )
 
-    assert brain.roster_file == hub_dir / "factory-roster.json"
+    assert brain.roster_file == hub_dir / "roster.json"
     assert brain.log_dir == hub_dir / "brain-logs"
     assert brain.log_dir.is_dir()
     assert brain.roster.repos == {}

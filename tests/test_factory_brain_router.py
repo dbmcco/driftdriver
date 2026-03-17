@@ -1,10 +1,12 @@
 # ABOUTME: Tests for factory brain router — event routing, heartbeat checks, sweep timing,
-# ABOUTME: brain response processing with escalation, and directive tracking.
+# ABOUTME: brain response processing with escalation, directive tracking, and session suppression.
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from driftdriver.actor import Actor
 from driftdriver.factory_brain.directives import BrainResponse, Directive
 from driftdriver.factory_brain.events import Event
 from driftdriver.factory_brain.router import (
@@ -12,9 +14,12 @@ from driftdriver.factory_brain.router import (
     BrainState,
     check_heartbeats,
     process_brain_response,
+    repos_with_active_sessions,
     route_event,
+    run_brain_tick,
     should_sweep,
 )
+from driftdriver.presence import write_heartbeat
 
 
 def test_route_event_tier1() -> None:
@@ -194,3 +199,243 @@ def test_process_brain_response_no_escalation_at_tier3() -> None:
 
     assert result["escalated"] is False
     assert result["next_tier"] is None
+
+
+# --- Session suppression tests ---
+
+
+def _register_interactive_session(repo_path: Path, actor_id: str = "test-session") -> None:
+    """Register an interactive presence record for a repo."""
+    actor = Actor(id=actor_id, actor_class="interactive", name="claude-code", repo=repo_path.name)
+    write_heartbeat(repo_path, actor)
+
+
+def test_repos_with_active_sessions_detects_interactive(tmp_path: Path) -> None:
+    """Repos with active interactive presence should be detected."""
+    repo = tmp_path / "my-repo"
+    repo.mkdir()
+    _register_interactive_session(repo)
+
+    result = repos_with_active_sessions([repo])
+    assert "my-repo" in result
+
+
+def test_repos_with_active_sessions_ignores_workers(tmp_path: Path) -> None:
+    """Worker actors should not trigger session suppression."""
+    repo = tmp_path / "my-repo"
+    repo.mkdir()
+    actor = Actor(id="worker-1", actor_class="worker", name="dispatch-loop", repo="my-repo")
+    write_heartbeat(repo, actor)
+
+    result = repos_with_active_sessions([repo])
+    assert "my-repo" not in result
+
+
+def test_repos_with_active_sessions_empty_when_no_presence(tmp_path: Path) -> None:
+    """Repos with no presence records should not be flagged."""
+    repo = tmp_path / "clean-repo"
+    repo.mkdir()
+
+    result = repos_with_active_sessions([repo])
+    assert len(result) == 0
+
+
+def test_repos_with_active_sessions_stale_ignored(tmp_path: Path) -> None:
+    """Interactive sessions with stale heartbeats should be ignored."""
+    repo = tmp_path / "stale-repo"
+    repo.mkdir()
+    actor = Actor(id="old-session", actor_class="interactive", name="claude-code", repo="stale-repo")
+    rec = write_heartbeat(repo, actor)
+
+    # Manually backdate the heartbeat to make it stale
+    pfile = repo / ".workgraph" / "presence" / "old-session.json"
+    data = json.loads(pfile.read_text())
+    old_time = (datetime.now(timezone.utc) - timedelta(seconds=700)).isoformat()
+    data["last_heartbeat"] = old_time
+    pfile.write_text(json.dumps(data))
+
+    result = repos_with_active_sessions([repo], max_age_seconds=600)
+    assert "stale-repo" not in result
+
+
+def test_route_event_session_events_are_tier0() -> None:
+    """session.started and session.ended should route to tier 0."""
+    ev1 = Event(kind="session.started", repo="my-repo", ts=1.0, payload={})
+    assert route_event(ev1) == 0
+
+    ev2 = Event(kind="session.ended", repo="my-repo", ts=1.0, payload={})
+    assert route_event(ev2) == 0
+
+
+# --- Continuation intent tests ---
+
+
+def test_repos_needing_human_detected(tmp_path: Path) -> None:
+    """Repos with needs_human continuation intent should be tracked."""
+    from driftdriver.factory_brain.router import repos_needing_human
+
+    repo = tmp_path / "human-repo"
+    control_dir = repo / ".workgraph" / "service" / "runtime"
+    control_dir.mkdir(parents=True)
+    control_file = control_dir / "control.json"
+    control_file.write_text(json.dumps({
+        "continuation_intent": {
+            "intent": "needs_human",
+            "reason": "agent unsure about schema change",
+            "set_by": "agent",
+            "set_at": "2026-03-13T12:00:00+00:00",
+        }
+    }))
+
+    result = repos_needing_human([repo])
+    assert "human-repo" in result
+
+
+def test_repos_needing_human_ignores_continue(tmp_path: Path) -> None:
+    """Repos with 'continue' intent should NOT be in needs_human set."""
+    from driftdriver.factory_brain.router import repos_needing_human
+
+    repo = tmp_path / "continue-repo"
+    control_dir = repo / ".workgraph" / "service" / "runtime"
+    control_dir.mkdir(parents=True)
+    control_file = control_dir / "control.json"
+    control_file.write_text(json.dumps({
+        "continuation_intent": {
+            "intent": "continue",
+            "reason": "work remains",
+            "set_by": "agent",
+            "set_at": "2026-03-13T12:00:00+00:00",
+        }
+    }))
+
+    result = repos_needing_human([repo])
+    assert "continue-repo" not in result
+
+
+def test_repos_needing_human_ignores_parked(tmp_path: Path) -> None:
+    """Repos with 'parked' intent should NOT be in needs_human set."""
+    from driftdriver.factory_brain.router import repos_needing_human
+
+    repo = tmp_path / "parked-repo"
+    control_dir = repo / ".workgraph" / "service" / "runtime"
+    control_dir.mkdir(parents=True)
+    control_file = control_dir / "control.json"
+    control_file.write_text(json.dumps({
+        "continuation_intent": {
+            "intent": "parked",
+            "reason": "done for now",
+            "set_by": "human",
+            "set_at": "2026-03-13T12:00:00+00:00",
+        }
+    }))
+
+    result = repos_needing_human([repo])
+    assert "parked-repo" not in result
+
+
+def test_repos_needing_human_empty_when_no_control(tmp_path: Path) -> None:
+    """Repos without control.json should not appear in needs_human."""
+    from driftdriver.factory_brain.router import repos_needing_human
+
+    repo = tmp_path / "no-control"
+    repo.mkdir()
+
+    result = repos_needing_human([repo])
+    assert len(result) == 0
+
+
+def test_needs_human_repos_in_tier2_snapshot(tmp_path: Path, monkeypatch: object) -> None:
+    """run_brain_tick should include needs_human repos in tier2 snapshot."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "human-repo"
+    control_dir = repo / ".workgraph" / "service" / "runtime"
+    control_dir.mkdir(parents=True)
+    # Write needs_human intent
+    control_file = control_dir / "control.json"
+    control_file.write_text(json.dumps({
+        "continuation_intent": {
+            "intent": "needs_human",
+            "reason": "needs schema approval",
+            "set_by": "agent",
+            "set_at": "2026-03-13T12:00:00+00:00",
+        }
+    }))
+    # Write fresh heartbeat so it's not stale
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    hb_file.write_text(datetime.now(timezone.utc).isoformat())
+
+    # Capture what invoke_brain receives for tier 2
+    captured_snapshots: list[dict] = []
+    original_invoke = router_mod.invoke_brain
+
+    def mock_invoke_brain(**kwargs):
+        if kwargs.get("tier") == 2 and kwargs.get("snapshot"):
+            captured_snapshots.append(kwargs["snapshot"])
+        return BrainResponse(reasoning="ok", directives=[], escalate=False)
+
+    monkeypatch.setattr(router_mod, "invoke_brain", mock_invoke_brain)
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        snapshot={"factory": "test"},
+        dry_run=True,
+    )
+
+    # Tier 2 sweep should have fired (first tick = should_sweep True)
+    assert len(captured_snapshots) == 1
+    assert "needs_human_repos" in captured_snapshots[0]
+    assert "human-repo" in captured_snapshots[0]["needs_human_repos"]
+
+
+def test_continue_repo_not_suppressed_in_dispatching(tmp_path: Path, monkeypatch: object) -> None:
+    """Repos with 'continue' intent should NOT have dispatching suppressed."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "continue-repo"
+    control_dir = repo / ".workgraph" / "service" / "runtime"
+    control_dir.mkdir(parents=True)
+    control_file = control_dir / "control.json"
+    control_file.write_text(json.dumps({
+        "continuation_intent": {
+            "intent": "continue",
+            "reason": "work remains",
+            "set_by": "agent",
+            "set_at": "2026-03-13T12:00:00+00:00",
+        }
+    }))
+    # Write an event so tier1 processing happens
+    events_dir = repo / ".workgraph" / "service" / "runtime"
+    events_file = events_dir / "events.jsonl"
+    events_file.write_text(json.dumps({
+        "kind": "loop.started",
+        "repo": "continue-repo",
+        "ts": datetime.now(timezone.utc).timestamp(),
+        "payload": {},
+    }) + "\n")
+    # Write fresh heartbeat
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    hb_file.write_text(datetime.now(timezone.utc).isoformat())
+
+    tier1_calls: list[dict] = []
+
+    def mock_invoke_brain(**kwargs):
+        if kwargs.get("tier") == 1:
+            tier1_calls.append(kwargs)
+        return BrainResponse(reasoning="ok", directives=[], escalate=False)
+
+    monkeypatch.setattr(router_mod, "invoke_brain", mock_invoke_brain)
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        dry_run=True,
+    )
+
+    # Tier 1 event processing should NOT be suppressed for continue repos
+    assert len(tier1_calls) >= 1

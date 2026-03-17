@@ -56,6 +56,18 @@ from driftdriver.workgraph import find_workgraph_dir
 from .check import ExitCode, _ensure_wg_init
 
 
+def _has_driftdriver_claude_block(project_dir: Path) -> bool:
+    """Check if CLAUDE.md already has the driftdriver managed block."""
+    claude_md = project_dir / "CLAUDE.md"
+    if not claude_md.exists():
+        return False
+    try:
+        content = claude_md.read_text(encoding="utf-8")
+        return "<!-- driftdriver-claude:start -->" in content
+    except OSError:
+        return False
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     project_dir = Path.cwd()
     if args.dir:
@@ -271,6 +283,11 @@ def cmd_install(args: argparse.Namespace) -> int:
     if bool(getattr(args, "with_claude_code_hooks", False)):
         wrote_claude_code_hooks = install_claude_code_hooks(project_dir)
         install_claude_adapter(project_dir)
+    elif _has_driftdriver_claude_block(project_dir):
+        # Always update the managed CLAUDE.md block if it already exists,
+        # even without --with-claude-code-hooks. First injection requires the
+        # flag; subsequent updates are automatic.
+        install_claude_adapter(project_dir)
 
     wrote_session_driver_executor = False
     wrote_session_driver_runner = False
@@ -331,6 +348,20 @@ def cmd_install(args: argparse.Namespace) -> int:
         # Delegate to coredrift, since it owns the wg-contract format and defaults.
         subprocess.check_call([str(wg_dir / "coredrift"), "--dir", str(project_dir), "ensure-contracts", "--apply"])
         ensured_contracts = True
+
+    # Signal the factory brain that this repo exists (best-effort, never fails install).
+    try:
+        from driftdriver.factory_brain.events import EVENTS_REL_PATH, emit_event
+
+        events_file = project_dir / EVENTS_REL_PATH
+        emit_event(
+            events_file,
+            kind="repo.discovered",
+            repo=project_dir.name,
+            payload={"path": str(project_dir), "source": "driftdriver-install"},
+        )
+    except Exception:
+        pass
 
     result = InstallResult(
         wrote_drifts=wrote_drifts,

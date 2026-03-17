@@ -20,7 +20,7 @@ TEMPLATE_PATH = (
 )
 
 MARKER = "## Driftdriver Integration Protocol"
-CLAUDE_MARKER = "## Speedrift Ecosystem Protocol"
+CLAUDE_MARKER = "## Speedrift Ecosystem"
 
 
 class CodexAdapterTests(unittest.TestCase):
@@ -105,8 +105,8 @@ class ClaudeAdapterTests(unittest.TestCase):
             self.assertTrue(result.wrote_claude_md)
             content = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
             self.assertIn(CLAUDE_MARKER, content)
-            self.assertIn("session-start.sh --cli claude-code", content)
-            self.assertIn("speedriftd status --set-mode autonomous", content)
+            self.assertIn("Dark Factory", content)
+            self.assertIn("speedriftd status --set-mode", content)
 
     def test_install_updates_existing_claude_md(self) -> None:
         with tempfile.TemporaryDirectory() as td:

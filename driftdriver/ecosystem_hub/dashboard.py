@@ -734,6 +734,13 @@ def render_dashboard_html() -> str:
       el('repo-health-filter').value = repoHealthFilter;
     }
 
+    function needsHumanBadge(repo) {
+      var ci = repo.continuation_intent || {};
+      if (String(ci.intent || '') !== 'needs_human') return '';
+      var reason = esc(String(ci.reason || 'decision needed').substring(0, 60));
+      return '<span class="stall-badge" title="' + escAttr(reason) + '" style="background:#f3e8d0;color:#934e1c;margin-left:0.4rem">NEEDS HUMAN</span>';
+    }
+
     function qualityPill(repo) {
       const north = repo.northstar || {};
       const northTier = String(north.tier || '').toLowerCase();
@@ -1363,7 +1370,7 @@ def render_dashboard_html() -> str:
 
         rows.push(
           '<tr class="repo-row' + selectedClass + '" data-repo-name="' + escAttr(repoName) + '"' + selectedAttr + '>'
-          + '<td><strong>' + esc(repoName) + '</strong></td>'
+          + '<td><strong>' + esc(repoName) + '</strong>' + needsHumanBadge(repo) + '</td>'
           + '<td>' + esc(role || '\u2014') + '</td>'
           + '<td><span class="status-dot ' + status + '"></span></td>'
           + '<td>' + driftHtml + '</td>'

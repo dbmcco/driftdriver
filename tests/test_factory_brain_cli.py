@@ -107,7 +107,8 @@ def test_handle_brain_status_with_data(tmp_path: Path, capsys: pytest.CaptureFix
     capsys.readouterr()
 
     # Write a fake invocation
-    invocations_file = tmp_path / "brain-invocations.jsonl"
+    (tmp_path / "brain-logs").mkdir(exist_ok=True)
+    invocations_file = tmp_path / "brain-logs" / "brain-invocations.jsonl"
     record = {"tier": 2, "model": "claude-sonnet-4-20250514", "reasoning": "test"}
     invocations_file.write_text(json.dumps(record) + "\n")
 

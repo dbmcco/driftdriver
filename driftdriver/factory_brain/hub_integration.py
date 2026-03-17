@@ -35,7 +35,7 @@ class FactoryBrain:
         self.workspace_roots = workspace_roots
         self.dry_run = dry_run
 
-        self.roster_file = hub_data_dir / "factory-roster.json"
+        self.roster_file = hub_data_dir / "roster.json"
         self.roster: Roster = load_roster(self.roster_file)
         self.state = BrainState()
         self.log_dir = hub_data_dir / "brain-logs"

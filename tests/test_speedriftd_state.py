@@ -61,7 +61,8 @@ class TestIsoNow:
         result = _iso_now()
         after = time.time()
         dt = datetime.fromisoformat(result)
-        assert before <= dt.timestamp() <= after + 1.0
+        # Allow small float rounding: _iso_now truncates to microseconds
+        assert before - 0.001 <= dt.timestamp() <= after + 1.0
 
 
 # ---------------------------------------------------------------------------

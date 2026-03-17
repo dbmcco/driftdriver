@@ -19,6 +19,9 @@ from driftdriver.plandrift import emit_plan_review_tasks, run_workgraph_plan_rev
 from driftdriver.qadrift import emit_quality_review_tasks, run_program_quality_scan
 from driftdriver.secdrift import emit_security_review_tasks, run_secdrift_scan
 
+# Session suppression — threshold before brain considers a session stale.
+_SESSION_STALE_SECONDS = 600
+
 
 _DRIFTDRIVER_ROOT = Path(__file__).resolve().parents[1]
 
@@ -96,6 +99,38 @@ def _run_cmd(
     except Exception as exc:
         return 1, "", str(exc)
     return int(proc.returncode), str(proc.stdout or "").strip(), str(proc.stderr or "").strip()
+
+
+def _repos_with_active_sessions(snapshot: dict[str, Any]) -> set[str]:
+    """Detect repos where an interactive Claude Code session is active.
+
+    Reads presence data from each repo's runtime directory.  Returns a
+    set of repo *names* that should be suppressed from factory actions
+    so the factory doesn't restart services, dispatch workers, or
+    otherwise interfere with a developer's live session.
+    """
+    active: set[str] = set()
+    repos_raw = snapshot.get("repos")
+    if not isinstance(repos_raw, list):
+        return active
+    try:
+        from driftdriver.presence import active_actors
+    except ImportError:
+        return active
+    for repo in repos_raw:
+        if not isinstance(repo, dict):
+            continue
+        repo_path_str = str(repo.get("path") or "")
+        if not repo_path_str:
+            continue
+        repo_path = Path(repo_path_str)
+        try:
+            actors = active_actors(repo_path, max_age_seconds=_SESSION_STALE_SECONDS)
+            if any(a.actor.actor_class == "interactive" for a in actors):
+                active.add(str(repo.get("name") or repo_path.name))
+        except (OSError, ValueError):
+            continue
+    return active
 
 
 def classify_drift_outcome(
@@ -694,6 +729,16 @@ def build_factory_cycle(
         )
 
     ranked_repos.sort(key=lambda row: (-int(row.get("score") or 0), str(row.get("repo") or "")))
+
+    # Session suppression — exclude repos with active interactive sessions
+    # so the factory doesn't interfere with a developer's live work.
+    session_repos = _repos_with_active_sessions(snapshot)
+    if session_repos:
+        ranked_repos = [
+            row for row in ranked_repos
+            if str(row.get("repo") or "") not in session_repos
+        ]
+
     selected = ranked_repos[:max_repos]
     selected_names = {str(row.get("repo") or "") for row in selected}
 

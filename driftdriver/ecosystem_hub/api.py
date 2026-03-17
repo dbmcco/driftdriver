@@ -144,8 +144,134 @@ class _HubHandler(BaseHTTPRequestHandler):
         finally:
             hub.unregister(client)
 
+    def _read_body(self) -> bytes:
+        length = int(self.headers.get("Content-Length") or 0)
+        return self.rfile.read(length) if length > 0 else b""
+
+    def _load_chat_roster(self) -> dict[str, Any] | None:
+        """Load factory brain roster for chat context."""
+        roster_path = Path.home() / ".config" / "workgraph" / "factory-brain" / "roster.json"
+        return _read_json(roster_path) if roster_path.exists() else None
+
+    def _load_chat_decisions(self, snapshot: dict[str, Any]) -> list[dict[str, Any]] | None:
+        """Load pending decisions across all repos for chat context."""
+        from driftdriver.decision_queue import read_pending_decisions, _record_to_dict
+
+        repos = snapshot.get("repos") or []
+        all_decisions: list[dict[str, Any]] = []
+        for repo_row in repos:
+            if not isinstance(repo_row, dict):
+                continue
+            repo_path = str(repo_row.get("path") or "")
+            if not repo_path or not Path(repo_path).is_dir():
+                continue
+            for dec in read_pending_decisions(Path(repo_path)):
+                all_decisions.append(_record_to_dict(dec))
+        return all_decisions or None
+
+    def _find_repo_path(self, repo_name: str) -> str | None:
+        """Resolve a repo name to its filesystem path via snapshot."""
+        snapshot = self._read_snapshot()
+        for r in snapshot.get("repos") or []:
+            if isinstance(r, dict) and str(r.get("name") or "") == repo_name:
+                return str(r.get("path") or "")
+        return None
+
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
+
+        if route == "/api/decisions/answer":
+            body = self._read_body()
+            try:
+                data = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            decision_id = data.get("decision_id")
+            answer = data.get("answer")
+            answered_via = data.get("answered_via", "api")
+            if not decision_id or not answer:
+                self._send_json(
+                    {"error": "missing_fields", "required": ["decision_id", "answer"]},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            # Search all enrolled repos for this decision
+            from driftdriver.cli.decisions_cmd import handle_decisions_answer
+            snapshot = self._read_snapshot()
+            for r in snapshot.get("repos") or []:
+                if not isinstance(r, dict):
+                    continue
+                repo_path = str(r.get("path") or "")
+                if not repo_path or not Path(repo_path).is_dir():
+                    continue
+                project_dir = Path(repo_path)
+                result = handle_decisions_answer(
+                    project_dir,
+                    decision_id=decision_id,
+                    answer=answer,
+                    answered_via=answered_via,
+                )
+                if "error" not in result:
+                    self._send_json(result)
+                    return
+            self._send_json(
+                {"error": "decision_not_found", "decision_id": decision_id},
+                status=HTTPStatus.NOT_FOUND,
+            )
+            return
+
+        if route == "/api/chat":
+            body = self._read_body()
+            try:
+                data = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            message = data.get("message")
+            chat_id = data.get("chat_id")
+            user_name = data.get("user_name", "")
+            if not message or not chat_id:
+                self._send_json(
+                    {"error": "missing_fields", "required": ["message", "chat_id"]},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            chat_id = str(chat_id)
+            # Auth check — reject unknown chat_ids before any LLM call
+            from driftdriver.factory_brain.chat import (
+                handle_chat_message,
+                load_authorized_chat_ids,
+            )
+
+            authorized = load_authorized_chat_ids()
+            if authorized and chat_id not in authorized:
+                self._send_json(
+                    {"error": "unauthorized", "chat_id": chat_id},
+                    status=HTTPStatus.FORBIDDEN,
+                )
+                return
+            # Gather context from hub state
+            snapshot = self._read_snapshot()
+            roster = self._load_chat_roster()
+            pending_decisions = self._load_chat_decisions(snapshot)
+            try:
+                result = handle_chat_message(
+                    message=message,
+                    chat_id=chat_id,
+                    user_name=user_name,
+                    snapshot=snapshot,
+                    roster=roster,
+                    pending_decisions=pending_decisions,
+                )
+                self._send_json(result)
+            except Exception as exc:
+                self._send_json(
+                    {"error": "internal_error", "detail": str(exc)[:200]},
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+            return
+
         if route.startswith("/api/repo/") and route.endswith("/start"):
             repo_name = route[len("/api/repo/"):-len("/start")]
             if not repo_name:
@@ -302,6 +428,27 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return
             repo_objects = repos_from_snapshot(snapshot)
             self._send_json(build_chain_payload(target_repo, repo_objects))
+            return
+        if route in ("/api/decisions", "/api/decisions/pending"):
+            from driftdriver.decision_queue import read_pending_decisions, _record_to_dict
+
+            repos = snapshot.get("repos") or []
+            all_decisions: list[dict[str, Any]] = []
+            for repo_row in repos:
+                if not isinstance(repo_row, dict):
+                    continue
+                repo_path = str(repo_row.get("path") or "")
+                if not repo_path or not Path(repo_path).is_dir():
+                    continue
+                pending = read_pending_decisions(Path(repo_path))
+                for dec in pending:
+                    all_decisions.append(_record_to_dict(dec))
+            # /api/decisions/pending returns flat list (used by telegram poller)
+            # /api/decisions returns wrapped object (used by dashboard)
+            if route == "/api/decisions/pending":
+                self._send_json(all_decisions)
+            else:
+                self._send_json({"decisions": all_decisions, "count": len(all_decisions)})
             return
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 

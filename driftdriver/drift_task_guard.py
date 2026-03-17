@@ -226,13 +226,18 @@ def guarded_add_drift_task(
         return "unauthorized"
 
     # 4. Dedup — if this exact task_id already exists in any state, skip.
-    show_rc, _, _ = _run_wg(
+    #    Use a short timeout.  If wg hangs (stale graph.lock, broken service),
+    #    return "error" immediately instead of cascading into more wg calls
+    #    that will also hang and eventually crash the factory execution cycle.
+    show_rc, _, show_err = _run_wg(
         ["wg", "--dir", str(wg_dir), "show", task_id, "--json"],
         cwd=cwd,
-        timeout=20.0,
+        timeout=10.0,
     )
     if show_rc == 0:
         return "existing"
+    if "timed out" in show_err.lower():
+        return "error"
 
     # 5. Load task list once (used for per-lane and global counts).
     tasks = _load_task_list(wg_dir, cwd=cwd)

@@ -393,7 +393,7 @@ def _load_ecosystem_repos(ecosystem_toml: Path, workspace_root: Path) -> dict[st
             if path_raw:
                 candidate = Path(path_raw).expanduser()
                 if not candidate.is_absolute():
-                    candidate = (workspace_root / candidate).resolve()
+                    candidate = (ecosystem_toml.parent / candidate).resolve()
                 out[key] = candidate
                 continue
         out[key] = workspace_root / key

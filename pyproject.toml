@@ -9,7 +9,7 @@ description = "Workgraph-first drift orchestrator (Speedrift suite)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "speedrift-lane-sdk",
+    "speedrift-lane-sdk @ git+https://github.com/dbmcco/speedrift-lane-sdk.git",
 ]
 
 [project.optional-dependencies]
@@ -24,4 +24,3 @@ include = ["driftdriver*"]
 
 [tool.uv.sources]
 speedrift-lane-sdk = { git = "https://github.com/dbmcco/speedrift-lane-sdk.git" }
-

@@ -19,7 +19,8 @@ DEFAULT_HUB_DATA_DIR = Path.home() / ".config" / "workgraph" / "factory-brain"
 
 def _resolve_hub_dir(args: argparse.Namespace) -> Path:
     """Return the hub data directory from args or the default."""
-    return Path(getattr(args, "hub_data_dir", "")) or DEFAULT_HUB_DATA_DIR
+    raw = getattr(args, "hub_data_dir", "")
+    return Path(raw) if raw else DEFAULT_HUB_DATA_DIR
 
 
 def handle_brain_status(args: argparse.Namespace, *, hub_data_dir: Path | None = None) -> int:
@@ -31,7 +32,7 @@ def handle_brain_status(args: argparse.Namespace, *, hub_data_dir: Path | None =
     total = len(roster.repos)
     active_count = len(active)
 
-    invocations_file = hub / "brain-invocations.jsonl"
+    invocations_file = hub / "brain-logs" / "brain-invocations.jsonl"
     total_invocations = 0
     last_invocation: dict | None = None
     if invocations_file.exists():
@@ -51,7 +52,8 @@ def handle_brain_status(args: argparse.Namespace, *, hub_data_dir: Path | None =
     if last_invocation:
         model = last_invocation.get("model", "unknown")
         tier = last_invocation.get("tier", "?")
-        print(f"  Last invocation: tier {tier} ({model})")
+        cli = last_invocation.get("cli", "?")
+        print(f"  Last invocation: tier {tier} ({model} via {cli})")
     else:
         print(f"  Last invocation: (none)")
     return 0
@@ -81,7 +83,7 @@ def handle_brain_roster(args: argparse.Namespace, *, hub_data_dir: Path | None =
 def handle_brain_log(args: argparse.Namespace, *, hub_data_dir: Path | None = None) -> int:
     """Show recent reasoning from brain-log.md (last 2000 chars)."""
     hub = hub_data_dir or _resolve_hub_dir(args)
-    log_file = hub / "brain-log.md"
+    log_file = hub / "brain-logs" / "brain-log.md"
 
     if not log_file.exists():
         print("No brain log found.")
