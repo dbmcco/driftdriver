@@ -772,7 +772,7 @@ def collect_ecosystem_snapshot(
 
     # Task routing: dispatch tagged tasks to appropriate executors (paia agents, schedules, etc.)
     try:
-        from driftdriver.task_router import load_routing_config, route_ready_tasks
+        from driftdriver.task_router import load_routing_config, route_ready_tasks, check_agent_completions
         hub_policy_path = project_dir / ".workgraph" / "drift-policy.toml"
         hub_routing = load_routing_config(hub_policy_path)
         if hub_routing.enabled:
@@ -786,6 +786,17 @@ def collect_ecosystem_snapshot(
                 repo_routing = load_routing_config(repo_policy) if repo_policy.exists() else hub_routing
                 if not repo_routing.enabled:
                     continue
+                # Check completions first (mark done before dispatching new work)
+                completions = check_agent_completions(snap_path, repo_routing)
+                completed = [c for c in completions if c.completed]
+                if completed:
+                    print(
+                        f"router: {snap.name}: completed {len(completed)} task(s) "
+                        f"({', '.join(c.task_id for c in completed)})",
+                        file=sys.stderr,
+                    )
+
+                # Then dispatch new ready tasks
                 results = route_ready_tasks(snap_path, repo_routing)
                 dispatched = [r for r in results if r.dispatched]
                 if dispatched:

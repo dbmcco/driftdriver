@@ -468,6 +468,100 @@ def route_ready_tasks(
     return results
 
 
+@dataclass
+class CompletionResult:
+    """Outcome of checking a dispatched task's completion status."""
+
+    task_id: str
+    completed: bool
+    summary: str | None = None
+    error: str | None = None
+
+
+def check_agent_completions(
+    repo_path: Path, config: RoutingConfig
+) -> list[CompletionResult]:
+    """Poll HTTP agent endpoints for in-progress tasks and mark completed ones as done.
+
+    For each in-progress task with an agent tag:
+    1. Match the tag to an HTTP executor
+    2. GET the task status from the agent endpoint
+    3. If status is "done", mark the wg task as done with the agent's summary
+    4. If status is "failed", mark the wg task as failed
+    """
+    graph_path = repo_path / ".workgraph" / "graph.jsonl"
+    nodes = _read_graph_lines(graph_path)
+    results: list[CompletionResult] = []
+    modified = False
+
+    for node in nodes:
+        if node.get("kind") != "task" or node.get("status") != "in-progress":
+            continue
+
+        # Only check tasks with agent tags that match HTTP executors
+        executor = match_executor(node, config)
+        if executor is None or executor.type != "http":
+            continue
+
+        task_id = str(node.get("id", ""))
+        check_url = executor.endpoint.rstrip("/")
+        # Transform /api/agent/task → /api/agent/task/{task_id}
+        status_url = f"{check_url}/{task_id}"
+
+        try:
+            req = Request(status_url, headers={"Accept": "application/json"})
+            with urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            results.append(CompletionResult(
+                task_id=task_id, completed=False,
+                error=f"Status check failed: {str(exc)[:100]}",
+            ))
+            continue
+
+        agent_status = str(data.get("status", "")).lower()
+        summary = data.get("summary", "")
+
+        if agent_status == "done":
+            node["status"] = "done"
+            node["completed_at"] = datetime.now(timezone.utc).isoformat()
+            log = node.get("log", [])
+            if not isinstance(log, list):
+                log = []
+            log.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message": f"Completed by agent via router. Summary: {str(summary)[:200]}",
+            })
+            node["log"] = log
+            modified = True
+            results.append(CompletionResult(
+                task_id=task_id, completed=True, summary=str(summary)[:500],
+            ))
+
+        elif agent_status == "failed":
+            node["status"] = "failed"
+            node["failure_reason"] = str(data.get("error", "Agent reported failure"))[:500]
+            log = node.get("log", [])
+            if not isinstance(log, list):
+                log = []
+            log.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message": f"Failed by agent via router: {node['failure_reason']}",
+            })
+            node["log"] = log
+            modified = True
+            results.append(CompletionResult(
+                task_id=task_id, completed=True, error=node["failure_reason"],
+            ))
+
+        # Status "accepted" or "running" → still in progress, skip
+
+    if modified:
+        _write_graph_lines(graph_path, nodes)
+
+    return results
+
+
 def route_ecosystem(
     workspace_root: Path,
     routing_config: RoutingConfig,
