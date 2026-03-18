@@ -18,6 +18,7 @@ from driftdriver.control_plane import (
     repos_from_snapshot,
 )
 
+from .activity_cache import read_activity_digest
 from .dashboard import render_dashboard_html
 from .discovery import _read_json
 from .intelligence_api import (
@@ -519,6 +520,19 @@ class _HubHandler(BaseHTTPRequestHandler):
             repo_objects = repos_from_snapshot(snapshot)
             self._send_json(build_chain_payload(target_repo, repo_objects))
             return
+        if route == "/api/activity":
+            params = self.path.split("?", 1)
+            window = "48h"
+            if len(params) > 1:
+                for part in params[1].split("&"):
+                    if part.startswith("window="):
+                        window = part[len("window="):]
+            activity_path = getattr(self.__class__, "activity_path", None)
+            if activity_path is None:
+                self._send_json({"generated_at": None, "window": window, "timeline": [], "repos": []})
+            else:
+                self._send_json(_build_activity_payload(activity_path, window))
+            return
         if route in ("/api/decisions", "/api/decisions/pending"):
             from driftdriver.decision_queue import read_pending_decisions, _record_to_dict
 
@@ -583,6 +597,59 @@ class _HubHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         # Keep daemon logs clean and structured in our own files.
         return
+
+
+def _build_activity_payload(activity_path: Path, window: str = "48h") -> dict[str, Any]:
+    """Build the /api/activity response from the cached digest file."""
+    from datetime import datetime, timedelta, timezone
+
+    valid_windows = {"24h": 1, "48h": 2, "72h": 3, "7d": 7}
+    days = valid_windows.get(window, 2)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    digest = read_activity_digest(activity_path)
+    all_repos = digest.get("repos") or []
+
+    # Build flat timeline filtered to window
+    timeline: list[dict[str, Any]] = []
+    for repo_entry in all_repos:
+        for commit in repo_entry.get("timeline", []):
+            try:
+                ts = datetime.fromisoformat(commit["timestamp"])
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if ts >= cutoff:
+                    timeline.append(commit)
+            except (ValueError, KeyError):
+                continue
+    timeline.sort(key=lambda c: c["timestamp"], reverse=True)
+
+    # Build per-repo summary filtered to window
+    repos_out: list[dict[str, Any]] = []
+    for repo_entry in all_repos:
+        window_data = (repo_entry.get("windows") or {}).get(window, {})
+        count = window_data.get("count", 0)
+        if count == 0 and not repo_entry.get("last_commit_at"):
+            continue
+        repos_out.append({
+            "name": repo_entry.get("name"),
+            "last_commit_at": repo_entry.get("last_commit_at"),
+            "summary": repo_entry.get("summary"),
+            "window_count": count,
+        })
+
+    # Sort repos by last_commit_at descending
+    def _ts_key(r: dict[str, Any]) -> str:
+        return r.get("last_commit_at") or ""
+
+    repos_out.sort(key=_ts_key, reverse=True)
+
+    return {
+        "generated_at": digest.get("generated_at"),
+        "window": window,
+        "timeline": timeline,
+        "repos": repos_out,
+    }
 
 
 def _handler_factory(snapshot_path: Path, state_path: Path, live_hub: LiveStreamHub, activity_path: Path | None = None) -> type[_HubHandler]:
