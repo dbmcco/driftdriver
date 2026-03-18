@@ -826,7 +826,8 @@ def render_dashboard_html() -> str:
               <th data-sort="tasks">Tasks</th>
               <th>Trend</th>
               <th data-sort="health">Health</th>
-              <th data-sort="activity">Last Activity</th>
+              <th data-sort="git">Coded</th>
+              <th data-sort="activity">Heartbeat</th>
             </tr>
           </thead>
           <tbody id="repo-body"></tbody>
@@ -985,8 +986,8 @@ def render_dashboard_html() -> str:
     let repoStatusFilter = 'all';
     let repoDriftFilter = 'all';
     let repoHealthFilter = 'all';
-    let repoSortCol = 'name';
-    let repoSortAsc = true;
+    let repoSortCol = 'git';
+    let repoSortAsc = false;
 
     function el(id) { return document.getElementById(id) || document.createElement('div'); }
     function n(value) { return Number.isFinite(Number(value)) ? Number(value) : 0; }
@@ -1700,6 +1701,16 @@ def render_dashboard_html() -> str:
           var dAct = aa - ab;
           return dAct !== 0 ? dAct * dir : String(a.name || '').localeCompare(String(b.name || ''));
         }
+        if (repoSortCol === 'git') {
+          var gitA = activityData && activityData.repos
+            ? (activityData.repos.find(function(r) { return r.name === a.name; }) || {}).last_commit_at || ''
+            : '';
+          var gitB = activityData && activityData.repos
+            ? (activityData.repos.find(function(r) { return r.name === b.name; }) || {}).last_commit_at || ''
+            : '';
+          if (gitA === gitB) return String(a.name || '').localeCompare(String(b.name || ''));
+          return gitA < gitB ? -1 * dir : 1 * dir;
+        }
         return String(a.name || '').localeCompare(String(b.name || '')) * dir;
       });
 
@@ -1727,6 +1738,13 @@ def render_dashboard_html() -> str:
         var healthLabel = healthPill[0];
         var healthClass = 'severity-' + (healthPill[1] === 'bad' ? 'high' : (healthPill[1] === 'warn' ? 'medium' : 'low'));
 
+        var gitEntry = activityData && activityData.repos
+          ? activityData.repos.find(function(r) { return r.name === repoName; })
+          : null;
+        var codedAge = gitEntry && gitEntry.last_commit_at
+          ? relativeTimeIso(gitEntry.last_commit_at)
+          : '<span style="color:var(--line)">—</span>';
+
         rows.push(
           '<tr class="repo-row' + selectedClass + '" data-repo-name="' + escAttr(repoName) + '"' + selectedAttr + '>'
           + '<td><strong>' + esc(repoName) + '</strong>' + needsHumanBadge(repo) + '</td>'
@@ -1736,9 +1754,10 @@ def render_dashboard_html() -> str:
           + '<td>' + esc(String(tc.done)) + '/' + esc(String(tc.total)) + '</td>'
           + '<td>' + sparkSvg + '</td>'
           + '<td><span class="' + healthClass + '">' + esc(healthLabel) + '</span></td>'
+          + '<td>' + codedAge + '</td>'
           + '<td>' + esc(lastActivity) + '</td>'
           + '</tr>'
-          + '<tr class="activity-row" data-repo-name="' + escAttr(repoName) + '"><td colspan="8">'
+          + '<tr class="activity-row" data-repo-name="' + escAttr(repoName) + '"><td colspan="9">'
           + activityInlineHtml(repoName)
           + '</td></tr>'
         );
@@ -2338,7 +2357,8 @@ def render_dashboard_html() -> str:
           repoSortAsc = !repoSortAsc;
         } else {
           repoSortCol = col;
-          repoSortAsc = (col === 'name' || col === 'role' || col === 'activity');
+          // asc for alpha columns, desc for recency/numeric columns
+          repoSortAsc = (col === 'name' || col === 'role');
         }
         updateSortHeaders();
         if (currentData) renderRepoTable(currentData);
