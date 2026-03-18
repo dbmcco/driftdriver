@@ -28,6 +28,7 @@ from driftdriver.install import (
     ensure_datadrift_gitignore,
     ensure_depsdrift_gitignore,
     ensure_fixdrift_gitignore,
+    ensure_debatedrift_gitignore,
     ensure_qadrift_gitignore,
     ensure_redrift_gitignore,
     ensure_specdrift_gitignore,
@@ -37,6 +38,7 @@ from driftdriver.install import (
     ensure_yagnidrift_gitignore,
     resolve_bin,
     write_archdrift_wrapper,
+    write_debatedrift_wrapper,
     write_qadrift_wrapper,
     write_datadrift_wrapper,
     write_depsdrift_wrapper,
@@ -270,6 +272,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             wrapper_mode=wrapper_mode,
         )
     wrote_qadrift = write_qadrift_wrapper(wg_dir)
+    wrote_debatedrift = write_debatedrift_wrapper(wg_dir)
 
     wrote_amplifier_executor = False
     wrote_amplifier_runner = False
@@ -322,6 +325,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     if include_redrift:
         updated_gitignore = ensure_redrift_gitignore(wg_dir) or updated_gitignore
     updated_gitignore = ensure_qadrift_gitignore(wg_dir) or updated_gitignore
+    updated_gitignore = ensure_debatedrift_gitignore(wg_dir) or updated_gitignore
 
     created_executor, patched_executors = ensure_executor_guidance(
         wg_dir,
@@ -377,6 +381,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_yagnidrift=wrote_yagnidrift,
         wrote_redrift=wrote_redrift,
         wrote_qadrift=wrote_qadrift,
+        wrote_debatedrift=wrote_debatedrift,
         wrote_handlers=handler_written,
         wrote_amplifier_executor=wrote_amplifier_executor,
         wrote_amplifier_runner=wrote_amplifier_runner,

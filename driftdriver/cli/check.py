@@ -114,6 +114,7 @@ INTERNAL_LANES: dict[str, str] = {
     "factorydrift": "driftdriver.factorydrift",
     "northstardrift": "driftdriver.northstardrift",
     "evolverdrift": "driftdriver.evolverdrift",
+    "debatedrift": "driftdriver.debatedrift.lane",
 }
 
 LANE_STRATEGIES = ("auto", "fences", "all", "smart")

@@ -20,7 +20,7 @@ class TestInternalLanesConstant:
     """INTERNAL_LANES maps all internal lanes to their module paths."""
 
     def test_contains_all_five_lanes(self) -> None:
-        expected = {"qadrift", "secdrift", "plandrift", "factorydrift", "northstardrift", "evolverdrift"}
+        expected = {"qadrift", "secdrift", "plandrift", "factorydrift", "northstardrift", "evolverdrift", "debatedrift"}
         assert set(INTERNAL_LANES.keys()) == expected
 
     def test_module_paths_are_importable_strings(self) -> None:
