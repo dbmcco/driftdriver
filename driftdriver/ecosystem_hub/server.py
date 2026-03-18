@@ -549,6 +549,52 @@ def run_service_foreground(
     collector = threading.Thread(target=_collector_loop, name="ecosystem-hub-collector", daemon=True)
     collector.start()
 
+    from driftdriver.ecosystem_hub.activity import scan_all_repos
+    from driftdriver.ecosystem_hub.activity_cache import read_activity_digest, write_activity_digest
+    from driftdriver.ecosystem_hub.activity_summarizer import summarize_all
+    from driftdriver.ecosystem_hub.discovery import (
+        _load_ecosystem_repos,
+        _discover_active_workspace_repos,
+    )
+
+    _ACTIVITY_INTERVAL = 15 * 60  # 15 minutes
+
+    def _activity_scanner_loop() -> None:
+        while not stop_event.is_set():
+            try:
+                # Build repo map the same way the collector does
+                ecosystem_file = ecosystem_toml or (workspace_root / "speedrift-ecosystem" / "ecosystem.toml")
+                repo_map: dict[str, Path] = _load_ecosystem_repos(ecosystem_file, workspace_root)
+                if project_dir.name not in repo_map:
+                    repo_map[project_dir.name] = project_dir
+                discovered = _discover_active_workspace_repos(workspace_root, existing=set(repo_map.keys()))
+                repo_map.update(discovered)
+
+                raw_digests = scan_all_repos(repo_map)
+                existing = read_activity_digest(paths["activity"])
+                existing_by_name = {r["name"]: r for r in existing.get("repos", [])}
+                merged = []
+                for d in raw_digests:
+                    prev = existing_by_name.get(d["name"], {})
+                    if prev.get("summary_hash") == d.get("last_commit_hash") and prev.get("summary"):
+                        d = {**d, "summary": prev["summary"], "summary_hash": prev["summary_hash"]}
+                    merged.append(d)
+                summarized = summarize_all(merged)
+                write_activity_digest(paths["activity"], {
+                    "generated_at": _iso_now(),
+                    "repos": summarized,
+                })
+            except Exception:
+                _log.debug("Activity scanner error", exc_info=True)
+            stop_event.wait(_ACTIVITY_INTERVAL)
+
+    activity_scanner = threading.Thread(
+        target=_activity_scanner_loop,
+        name="activity-scanner",
+        daemon=True,
+    )
+    activity_scanner.start()
+
     if not _port_is_available(host, port):
         _log.error(
             "Port %d on %s is already in use — refusing to start a second hub. "
@@ -558,7 +604,7 @@ def run_service_foreground(
         )
         raise SystemExit(1)
 
-    handler_cls = _handler_factory(paths["snapshot"], paths["state"], live_hub)
+    handler_cls = _handler_factory(paths["snapshot"], paths["state"], live_hub, paths["activity"])
     server = ThreadingHTTPServer((host, port), handler_cls)
 
     def _graceful_shutdown(_signum: int, _frame: Any) -> None:

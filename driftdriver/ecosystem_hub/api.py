@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import socket
 import struct
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from driftdriver.control_plane import (
     build_chain_payload,
@@ -18,6 +20,17 @@ from driftdriver.control_plane import (
 
 from .dashboard import render_dashboard_html
 from .discovery import _read_json
+from .intelligence_api import (
+    approve_signal,
+    batch_approve_signals,
+    build_briefing,
+    build_briefing_history,
+    build_decision_log,
+    build_decision_trends,
+    build_inbox,
+    override_signal,
+    snooze_signal,
+)
 from .websocket import (
     LiveStreamHub,
     _encode_ws_frame,
@@ -30,6 +43,7 @@ class _HubHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     snapshot_path: Path
     state_path: Path
+    activity_path: Path | None = None
     live_hub: LiveStreamHub | None = None
 
     def _read_snapshot(self) -> dict[str, Any]:
@@ -177,8 +191,84 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return str(r.get("path") or "")
         return None
 
+    def _pg_config(self) -> "PostgresConfig":
+        from driftdriver.intelligence.db import PostgresConfig as _PgConfig
+        return _PgConfig()
+
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
+
+        # --- Intelligence inbox actions ---
+        if route == "/intelligence/inbox/batch-approve":
+            try:
+                result = batch_approve_signals(self._pg_config())
+                self._send_json(result)
+            except Exception as exc:
+                logging.getLogger(__name__).debug("intelligence batch-approve failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        if route.startswith("/intelligence/inbox/") and route.endswith("/approve"):
+            signal_id_str = route[len("/intelligence/inbox/"):-len("/approve")]
+            try:
+                sid = UUID(signal_id_str)
+            except ValueError:
+                self._send_json({"error": "invalid_signal_id"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                result = approve_signal(self._pg_config(), signal_id=sid)
+                status_code = HTTPStatus.OK if "error" not in result else HTTPStatus.NOT_FOUND
+                self._send_json(result, status=status_code)
+            except Exception as exc:
+                logging.getLogger(__name__).debug("intelligence approve failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        if route.startswith("/intelligence/inbox/") and route.endswith("/override"):
+            signal_id_str = route[len("/intelligence/inbox/"):-len("/override")]
+            try:
+                sid = UUID(signal_id_str)
+            except ValueError:
+                self._send_json({"error": "invalid_signal_id"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            body = self._read_body()
+            try:
+                data = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            new_decision = data.get("decision", "")
+            reason = data.get("reason", "")
+            if not new_decision or not reason:
+                self._send_json(
+                    {"error": "missing_fields", "required": ["decision", "reason"]},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            try:
+                result = override_signal(self._pg_config(), signal_id=sid, new_decision=new_decision, reason=reason)
+                status_code = HTTPStatus.OK if "error" not in result else HTTPStatus.NOT_FOUND
+                self._send_json(result, status=status_code)
+            except Exception as exc:
+                logging.getLogger(__name__).debug("intelligence override failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        if route.startswith("/intelligence/inbox/") and route.endswith("/snooze"):
+            signal_id_str = route[len("/intelligence/inbox/"):-len("/snooze")]
+            try:
+                sid = UUID(signal_id_str)
+            except ValueError:
+                self._send_json({"error": "invalid_signal_id"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                result = snooze_signal(self._pg_config(), signal_id=sid)
+                status_code = HTTPStatus.OK if "error" not in result else HTTPStatus.NOT_FOUND
+                self._send_json(result, status=status_code)
+            except Exception as exc:
+                logging.getLogger(__name__).debug("intelligence snooze failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
 
         if route == "/api/decisions/answer":
             body = self._read_body()
@@ -450,6 +540,44 @@ class _HubHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"decisions": all_decisions, "count": len(all_decisions)})
             return
+
+        # --- Intelligence endpoints ---
+        if route.startswith("/intelligence/"):
+            try:
+                pg = self._pg_config()
+                if route == "/intelligence/briefing":
+                    self._send_json(build_briefing(pg))
+                    return
+                if route == "/intelligence/briefing/history":
+                    self._send_json(build_briefing_history(pg))
+                    return
+                if route == "/intelligence/inbox":
+                    self._send_json(build_inbox(pg))
+                    return
+                if route == "/intelligence/decisions/trends":
+                    self._send_json(build_decision_trends(pg))
+                    return
+                if route == "/intelligence/decisions":
+                    qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+                    params: dict[str, str] = {}
+                    for pair in qs.split("&"):
+                        if "=" in pair:
+                            k, v = pair.split("=", 1)
+                            params[k] = v
+                    kwargs: dict[str, Any] = {}
+                    if params.get("source_type"):
+                        kwargs["source_type"] = params["source_type"]
+                    if params.get("decision"):
+                        kwargs["decision"] = params["decision"]
+                    if params.get("search"):
+                        kwargs["search"] = params["search"]
+                    self._send_json(build_decision_log(pg, **kwargs))
+                    return
+            except Exception as exc:
+                logging.getLogger(__name__).debug("intelligence GET failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -457,11 +585,12 @@ class _HubHandler(BaseHTTPRequestHandler):
         return
 
 
-def _handler_factory(snapshot_path: Path, state_path: Path, live_hub: LiveStreamHub) -> type[_HubHandler]:
+def _handler_factory(snapshot_path: Path, state_path: Path, live_hub: LiveStreamHub, activity_path: Path | None = None) -> type[_HubHandler]:
     class Handler(_HubHandler):
         pass
 
     Handler.snapshot_path = snapshot_path
     Handler.state_path = state_path
     Handler.live_hub = live_hub
+    Handler.activity_path = activity_path
     return Handler

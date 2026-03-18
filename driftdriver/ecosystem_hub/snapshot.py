@@ -885,6 +885,7 @@ def service_paths(project_dir: Path) -> dict[str, Path]:
         "heartbeat": base / "heartbeat.json",
         "snapshot": base / "snapshot.json",
         "log": base / "hub.log",
+        "activity": base / "activity-digests.json",
     }
 
 
