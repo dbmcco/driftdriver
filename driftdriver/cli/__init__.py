@@ -20,6 +20,7 @@ from driftdriver.speedriftd_state import (
     load_runtime_snapshot,
     write_control_state,
 )
+from driftdriver.cli.debate_cmd import register_debate_parser
 from driftdriver.workgraph import find_workgraph_dir
 
 # -- Re-export everything that was previously importable from driftdriver.cli --
@@ -1565,6 +1566,8 @@ def _build_parser() -> argparse.ArgumentParser:
     decisions_answer_p.add_argument("--answered-via", default="cli", help="Channel (cli, telegram, dashboard)")
     decisions_answer_p.add_argument("--json", action="store_true", help="JSON output")
     decisions_answer_p.set_defaults(func=cmd_decisions)
+
+    register_debate_parser(sub)
 
     return p
 
