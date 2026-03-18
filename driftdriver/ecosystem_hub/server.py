@@ -579,6 +579,12 @@ def run_service_foreground(
                     if prev.get("summary_hash") == d.get("last_commit_hash") and prev.get("summary"):
                         d = {**d, "summary": prev["summary"], "summary_hash": prev["summary_hash"]}
                     merged.append(d)
+                # Carry forward previous entries for repos that failed this scan
+                # (git error → silently skipped, previous data preserved per spec)
+                raw_names = {d["name"] for d in raw_digests}
+                for name, prev_entry in existing_by_name.items():
+                    if name not in raw_names:
+                        merged.append(prev_entry)
                 summarized = summarize_all(merged)
                 write_activity_digest(paths["activity"], {
                     "generated_at": _iso_now(),
