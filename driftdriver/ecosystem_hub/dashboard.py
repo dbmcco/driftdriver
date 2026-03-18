@@ -323,8 +323,24 @@ def render_dashboard_html() -> str:
     .repo-table th[data-sort] {
       cursor: pointer;
       user-select: none;
+      white-space: nowrap;
     }
     .repo-table th[data-sort]:hover {
+      color: var(--accent);
+    }
+    .repo-table th[data-sort]::after {
+      content: ' ⇅';
+      opacity: 0.3;
+      font-size: 0.75em;
+    }
+    .repo-table th[data-sort].sort-asc::after {
+      content: ' ▲';
+      opacity: 1;
+      color: var(--accent);
+    }
+    .repo-table th[data-sort].sort-desc::after {
+      content: ' ▼';
+      opacity: 1;
       color: var(--accent);
     }
     .repo-table tr:hover {
@@ -2304,6 +2320,16 @@ def render_dashboard_html() -> str:
       syncFiltersToUrl();
     });
 
+    function updateSortHeaders() {
+      el('repo-table').querySelectorAll('th[data-sort]').forEach(function(th) {
+        var col = th.getAttribute('data-sort');
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (col === repoSortCol) {
+          th.classList.add(repoSortAsc ? 'sort-asc' : 'sort-desc');
+        }
+      });
+    }
+
     el('repo-table').querySelectorAll('th[data-sort]').forEach(function(th) {
       th.addEventListener('click', function() {
         var col = String(th.getAttribute('data-sort') || '');
@@ -2314,9 +2340,11 @@ def render_dashboard_html() -> str:
           repoSortCol = col;
           repoSortAsc = (col === 'name' || col === 'role' || col === 'activity');
         }
+        updateSortHeaders();
         if (currentData) renderRepoTable(currentData);
       });
     });
+    updateSortHeaders();
 
     el('repo-body').addEventListener('click', function(e) {
       var startBtn = e.target.closest('[data-start-repo]');
