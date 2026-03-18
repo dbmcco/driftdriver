@@ -472,6 +472,203 @@ def render_dashboard_html() -> str:
       display: none;
     }
 
+    /* Tab navigation */
+    .hub-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--line);
+      margin-bottom: 0.6rem;
+    }
+    .hub-tab {
+      padding: 0.5rem 1.1rem;
+      font-family: var(--sans);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--muted);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .hub-tab:hover { color: var(--ink); }
+    .hub-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .hub-tab-content { display: none; }
+    .hub-tab-content.active { display: block; }
+
+    /* Intelligence tab styles */
+    .intel-sub-tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .intel-sub-tab {
+      padding: 0.35rem 0.85rem;
+      font-size: 0.8rem;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      cursor: pointer;
+      font-family: var(--sans);
+    }
+    .intel-sub-tab:hover { color: var(--ink); border-color: var(--accent); }
+    .intel-sub-tab.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .intel-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 0.6rem;
+      margin-bottom: 0.85rem;
+    }
+    .intel-stat {
+      text-align: center;
+      padding: 0.55rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .intel-stat-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      font-family: var(--mono);
+      color: var(--accent);
+    }
+    .intel-stat-label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .intel-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .intel-table th,
+    .intel-table td {
+      padding: 0.4rem 0.55rem;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+    }
+    .intel-table th {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      background: #faf7f0;
+    }
+    .intel-table tr:hover { background: var(--accent-soft); }
+    .intel-source-badge {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-family: var(--mono);
+      font-weight: 600;
+    }
+    .intel-source-badge.github { background: #ddf4ff; color: #0969da; }
+    .intel-source-badge.vibez { background: #fff3cd; color: #856404; }
+    .intel-source-badge.other { background: #e8e8e8; color: #555; }
+    .intel-decision-badge {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .intel-decision-badge.skip { background: #e8e8e8; color: #666; }
+    .intel-decision-badge.watch { background: #fff3cd; color: #856404; }
+    .intel-decision-badge.defer { background: #d8eef2; color: #0f6f7c; }
+    .intel-decision-badge.adopt { background: #d4edda; color: #2f6e39; }
+    .intel-urgency { font-size: 0.72rem; }
+    .intel-urgency.high { color: var(--bad); font-weight: 600; }
+    .intel-urgency.medium { color: var(--warn); }
+    .intel-urgency.low { color: var(--muted); }
+    .intel-btn {
+      padding: 0.2rem 0.5rem;
+      font-size: 0.72rem;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      cursor: pointer;
+      font-family: var(--sans);
+      background: #fff;
+    }
+    .intel-btn:hover { border-color: var(--accent); }
+    .intel-btn.approve { color: var(--good); }
+    .intel-btn.override { color: var(--warn); }
+    .intel-btn.snooze { color: var(--muted); }
+    .intel-btn.batch { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .intel-actions { display: flex; gap: 0.3rem; }
+    .intel-confidence {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+    .intel-filters {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.6rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .intel-filters input,
+    .intel-filters select {
+      font: inherit;
+      font-size: 0.82rem;
+      padding: 0.25rem 0.4rem;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+    .intel-history-bar {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 50px;
+      margin-top: 0.5rem;
+    }
+    .intel-history-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+    }
+    .intel-history-bar-segment {
+      width: 100%;
+      border-radius: 2px 2px 0 0;
+    }
+    .intel-history-label {
+      font-size: 0.6rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .intel-sub-content { display: none; }
+    .intel-sub-content.active { display: block; }
+    .intel-source-health {
+      display: flex;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+    .intel-source-card {
+      padding: 0.45rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      font-size: 0.78rem;
+    }
+    .intel-veto-highlight { background: #fff5f5 !important; }
+
     /* Responsive */
     @media (max-width: 900px) {
       .repo-expanded-meta {
@@ -479,6 +676,39 @@ def render_dashboard_html() -> str:
         gap: 0.35rem;
       }
     }
+
+    /* Activity panel */
+    .activity-panel { margin-bottom: 1.2rem; }
+    .activity-window-pills { display: flex; gap: 0.4rem; margin-bottom: 0.7rem; }
+    .activity-pill {
+      padding: 0.2rem 0.7rem; border-radius: 999px; font-size: 0.78rem;
+      border: 1px solid var(--line); cursor: pointer; background: var(--panel);
+      color: var(--muted);
+    }
+    .activity-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .activity-feed { display: flex; flex-direction: column; gap: 0.3rem; }
+    .activity-item {
+      display: flex; align-items: baseline; gap: 0.5rem;
+      font-size: 0.82rem; padding: 0.25rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .activity-item:last-child { border-bottom: none; }
+    .activity-repo-badge {
+      font-family: var(--mono); font-size: 0.75rem;
+      background: var(--accent-soft); color: var(--accent);
+      border-radius: 4px; padding: 0.1rem 0.4rem;
+      white-space: nowrap; flex-shrink: 0; cursor: pointer;
+    }
+    .activity-subject { flex: 1; color: var(--ink); }
+    .activity-age { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+    .activity-inline {
+      font-size: 0.78rem; color: var(--muted); padding: 0.15rem 0;
+      font-style: italic; max-width: 60ch; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .activity-inline.no-activity { color: var(--line); }
+    .activity-row td { padding-top: 0; padding-bottom: 0.4rem; border-top: none; }
+    .activity-row { background: var(--panel); }
   </style>
 </head>
 <body>
@@ -487,6 +717,15 @@ def render_dashboard_html() -> str:
     <div class="meta" id="meta">Loading ecosystem state…</div>
   </header>
   <main class="hub-layout">
+    <!-- Tab Navigation -->
+    <nav class="hub-tabs" id="hub-tabs">
+      <button class="hub-tab active" data-tab="operations">Operations</button>
+      <button class="hub-tab" data-tab="intelligence">Intelligence</button>
+    </nav>
+
+    <!-- Operations Tab (existing content) -->
+    <div class="hub-tab-content active" id="tab-operations">
+
     <!-- Zone 1: Briefing Bar -->
     <section class="briefing-bar card" id="briefing-bar">
       <p class="briefing-text" id="briefing-text">Loading ecosystem state...</p>
@@ -511,6 +750,20 @@ def render_dashboard_html() -> str:
         <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
         <span><span class="dot" style="background:#a26c13"></span>Open</span>
         <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
+      </div>
+    </section>
+
+    <!-- Activity Panel -->
+    <section class="activity-panel card" id="activity-section">
+      <h2>Recent Activity</h2>
+      <div class="activity-window-pills" id="activity-pills">
+        <button class="activity-pill" data-window="24h">24h</button>
+        <button class="activity-pill active" data-window="48h">48h</button>
+        <button class="activity-pill" data-window="72h">72h</button>
+        <button class="activity-pill" data-window="7d">7d</button>
+      </div>
+      <div class="activity-feed" id="activity-feed">
+        <div class="activity-item"><span class="activity-age">Loading\u2026</span></div>
       </div>
     </section>
 
@@ -600,6 +853,96 @@ def render_dashboard_html() -> str:
       <div id="chat-messages"></div>
       <input type="text" id="chat-input" placeholder="Ask about your ecosystem..." />
     </aside>
+    </div><!-- end tab-operations -->
+
+    <!-- Intelligence Tab -->
+    <div class="hub-tab-content" id="tab-intelligence">
+      <div class="intel-sub-tabs" id="intel-sub-tabs">
+        <button class="intel-sub-tab active" data-intel-view="briefing">Briefing</button>
+        <button class="intel-sub-tab" data-intel-view="inbox">Inbox <span class="badge" id="inbox-count">0</span></button>
+        <button class="intel-sub-tab" data-intel-view="decisions">Decision Log</button>
+      </div>
+
+      <!-- Briefing View -->
+      <div class="intel-sub-content active" id="intel-briefing">
+        <div class="intel-stats" id="intel-stats"></div>
+        <div class="card" style="margin-bottom:0.65rem">
+          <h2>Key Actions Today</h2>
+          <div id="intel-actions-list"><em style="color:var(--muted)">Loading…</em></div>
+        </div>
+        <div class="card" style="margin-bottom:0.65rem">
+          <h2>Stack Impact</h2>
+          <div id="intel-stack-impact"><em style="color:var(--muted)">Loading…</em></div>
+        </div>
+        <div class="card" style="margin-bottom:0.65rem">
+          <h2>Source Health</h2>
+          <div class="intel-source-health" id="intel-source-health"></div>
+        </div>
+        <div class="card">
+          <h2>7-Day History</h2>
+          <div class="intel-history-bar" id="intel-history-bar"></div>
+        </div>
+      </div>
+
+      <!-- Inbox View -->
+      <div class="intel-sub-content" id="intel-inbox">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+          <span style="font-size:0.82rem;color:var(--muted)" id="inbox-summary">0 signals awaiting review</span>
+          <button class="intel-btn batch" id="batch-approve-btn" onclick="batchApprove()">Batch Approve All</button>
+        </div>
+        <table class="intel-table" id="inbox-table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Signal</th>
+              <th>LLM Rec</th>
+              <th>Confidence</th>
+              <th>Rationale</th>
+              <th>Urgency</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="inbox-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Decision Log View -->
+      <div class="intel-sub-content" id="intel-decisions">
+        <div class="intel-filters">
+          <input type="text" id="intel-search" placeholder="Search decisions..." />
+          <select id="intel-source-filter">
+            <option value="">all sources</option>
+            <option value="github">github</option>
+            <option value="vibez">vibez</option>
+          </select>
+          <select id="intel-decision-filter">
+            <option value="">all decisions</option>
+            <option value="skip">skip</option>
+            <option value="watch">watch</option>
+            <option value="defer">defer</option>
+            <option value="adopt">adopt</option>
+          </select>
+        </div>
+        <table class="intel-table" id="decisions-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Source</th>
+              <th>Signal</th>
+              <th>Decision</th>
+              <th>Decided By</th>
+              <th>Confidence</th>
+              <th>Vetoed</th>
+            </tr>
+          </thead>
+          <tbody id="decisions-body"></tbody>
+        </table>
+        <div class="card" style="margin-top:0.65rem">
+          <h2>Decision Trends</h2>
+          <div id="intel-trends"><em style="color:var(--muted)">Loading…</em></div>
+        </div>
+      </div>
+    </div><!-- end tab-intelligence -->
   </main>
   <script>
     let ws = null;
@@ -1379,6 +1722,9 @@ def render_dashboard_html() -> str:
           + '<td><span class="' + healthClass + '">' + esc(healthLabel) + '</span></td>'
           + '<td>' + esc(lastActivity) + '</td>'
           + '</tr>'
+          + '<tr class="activity-row" data-repo-name="' + escAttr(repoName) + '"><td colspan="8">'
+          + activityInlineHtml(repoName)
+          + '</td></tr>'
         );
 
         if (expandedRepo === repoName) {
@@ -2052,10 +2398,337 @@ def render_dashboard_html() -> str:
     drawerSvg.addEventListener('pointerup', endGraphDrag);
     drawerSvg.addEventListener('pointercancel', endGraphDrag);
 
+    // --- Tab navigation ---
+    document.querySelectorAll('.hub-tab').forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        var target = tab.getAttribute('data-tab');
+        document.querySelectorAll('.hub-tab').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelectorAll('.hub-tab-content').forEach(function(c) { c.classList.remove('active'); });
+        tab.classList.add('active');
+        var content = document.getElementById('tab-' + target);
+        if (content) content.classList.add('active');
+        if (target === 'intelligence') loadIntelligenceData();
+      });
+    });
+
+    // --- Intelligence sub-tabs ---
+    document.querySelectorAll('.intel-sub-tab').forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        var view = tab.getAttribute('data-intel-view');
+        document.querySelectorAll('.intel-sub-tab').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelectorAll('.intel-sub-content').forEach(function(c) { c.classList.remove('active'); });
+        tab.classList.add('active');
+        var content = document.getElementById('intel-' + view);
+        if (content) content.classList.add('active');
+      });
+    });
+
+    // --- Intelligence data loading ---
+    function sourceBadge(source) {
+      var cls = (source === 'github' || source === 'vibez') ? source : 'other';
+      return '<span class="intel-source-badge ' + cls + '">' + esc(source) + '</span>';
+    }
+    function decisionBadge(decision) {
+      var d = String(decision || '').toLowerCase();
+      var cls = ['skip','watch','defer','adopt'].indexOf(d) >= 0 ? d : '';
+      return '<span class="intel-decision-badge ' + cls + '">' + esc(decision || '-') + '</span>';
+    }
+    function urgencySpan(urgency) {
+      var u = String(urgency || 'low').toLowerCase();
+      return '<span class="intel-urgency ' + u + '">' + esc(u) + '</span>';
+    }
+    function confStr(confidence) {
+      if (confidence == null) return '-';
+      return '<span class="intel-confidence">' + (confidence * 100).toFixed(0) + '%</span>';
+    }
+    function shortDate(iso) {
+      if (!iso) return '-';
+      return iso.substring(0, 10);
+    }
+
+    async function loadIntelligenceData() {
+      try {
+        var [briefing, history, inbox, decisions, trends] = await Promise.all([
+          fetch('/intelligence/briefing').then(function(r) { return r.json(); }),
+          fetch('/intelligence/briefing/history').then(function(r) { return r.json(); }),
+          fetch('/intelligence/inbox').then(function(r) { return r.json(); }),
+          fetch('/intelligence/decisions').then(function(r) { return r.json(); }),
+          fetch('/intelligence/decisions/trends').then(function(r) { return r.json(); }),
+        ]);
+        renderIntelBriefing(briefing, history);
+        renderIntelInbox(inbox);
+        renderIntelDecisions(decisions, trends);
+      } catch (err) {
+        console.warn('Intelligence data load failed:', err);
+      }
+    }
+
+    function renderIntelBriefing(briefing, history) {
+      var stats = briefing.stats || {};
+      el('intel-stats').innerHTML =
+        '<div class="intel-stat"><div class="intel-stat-value">' + n(stats.total_signals) + '</div><div class="intel-stat-label">Total Signals</div></div>' +
+        '<div class="intel-stat"><div class="intel-stat-value">' + n(stats.evaluated_today) + '</div><div class="intel-stat-label">Evaluated Today</div></div>' +
+        '<div class="intel-stat"><div class="intel-stat-value">' + n(stats.auto_decided) + '</div><div class="intel-stat-label">Auto-Decided</div></div>' +
+        '<div class="intel-stat"><div class="intel-stat-value">' + n(stats.escalated) + '</div><div class="intel-stat-label">Escalated</div></div>' +
+        '<div class="intel-stat"><div class="intel-stat-value">' + n(stats.pending) + '</div><div class="intel-stat-label">Pending</div></div>';
+
+      // Actions
+      var actions = briefing.actions || [];
+      if (actions.length === 0) {
+        el('intel-actions-list').innerHTML = '<em style="color:var(--muted)">No actions taken today</em>';
+      } else {
+        el('intel-actions-list').innerHTML = '<table class="intel-table"><thead><tr><th>Signal</th><th>Decision</th><th>Confidence</th></tr></thead><tbody>' +
+          actions.map(function(a) {
+            return '<tr><td>' + esc(a.title) + '</td><td>' + decisionBadge(a.decision) + '</td><td>' + confStr(a.decision_confidence) + '</td></tr>';
+          }).join('') + '</tbody></table>';
+      }
+
+      // Stack impact
+      var impact = briefing.stack_impact || [];
+      if (impact.length === 0) {
+        el('intel-stack-impact').innerHTML = '<em style="color:var(--muted)">No stack impact today</em>';
+      } else {
+        el('intel-stack-impact').innerHTML = '<table class="intel-table"><thead><tr><th>Signal</th><th>Decision</th><th>Source</th></tr></thead><tbody>' +
+          impact.map(function(s) {
+            return '<tr><td>' + esc(s.title) + '</td><td>' + decisionBadge(s.decision) + '</td><td>' + sourceBadge(s.source_type) + '</td></tr>';
+          }).join('') + '</tbody></table>';
+      }
+
+      // Source health
+      var sources = briefing.source_health || [];
+      el('intel-source-health').innerHTML = sources.map(function(s) {
+        var synced = s.last_synced_at ? shortDate(s.last_synced_at) : 'never';
+        var color = s.enabled ? 'var(--good)' : 'var(--muted)';
+        return '<div class="intel-source-card">' +
+          sourceBadge(s.source_type) +
+          ' <span style="color:' + color + '">' + (s.enabled ? 'enabled' : 'disabled') + '</span>' +
+          '<br><span style="font-size:0.7rem;color:var(--muted)">Last sync: ' + esc(synced) + ' | Interval: ' + n(s.sync_interval_minutes) + 'm</span>' +
+          '</div>';
+      }).join('') || '<em style="color:var(--muted)">No sources configured</em>';
+
+      // History bar
+      var days = (history.days || []).slice().reverse();
+      if (days.length > 0) {
+        var maxVal = Math.max(1, Math.max.apply(null, days.map(function(d) { return n(d.evaluated); })));
+        el('intel-history-bar').innerHTML = days.map(function(d) {
+          var autoH = Math.max(1, (n(d.auto_decided) / maxVal) * 45);
+          var escH = Math.max(1, (n(d.escalated) / maxVal) * 45);
+          return '<div class="intel-history-col">' +
+            '<div class="intel-history-bar-segment" style="height:' + autoH + 'px;background:var(--good)"></div>' +
+            '<div class="intel-history-bar-segment" style="height:' + escH + 'px;background:var(--warn)"></div>' +
+            '<div class="intel-history-label">' + esc(d.date ? d.date.substring(5) : '') + '</div>' +
+            '</div>';
+        }).join('');
+      }
+    }
+
+    function renderIntelInbox(inbox) {
+      var signals = inbox.signals || [];
+      el('inbox-count').textContent = String(signals.length);
+      el('inbox-summary').textContent = signals.length + ' signal' + (signals.length !== 1 ? 's' : '') + ' awaiting review';
+      if (signals.length === 0) {
+        el('inbox-body').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:1.5rem">No signals awaiting review</td></tr>';
+        return;
+      }
+      el('inbox-body').innerHTML = signals.map(function(s) {
+        var urgencyFromLog = '';
+        (s.action_log || []).forEach(function(entry) {
+          if (entry && entry.urgency) urgencyFromLog = entry.urgency;
+        });
+        return '<tr>' +
+          '<td>' + sourceBadge(s.source_type) + '</td>' +
+          '<td>' + esc(s.title) + '</td>' +
+          '<td>' + decisionBadge(s.decision) + '</td>' +
+          '<td>' + confStr(s.decision_confidence) + '</td>' +
+          '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(s.decision_reason || '-') + '</td>' +
+          '<td>' + urgencySpan(urgencyFromLog || 'low') + '</td>' +
+          '<td><div class="intel-actions">' +
+            '<button class="intel-btn approve" onclick="approveSignal(\'' + escAttr(s.id) + '\')">Approve</button>' +
+            '<button class="intel-btn override" onclick="showOverride(\'' + escAttr(s.id) + '\')">Override</button>' +
+            '<button class="intel-btn snooze" onclick="snoozeSignal(\'' + escAttr(s.id) + '\')">Snooze</button>' +
+          '</div></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function renderIntelDecisions(decisions, trends) {
+      var rows = decisions.decisions || [];
+      if (rows.length === 0) {
+        el('decisions-body').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:1.5rem">No decisions recorded</td></tr>';
+      } else {
+        el('decisions-body').innerHTML = rows.map(function(d) {
+          var vetoedCls = d.vetoed_at ? ' intel-veto-highlight' : '';
+          return '<tr class="' + vetoedCls + '">' +
+            '<td>' + shortDate(d.evaluated_at) + '</td>' +
+            '<td>' + sourceBadge(d.source_type) + '</td>' +
+            '<td>' + esc(d.title) + '</td>' +
+            '<td>' + decisionBadge(d.decision) + '</td>' +
+            '<td>' + esc(d.decided_by || '-') + '</td>' +
+            '<td>' + confStr(d.decision_confidence) + '</td>' +
+            '<td>' + (d.vetoed_at ? '<span class="bad">vetoed</span>' : '-') + '</td>' +
+          '</tr>';
+        }).join('');
+      }
+
+      // Trends
+      var daily = (trends.daily || []);
+      if (daily.length === 0) {
+        el('intel-trends').innerHTML = '<em style="color:var(--muted)">No trend data</em>';
+      } else {
+        el('intel-trends').innerHTML = '<table class="intel-table"><thead><tr><th>Date</th><th>Total</th><th>Skip</th><th>Watch</th><th>Defer</th><th>Adopt</th><th>Avg Conf</th></tr></thead><tbody>' +
+          daily.map(function(d) {
+            var by = d.by_decision || {};
+            return '<tr>' +
+              '<td>' + esc(d.date) + '</td>' +
+              '<td><strong>' + n(d.total) + '</strong></td>' +
+              '<td>' + n(by.skip || 0) + '</td>' +
+              '<td>' + n(by.watch || 0) + '</td>' +
+              '<td>' + n(by.defer || 0) + '</td>' +
+              '<td>' + n(by.adopt || 0) + '</td>' +
+              '<td>' + (d.avg_confidence * 100).toFixed(0) + '%</td>' +
+            '</tr>';
+          }).join('') + '</tbody></table>';
+      }
+    }
+
+    // --- Intelligence inbox actions ---
+    async function approveSignal(id) {
+      try {
+        await fetch('/intelligence/inbox/' + id + '/approve', { method: 'POST' });
+        loadIntelligenceData();
+      } catch (err) { console.warn('Approve failed:', err); }
+    }
+    async function snoozeSignal(id) {
+      try {
+        await fetch('/intelligence/inbox/' + id + '/snooze', { method: 'POST' });
+        loadIntelligenceData();
+      } catch (err) { console.warn('Snooze failed:', err); }
+    }
+    function showOverride(id) {
+      var decision = prompt('Override decision (skip/watch/defer/adopt):');
+      if (!decision) return;
+      var reason = prompt('Reason for override:');
+      if (!reason) return;
+      fetch('/intelligence/inbox/' + id + '/override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: decision, reason: reason }),
+      }).then(function() { loadIntelligenceData(); })
+        .catch(function(err) { console.warn('Override failed:', err); });
+    }
+    async function batchApprove() {
+      if (!confirm('Approve all inbox signals?')) return;
+      try {
+        await fetch('/intelligence/inbox/batch-approve', { method: 'POST' });
+        loadIntelligenceData();
+      } catch (err) { console.warn('Batch approve failed:', err); }
+    }
+
+    // --- Intelligence decision log filters ---
+    var intelFilterTimer = null;
+    function loadFilteredDecisions() {
+      var search = el('intel-search').value || '';
+      var source = el('intel-source-filter').value || '';
+      var decision = el('intel-decision-filter').value || '';
+      var params = [];
+      if (search) params.push('search=' + encodeURIComponent(search));
+      if (source) params.push('source_type=' + encodeURIComponent(source));
+      if (decision) params.push('decision=' + encodeURIComponent(decision));
+      var qs = params.length > 0 ? '?' + params.join('&') : '';
+      fetch('/intelligence/decisions' + qs)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          renderIntelDecisions(data, { daily: [] });
+        })
+        .catch(function() {});
+    }
+    ['intel-search', 'intel-source-filter', 'intel-decision-filter'].forEach(function(id) {
+      var elem = el(id);
+      if (!elem) return;
+      var eventType = elem.tagName === 'SELECT' ? 'change' : 'input';
+      elem.addEventListener(eventType, function() {
+        clearTimeout(intelFilterTimer);
+        intelFilterTimer = setTimeout(loadFilteredDecisions, 300);
+      });
+    });
+
     loadFiltersFromUrl();
     refreshHttp().catch(() => {});
     startPolling();
     connectWebSocket();
+
+    // ── Activity panel ──────────────────────────────────────────────
+    var currentActivityWindow = '48h';
+    var activityData = null;
+
+    function relativeTimeIso(isoStr) {
+      if (!isoStr) return '';
+      var diff = (Date.now() - new Date(isoStr).getTime()) / 1000;
+      if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+      if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
+      return Math.round(diff / 86400) + 'd ago';
+    }
+
+    function renderActivityPanel(data) {
+      var feed = el('activity-feed');
+      if (!feed) return;
+      var items = (data && data.timeline) || [];
+      if (items.length === 0) {
+        feed.innerHTML = '<div class="activity-item"><span class="activity-age" style="color:var(--muted)">No recent commits in this window.</span></div>';
+        return;
+      }
+      feed.innerHTML = items.slice(0, 40).map(function(c) {
+        return '<div class="activity-item">'
+          + '<span class="activity-repo-badge" onclick="selectRepo(' + JSON.stringify(c.repo) + ')">' + esc(c.repo) + '</span>'
+          + '<span class="activity-subject">' + esc(c.subject) + '</span>'
+          + '<span class="activity-age">' + esc(relativeTimeIso(c.timestamp)) + '</span>'
+          + '</div>';
+      }).join('');
+    }
+
+    function activityInlineHtml(repoName) {
+      if (!activityData || !activityData.repos) return '';
+      var entry = null;
+      for (var i = 0; i < activityData.repos.length; i++) {
+        if (activityData.repos[i].name === repoName) { entry = activityData.repos[i]; break; }
+      }
+      if (!entry) return '<div class="activity-inline no-activity">No recent git activity</div>';
+      if (entry.summary) {
+        var age = entry.last_commit_at ? 'Last active: ' + relativeTimeIso(entry.last_commit_at) + ' \u00b7 ' : '';
+        return '<div class="activity-inline">' + esc(age) + esc(entry.summary) + '</div>';
+      }
+      if (entry.window_count > 0) {
+        return '<div class="activity-inline">' + esc(entry.window_count + ' commits in last ' + currentActivityWindow) + '</div>';
+      }
+      return '<div class="activity-inline no-activity">No recent git activity</div>';
+    }
+
+    async function loadActivityData(win) {
+      try {
+        var res = await fetch('/api/activity?window=' + encodeURIComponent(win));
+        activityData = await res.json();
+        renderActivityPanel(activityData);
+        if (currentData) renderRepoTable(currentData);
+      } catch (e) {
+        activityData = null;
+      }
+    }
+
+    document.addEventListener('click', function(e) {
+      var pill = e.target && e.target.closest ? e.target.closest('.activity-pill') : null;
+      if (!pill) return;
+      var win = pill.getAttribute('data-window');
+      if (!win) return;
+      currentActivityWindow = win;
+      document.querySelectorAll('.activity-pill').forEach(function(p) {
+        p.classList.toggle('active', p.getAttribute('data-window') === win);
+      });
+      loadActivityData(win);
+    });
+
+    // Reload activity every 5 minutes
+    loadActivityData(currentActivityWindow);
+    setInterval(function() { loadActivityData(currentActivityWindow); }, 5 * 60 * 1000);
   </script>
 </body>
 </html>
