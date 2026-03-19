@@ -457,30 +457,49 @@ def build_tracking(config: PostgresConfig, *, wg_dir: Path | None = None) -> dic
                     "sync_interval_minutes": int(row[4]) if row[4] is not None else None,
                 }
 
-            # Most recent signal per GitHub repo path (source_id = "{repo}@{sha}")
+            # Most recent signal per GitHub repo path (source_id = "{repo}@{sha}" or "{repo}@{date}")
             cur.execute(
-                """SELECT DISTINCT ON (
-                       CASE WHEN signal_type = 'repo_update' THEN split_part(source_id, '@', 1) ELSE source_id END
-                   )
-                   source_type,
-                   CASE WHEN signal_type = 'repo_update' THEN split_part(source_id, '@', 1) ELSE source_id END AS entity,
+                """SELECT DISTINCT ON (split_part(source_id, '@', 1))
+                   split_part(source_id, '@', 1) AS repo_path,
                    signal_type, title, detected_at, decision, decision_confidence
                    FROM signals
                    WHERE source_type = 'github'
-                   ORDER BY
-                       CASE WHEN signal_type = 'repo_update' THEN split_part(source_id, '@', 1) ELSE source_id END,
-                       detected_at DESC"""
+                   ORDER BY split_part(source_id, '@', 1), detected_at DESC"""
             )
-            latest_by_entity: dict[str, dict[str, Any]] = {}
+            latest_by_repo: dict[str, dict[str, Any]] = {}
             for row in cur.fetchall():
-                entity = str(row[1])
-                latest_by_entity[entity] = {
-                    "signal_type": str(row[2]),
-                    "title": str(row[3]),
-                    "detected_at": _iso(row[4]),
-                    "decision": str(row[5]) if row[5] else None,
-                    "confidence": float(row[6]) if row[6] is not None else None,
+                latest_by_repo[str(row[0])] = {
+                    "signal_type": str(row[1]),
+                    "title": str(row[2]),
+                    "detected_at": _iso(row[3]),
+                    "decision": str(row[4]) if row[4] else None,
+                    "confidence": float(row[5]) if row[5] is not None else None,
                 }
+
+            # Most recent signal per user (activity/new_repo signals have title "... from @user: ...")
+            cur.execute(
+                """SELECT DISTINCT ON (
+                       substring(title FROM 'from @([^ :]+)')
+                   )
+                   substring(title FROM 'from @([^ :]+)') AS username,
+                   signal_type, title, detected_at, decision, decision_confidence
+                   FROM signals
+                   WHERE source_type = 'github'
+                     AND signal_type IN ('activity', 'new_repo')
+                     AND title LIKE '%from @%'
+                   ORDER BY substring(title FROM 'from @([^ :]+)'), detected_at DESC"""
+            )
+            latest_by_user: dict[str, dict[str, Any]] = {}
+            for row in cur.fetchall():
+                uname = str(row[0]) if row[0] else ""
+                if uname:
+                    latest_by_user[uname] = {
+                        "signal_type": str(row[1]),
+                        "title": str(row[2]),
+                        "detected_at": _iso(row[3]),
+                        "decision": str(row[4]) if row[4] else None,
+                        "confidence": float(row[5]) if row[5] is not None else None,
+                    }
 
     # Build repos list from state (covers ECOSYSTEM_REPOS + extra_repos)
     repos: list[dict[str, Any]] = []
@@ -495,19 +514,36 @@ def build_tracking(config: PostgresConfig, *, wg_dir: Path | None = None) -> dic
             "sha": sha[:12] if sha else None,
             "commit_date": str(entry.get("commit_date") or ""),
             "seen_at": str(entry.get("seen_at") or ""),
-            "recent_signal": latest_by_entity.get(repo_path),
+            "recent_signal": latest_by_repo.get(repo_path),
         })
 
-    # Build users list from state
+    # Build users list from state — include top recently-pushed repos
     users: list[dict[str, Any]] = []
     for username, entry in sorted(state_users.items()):
         if not isinstance(entry, dict):
             continue
-        user_key = f"@{username}"
+        # Extract repos sorted by pushed_at descending
+        raw_repos = entry.get("repos") if isinstance(entry.get("repos"), dict) else {}
+        recent_repos = sorted(
+            [
+                {
+                    "path": path,
+                    "description": str(r.get("description") or ""),
+                    "pushed_at": str(r.get("pushed_at") or ""),
+                    "html_url": str(r.get("html_url") or ""),
+                }
+                for path, r in raw_repos.items()
+                if isinstance(r, dict)
+            ],
+            key=lambda r: r["pushed_at"],
+            reverse=True,
+        )[:5]
         users.append({
             "username": username,
-            "last_checked_at": str(entry.get("last_checked_at") or ""),
-            "recent_signal": latest_by_entity.get(user_key),
+            "seen_at": str(entry.get("seen_at") or ""),
+            "repo_count": int(entry.get("repo_count") or len(raw_repos)),
+            "recent_repos": recent_repos,
+            "recent_signal": latest_by_user.get(username),
         })
 
     return {

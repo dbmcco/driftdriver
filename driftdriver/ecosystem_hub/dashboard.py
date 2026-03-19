@@ -1312,8 +1312,7 @@ def render_dashboard_html() -> str:
             <thead>
               <tr>
                 <th>GitHub User</th>
-                <th>Last Checked</th>
-                <th>Recent Activity</th>
+                <th>Recent Pushes</th>
               </tr>
             </thead>
             <tbody id="tracking-users-body"></tbody>
@@ -3678,15 +3677,23 @@ def render_dashboard_html() -> str:
         el('tracking-users-body').innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1rem">No users tracked</td></tr>';
       } else {
         el('tracking-users-body').innerHTML = users.map(function(u) {
-          var sig = u.recent_signal;
-          var sigHtml = sig
-            ? '<span style="font-size:0.75rem">' + esc(sig.title) + '</span>' + (sig.decision ? ' ' + decisionBadge(sig.decision) : '')
-            : '<span style="color:var(--muted);font-size:0.8rem">—</span>';
-          var checked = u.last_checked_at ? u.last_checked_at.substring(0, 10) : '—';
+          var recRepos = (u.recent_repos || []).slice(0, 3);
+          var reposHtml = recRepos.length === 0
+            ? '<span style="color:var(--muted);font-size:0.8rem">—</span>'
+            : recRepos.map(function(r) {
+                var pushed = r.pushed_at ? r.pushed_at.substring(0, 10) : '';
+                var desc = r.description ? ' — ' + r.description : '';
+                return '<div style="margin-bottom:0.2rem">' +
+                  '<a href="' + esc(r.html_url) + '" target="_blank" style="color:var(--accent);font-size:0.78rem;font-weight:500">' + esc(r.path) + '</a>' +
+                  (pushed ? '<span style="color:var(--muted);font-size:0.72rem;margin-left:0.4rem">' + esc(pushed) + '</span>' : '') +
+                  (desc ? '<div style="color:var(--muted);font-size:0.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px">' + esc(r.description) + '</div>' : '') +
+                  '</div>';
+              }).join('');
+          var checked = u.seen_at ? u.seen_at.substring(0, 10) : '—';
           return '<tr>' +
-            '<td><a href="https://github.com/' + esc(u.username) + '" target="_blank" style="color:var(--accent)">@' + esc(u.username) + '</a></td>' +
-            '<td style="font-size:0.8rem;color:var(--muted)">' + esc(checked) + '</td>' +
-            '<td>' + sigHtml + '</td>' +
+            '<td style="vertical-align:top"><a href="https://github.com/' + esc(u.username) + '" target="_blank" style="color:var(--accent);font-weight:500">@' + esc(u.username) + '</a>' +
+            '<div style="font-size:0.72rem;color:var(--muted)">checked ' + esc(checked) + '</div></td>' +
+            '<td>' + reposHtml + '</td>' +
             '</tr>';
         }).join('');
       }
