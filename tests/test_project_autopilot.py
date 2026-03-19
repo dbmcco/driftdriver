@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,7 @@ from driftdriver.project_autopilot import (
     detect_recurring_findings,
     discover_session_driver,
     generate_report,
+    get_ready_tasks,
     get_wg_eval_scores,
     run_autopilot_loop,
     should_escalate,
@@ -87,6 +89,72 @@ class TestBuildPrompts(unittest.TestCase):
         self.assertIn("Build login form", prompt)
         self.assertIn("drifts check", prompt)
         self.assertIn("wg done", prompt)
+
+    def test_worker_prompt_includes_manual_owner_assist_guidance(self):
+        task = {
+            "id": "auth-1",
+            "title": "Add login",
+            "description": "Build login form",
+            "manual_owner_policy": "assist",
+            "manual_owner_id": "braydon",
+        }
+        prompt = build_worker_prompt(task, Path("/project"))
+        self.assertIn("Manual Owner Assist Mode", prompt)
+        self.assertIn("braydon", prompt)
+        self.assertIn("wg unclaim auth-1", prompt)
+
+    @patch("driftdriver.project_autopilot.get_task_details")
+    @patch("driftdriver.project_autopilot._run_command")
+    def test_get_ready_tasks_skips_manual_owner_tasks_by_default(self, mock_run, mock_details):
+        mock_run.return_value = subprocess.CompletedProcess(
+            ["wg", "ready"],
+            0,
+            stdout="owned-task - Owned task\n",
+            stderr="",
+        )
+        mock_details.return_value = {
+            "id": "owned-task",
+            "title": "Owned task",
+            "description": "",
+            "agent": "braydon",
+        }
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            tasks = get_ready_tasks(repo)
+
+        self.assertEqual(tasks, [])
+
+    @patch("driftdriver.project_autopilot.get_task_details")
+    @patch("driftdriver.project_autopilot._run_command")
+    def test_get_ready_tasks_marks_manual_owner_tasks_for_assist_mode(self, mock_run, mock_details):
+        mock_run.return_value = subprocess.CompletedProcess(
+            ["wg", "ready"],
+            0,
+            stdout="owned-task - Owned task\n",
+            stderr="",
+        )
+        mock_details.return_value = {
+            "id": "owned-task",
+            "title": "Owned task",
+            "description": "",
+            "agent": "braydon",
+        }
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            wg_dir = repo / ".workgraph"
+            wg_dir.mkdir()
+            (wg_dir / "drift-policy.toml").write_text(
+                "[speedriftd]\nmanual_owner_policy = \"assist\"\n",
+                encoding="utf-8",
+            )
+            tasks = get_ready_tasks(repo)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["manual_owner_policy"], "assist")
+        self.assertEqual(tasks[0]["manual_owner_id"], "braydon")
 
 
 class TestSessionLogHelpers(unittest.TestCase):

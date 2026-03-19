@@ -745,6 +745,38 @@ tag_match = "agent:samantha"
         self.assertEqual(task["status"], "open")
         mock_subprocess.run.assert_not_called()
 
+    @patch("driftdriver.task_router.subprocess")
+    def test_dispatches_explicit_owner_without_executor_in_assist_mode(
+        self, mock_subprocess: MagicMock
+    ) -> None:
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="", stdout="")
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "open",
+                "title": "Owned by Braydon",
+                "agent": "braydon",
+            },
+        ]
+        toml = b"""
+[routing]
+enabled = true
+default_executor = "claude"
+
+[speedriftd]
+manual_owner_policy = "assist"
+"""
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._setup_repo(td, tasks, toml)
+            config = load_routing_config(repo / ".workgraph" / "drift-policy.toml")
+            results = route_ready_tasks(repo, config)
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].dispatched)
+        self.assertEqual(results[0].executor, "claude")
+        mock_subprocess.run.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # RouteEcosystemTests

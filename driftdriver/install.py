@@ -370,6 +370,9 @@ type = "claude"
 command = "{CLAUDE_EXECUTOR_WRAPPER}"
 args = []
 
+[executor.env]
+WG_TASK_ID = "{{{{task_id}}}}"
+
 [executor.prompt_template]
 template = \"\"\"
 You are working in: {project_dir}
@@ -427,6 +430,20 @@ def _inject_claude_executor_runner(body: str) -> str | None:
         if legacy in body:
             return body.replace(legacy, CLAUDE_EXECUTOR_CURRENT, 1)
     return None
+
+
+def _inject_claude_task_env(body: str) -> str | None:
+    if "[executor.env]" in body and 'WG_TASK_ID = "{{task_id}}"' in body:
+        return None
+
+    marker = "\n[executor.prompt_template]\n"
+    if marker not in body:
+        return None
+    return body.replace(
+        marker,
+        '\n[executor.env]\nWG_TASK_ID = "{{task_id}}"\n' + marker,
+        1,
+    )
 
 
 def _inject_coredrift_into_template(body: str) -> str | None:
@@ -701,6 +718,11 @@ def ensure_executor_guidance(
                 cur = new_text
                 changed = True
 
+            new_text = _inject_claude_task_env(cur)
+            if new_text is not None:
+                cur = new_text
+                changed = True
+
         new_text = _inject_coredrift_into_template(cur)
         if new_text is not None:
             cur = new_text
@@ -827,6 +849,10 @@ def install_claude_executor_support(wg_dir: Path) -> tuple[bool, bool]:
     timeout_dst = bin_dir / "timeout"
     wrote_timeout = _write_text_if_changed(timeout_dst, _template_text("bin", "timeout"))
     _make_executable(timeout_dst)
+
+    wg_guard_dst = bin_dir / "wg"
+    _write_text_if_changed(wg_guard_dst, _template_text("bin", "wg"))
+    _make_executable(wg_guard_dst)
 
     return (wrote_runner, wrote_timeout)
 

@@ -13,6 +13,9 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from driftdriver.manual_owner import apply_manual_owner_policy
+from driftdriver.policy import load_drift_policy
+
 
 @dataclass
 class ExecutorConfig:
@@ -497,13 +500,34 @@ def route_ready_tasks(
     graph_path = repo_path / ".workgraph" / "graph.jsonl"
     nodes = _read_graph_lines(graph_path)
     ready = _find_ready_tasks(nodes)
+    policy = load_drift_policy(repo_path / ".workgraph")
 
     results: list[DispatchResult] = []
-    for task in ready:
+    for raw_task in ready:
+        task = apply_manual_owner_policy(
+            raw_task,
+            repo_path,
+            routing_config=config,
+            policy=policy,
+        )
+        owner = _task_owner(raw_task)
+        if task is None:
+            results.append(DispatchResult(
+                task_id=str(raw_task["id"]),
+                dispatched=False,
+                executor=owner or config.default_executor,
+                skipped_reason=(
+                    f"Task owner '{owner}' has no configured executor; "
+                    "holding for manual work"
+                ),
+            ))
+            continue
+
         owner = _task_owner(task)
+        manual_owner_assist = str(task.get("manual_owner_policy") or "") == "assist"
         executor = match_executor(task, config)
         if executor is None:
-            if owner is not None:
+            if owner is not None and not manual_owner_assist:
                 results.append(DispatchResult(
                     task_id=str(task["id"]),
                     dispatched=False,

@@ -25,10 +25,13 @@ class ClaudeExecutorInstallTests(unittest.TestCase):
 
             runner = wg_dir / "executors" / "claude-run.sh"
             timeout = wg_dir / "bin" / "timeout"
+            wg_guard = wg_dir / "bin" / "wg"
             self.assertTrue(runner.exists())
             self.assertTrue(timeout.exists())
+            self.assertTrue(wg_guard.exists())
             self.assertTrue(runner.stat().st_mode & stat.S_IXUSR)
             self.assertTrue(timeout.stat().st_mode & stat.S_IXUSR)
+            self.assertTrue(wg_guard.stat().st_mode & stat.S_IXUSR)
 
     def test_install_claude_executor_support_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -63,8 +66,10 @@ class ClaudeExecutorInstallTests(unittest.TestCase):
             executor = data["executor"]
             self.assertEqual(executor["command"], ".workgraph/executors/claude-run.sh")
             self.assertEqual(executor["args"], [])
+            self.assertEqual(executor["env"]["WG_TASK_ID"], "{{task_id}}")
             self.assertTrue((wg_dir / "executors" / "claude-run.sh").exists())
             self.assertTrue((wg_dir / "bin" / "timeout").exists())
+            self.assertTrue((wg_dir / "bin" / "wg").exists())
 
     def test_ensure_executor_guidance_patches_legacy_claude_command(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -100,6 +105,7 @@ class ClaudeExecutorInstallTests(unittest.TestCase):
             executor = data["executor"]
             self.assertEqual(executor["command"], ".workgraph/executors/claude-run.sh")
             self.assertEqual(executor["args"], [])
+            self.assertEqual(executor["env"]["WG_TASK_ID"], "{{task_id}}")
 
 
 if __name__ == "__main__":

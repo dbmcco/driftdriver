@@ -196,6 +196,7 @@ class PolicyTests(unittest.TestCase):
                         "default_lease_ttl_seconds = -60",
                         "interval_seconds = 0",
                         "max_concurrent_workers = -2",
+                        "manual_owner_policy = \"chaos\"",
                         "heartbeat_stale_after_seconds = 0",
                         "output_stale_after_seconds = -30",
                         "worker_timeout_seconds = -60",
@@ -351,6 +352,7 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.speedriftd["default_lease_ttl_seconds"], 0)
             self.assertEqual(p.speedriftd["interval_seconds"], 5)
             self.assertEqual(p.speedriftd["max_concurrent_workers"], 1)
+            self.assertEqual(p.speedriftd["manual_owner_policy"], "hold")
             self.assertEqual(p.speedriftd["heartbeat_stale_after_seconds"], 30)
             self.assertEqual(p.speedriftd["output_stale_after_seconds"], 30)
             self.assertEqual(p.speedriftd["worker_timeout_seconds"], 30)

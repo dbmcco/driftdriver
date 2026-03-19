@@ -153,6 +153,7 @@ def _default_speedriftd_cfg() -> dict[str, Any]:
         "interval_seconds": 30,
         "max_concurrent_workers": 2,
         "respect_manual_claims": True,
+        "manual_owner_policy": "hold",
         "heartbeat_stale_after_seconds": 300,
         "output_stale_after_seconds": 600,
         "worker_timeout_seconds": 1800,
@@ -416,6 +417,7 @@ def _default_policy_text() -> str:
         "interval_seconds = 30\n"
         "max_concurrent_workers = 2\n"
         "respect_manual_claims = true\n"
+        "manual_owner_policy = \"hold\"\n"
         "heartbeat_stale_after_seconds = 300\n"
         "output_stale_after_seconds = 600\n"
         "worker_timeout_seconds = 1800\n"
@@ -829,6 +831,12 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     )
     speedriftd["max_concurrent_workers"] = max(
         1, int(speedriftd_raw.get("max_concurrent_workers", speedriftd["max_concurrent_workers"]))
+    )
+    manual_owner_policy = str(
+        speedriftd_raw.get("manual_owner_policy", speedriftd["manual_owner_policy"]) or "hold"
+    ).strip().lower()
+    speedriftd["manual_owner_policy"] = (
+        manual_owner_policy if manual_owner_policy in {"hold", "assist"} else _default_speedriftd_cfg()["manual_owner_policy"]
     )
     speedriftd["heartbeat_stale_after_seconds"] = max(
         30,

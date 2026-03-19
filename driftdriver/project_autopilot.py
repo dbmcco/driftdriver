@@ -15,6 +15,8 @@ from pathlib import Path
 
 from driftdriver.directives import Action, Directive, DirectiveLog
 from driftdriver.executor_shim import ExecutorShim
+from driftdriver.manual_owner import apply_manual_owner_policy
+from driftdriver.policy import load_drift_policy
 from driftdriver.planner import DECOMPOSE_PROMPT_TEMPLATE, build_decompose_prompt
 
 SESSION_DRIVER_GLOB = (
@@ -181,9 +183,16 @@ def _resolve_command(cmd: list[str]) -> list[str]:
     return cmd
 
 
-def _subprocess_env() -> dict[str, str]:
+def _subprocess_env(
+    cwd: Path | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> dict[str, str]:
     env = os.environ.copy()
     path_entries = []
+    if cwd is not None:
+        repo_bin = cwd / ".workgraph" / "bin"
+        if repo_bin.is_dir():
+            path_entries.append(str(repo_bin))
     for binary in ("wg", "claude"):
         for candidate in _binary_candidates(binary):
             parent = str(Path(candidate).parent)
@@ -193,6 +202,8 @@ def _subprocess_env() -> dict[str, str]:
     if current:
         path_entries.extend(part for part in current.split(os.pathsep) if part)
     env["PATH"] = os.pathsep.join(path_entries)
+    if extra_env:
+        env.update(extra_env)
     return env
 
 
@@ -201,6 +212,7 @@ def _run_command(
     *,
     cwd: Path | None = None,
     timeout: int | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     resolved = _resolve_command(cmd)
     try:
@@ -210,7 +222,7 @@ def _run_command(
             text=True,
             cwd=str(cwd) if cwd else None,
             timeout=timeout,
-            env=_subprocess_env(),
+            env=_subprocess_env(cwd, extra_env),
         )
     except FileNotFoundError as exc:
         return subprocess.CompletedProcess(
@@ -276,24 +288,38 @@ def get_ready_tasks(project_dir: Path) -> list[dict]:
         return []
 
     basic_tasks = _parse_ready_output(result.stdout)
+    policy = load_drift_policy(project_dir / ".workgraph")
     detailed = []
     for task in basic_tasks:
         details = get_task_details(project_dir, task["id"])
-        if details:
-            detailed.append(details)
-        else:
-            detailed.append(task)
+        prepared = apply_manual_owner_policy(
+            details if details else task,
+            project_dir,
+            policy=policy,
+        )
+        if prepared is not None:
+            detailed.append(prepared)
     return detailed
 
 
 def build_worker_prompt(task: dict, project_dir: Path) -> str:
     """Build the prompt for a task worker."""
-    return WORKER_PROMPT_TEMPLATE.format(
+    prompt = WORKER_PROMPT_TEMPLATE.format(
         project_dir=str(project_dir),
         task_id=task["id"],
         task_title=task.get("title", ""),
         task_description=task.get("description", ""),
     )
+    if str(task.get("manual_owner_policy") or "") == "assist":
+        owner = str(task.get("manual_owner_id") or "the owner")
+        prompt += (
+            "\n## Manual Owner Assist Mode\n"
+            f"- This task remains owned by {owner}; you may investigate and make progress, but do not close it.\n"
+            f"- If you need owner input or believe the work is ready for review, record that with `wg log {task['id']} \"...\"`.\n"
+            f"- Before you stop, leave the task open with `wg unclaim {task['id']}` unless the owner explicitly delegated terminal authority.\n"
+            f"- Do not run `wg done {task['id']}` or `wg fail {task['id']}` in this mode.\n"
+        )
+    return prompt
 
 
 def get_wg_eval_scores(project_dir: Path, task_ids: set[str]) -> str:
@@ -367,6 +393,8 @@ def launch_worker(
     scripts_dir: Path,
     worker_name: str,
     project_dir: Path,
+    *,
+    extra_env: dict[str, str] | None = None,
 ) -> dict | None:
     """Launch a session-driver worker. Returns {session_id, tmux_name}."""
     launch_script = scripts_dir / "launch-worker.sh"
@@ -378,6 +406,7 @@ def launch_worker(
         capture_output=True,
         text=True,
         timeout=60,
+        env=_subprocess_env(project_dir, extra_env),
     )
     if result.returncode != 0:
         return None
@@ -659,6 +688,14 @@ def dispatch_task(
     shim = ExecutorShim(wg_dir=wg_dir, log=log)
     shim.execute(directive)
 
+    extra_env: dict[str, str] | None = None
+    if str(task.get("manual_owner_policy") or "") == "assist":
+        extra_env = {
+            "WG_MANUAL_OWNER_ASSIST": "1",
+            "WG_MANUAL_OWNER_ID": str(task.get("manual_owner_id") or ""),
+            "WG_TASK_ID": str(task["id"]),
+        }
+
     if scripts_dir is None:
         # Fallback: direct CLI execution (no session-driver)
         prompt = build_worker_prompt(task, project_dir)
@@ -673,12 +710,18 @@ def dispatch_task(
             ],
             cwd=project_dir,
             timeout=run.config.worker_timeout + 60,
+            extra_env=extra_env,
         )
         ctx.response = result.stdout
         ctx.status = "completed" if result.returncode == 0 else "failed"
     else:
         # Session-driver path
-        worker_info = launch_worker(scripts_dir, worker_name, project_dir)
+        worker_info = launch_worker(
+            scripts_dir,
+            worker_name,
+            project_dir,
+            extra_env=extra_env,
+        )
         if worker_info is None:
             ctx.response = "worker launch failed"
             ctx.status = "failed"
