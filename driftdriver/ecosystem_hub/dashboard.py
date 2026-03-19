@@ -1201,6 +1201,7 @@ def render_dashboard_html() -> str:
         <button class="intel-sub-tab active" data-intel-view="briefing">Briefing</button>
         <button class="intel-sub-tab" data-intel-view="inbox">Inbox <span class="badge" id="inbox-count">0</span></button>
         <button class="intel-sub-tab" data-intel-view="decisions">Decision Log</button>
+        <button class="intel-sub-tab" data-intel-view="tracking">Tracking</button>
       </div>
 
       <!-- Briefing View -->
@@ -1280,6 +1281,47 @@ def render_dashboard_html() -> str:
         <div class="card" style="margin-top:0.65rem">
           <h2>Decision Trends</h2>
           <div id="intel-trends"><em style="color:var(--muted)">Loading…</em></div>
+        </div>
+      </div>
+
+      <!-- Tracking View -->
+      <div class="intel-sub-content" id="intel-tracking">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+          <span style="font-size:0.82rem;color:var(--muted)" id="tracking-summary">Loading…</span>
+          <button class="intel-btn batch" id="sync-now-btn" onclick="syncNow()">Sync Now</button>
+        </div>
+        <div class="card" style="margin-bottom:0.65rem">
+          <h2>Tracked Repos</h2>
+          <table class="intel-table" id="tracking-repos-table">
+            <thead>
+              <tr>
+                <th>Repo</th>
+                <th>GitHub Path</th>
+                <th>Last Commit</th>
+                <th>Commit Date</th>
+                <th>Seen At</th>
+                <th>Recent Signal</th>
+              </tr>
+            </thead>
+            <tbody id="tracking-repos-body"></tbody>
+          </table>
+        </div>
+        <div class="card" style="margin-bottom:0.65rem">
+          <h2>Tracked People</h2>
+          <table class="intel-table" id="tracking-users-table">
+            <thead>
+              <tr>
+                <th>GitHub User</th>
+                <th>Last Checked</th>
+                <th>Recent Activity</th>
+              </tr>
+            </thead>
+            <tbody id="tracking-users-body"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h2>Sources</h2>
+          <div id="tracking-sources"></div>
         </div>
       </div>
     </div><!-- end tab-intelligence -->
@@ -3556,19 +3598,117 @@ def render_dashboard_html() -> str:
 
     async function loadIntelligenceData() {
       try {
-        var [briefing, history, inbox, decisions, trends] = await Promise.all([
+        var [briefing, history, inbox, decisions, trends, tracking] = await Promise.all([
           fetch('/intelligence/briefing').then(function(r) { return r.json(); }),
           fetch('/intelligence/briefing/history').then(function(r) { return r.json(); }),
           fetch('/intelligence/inbox').then(function(r) { return r.json(); }),
           fetch('/intelligence/decisions').then(function(r) { return r.json(); }),
           fetch('/intelligence/decisions/trends').then(function(r) { return r.json(); }),
+          fetch('/intelligence/tracking').then(function(r) { return r.json(); }),
         ]);
         renderIntelBriefing(briefing, history);
         renderIntelInbox(inbox);
         renderIntelDecisions(decisions, trends);
+        renderIntelTracking(tracking);
       } catch (err) {
         console.warn('Intelligence data load failed:', err);
       }
+    }
+
+    async function syncNow() {
+      var btn = el('sync-now-btn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing…';
+      try {
+        var r = await fetch('/intelligence/sync', { method: 'POST' });
+        var data = await r.json();
+        btn.textContent = 'Sync Now';
+        btn.disabled = false;
+        var created = (data.signals_created || 0);
+        el('tracking-summary').textContent = 'Sync complete — ' + created + ' new signal' + (created !== 1 ? 's' : '') + ' created';
+        // Reload tracking data
+        var tracking = await fetch('/intelligence/tracking').then(function(r2) { return r2.json(); });
+        renderIntelTracking(tracking);
+        var inbox = await fetch('/intelligence/inbox').then(function(r2) { return r2.json(); });
+        renderIntelInbox(inbox);
+      } catch (err) {
+        btn.textContent = 'Sync Now';
+        btn.disabled = false;
+        console.warn('Sync failed:', err);
+      }
+    }
+
+    function renderIntelTracking(data) {
+      if (!data || data.error) {
+        el('tracking-repos-body').innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1rem">' + esc((data && data.error) || 'Unavailable') + '</td></tr>';
+        return;
+      }
+      var repos = data.repos || [];
+      var users = data.users || [];
+      var sources = data.sources || [];
+      el('tracking-summary').textContent = repos.length + ' repos · ' + users.length + ' people tracked';
+
+      // Repos table
+      if (repos.length === 0) {
+        el('tracking-repos-body').innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1rem">No repos tracked yet</td></tr>';
+      } else {
+        el('tracking-repos-body').innerHTML = repos.map(function(r) {
+          var sig = r.recent_signal;
+          var sigHtml = sig
+            ? '<span style="font-size:0.75rem">' + esc(sig.title.replace(/^Repo update detected: /, '').replace(/^Repo activity from /, '')) + '</span>' +
+              (sig.decision ? ' ' + decisionBadge(sig.decision) : '') +
+              '<br><span style="font-size:0.7rem;color:var(--muted)">' + shortDate(sig.detected_at) + '</span>'
+            : '<span style="color:var(--muted);font-size:0.8rem">—</span>';
+          var ghUrl = r.repo ? 'https://github.com/' + r.repo : '#';
+          var commitDate = r.commit_date ? r.commit_date.substring(0, 10) : '—';
+          var seenDate = r.seen_at ? r.seen_at.substring(0, 10) : '—';
+          return '<tr>' +
+            '<td style="font-weight:500">' + esc(r.name) + '</td>' +
+            '<td><a href="' + esc(ghUrl) + '" target="_blank" style="color:var(--accent);font-size:0.8rem">' + esc(r.repo || '—') + '</a></td>' +
+            '<td style="font-family:var(--mono);font-size:0.75rem">' + esc(r.sha || '—') + '</td>' +
+            '<td style="font-size:0.8rem">' + esc(commitDate) + '</td>' +
+            '<td style="font-size:0.8rem;color:var(--muted)">' + esc(seenDate) + '</td>' +
+            '<td>' + sigHtml + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+
+      // Users table
+      if (users.length === 0) {
+        el('tracking-users-body').innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:1rem">No users tracked</td></tr>';
+      } else {
+        el('tracking-users-body').innerHTML = users.map(function(u) {
+          var sig = u.recent_signal;
+          var sigHtml = sig
+            ? '<span style="font-size:0.75rem">' + esc(sig.title) + '</span>' + (sig.decision ? ' ' + decisionBadge(sig.decision) : '')
+            : '<span style="color:var(--muted);font-size:0.8rem">—</span>';
+          var checked = u.last_checked_at ? u.last_checked_at.substring(0, 10) : '—';
+          return '<tr>' +
+            '<td><a href="https://github.com/' + esc(u.username) + '" target="_blank" style="color:var(--accent)">@' + esc(u.username) + '</a></td>' +
+            '<td style="font-size:0.8rem;color:var(--muted)">' + esc(checked) + '</td>' +
+            '<td>' + sigHtml + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+
+      // Sources
+      el('tracking-sources').innerHTML = sources.map(function(s) {
+        var synced = s.last_synced_at ? s.last_synced_at.substring(0, 16).replace('T', ' ') + ' UTC' : 'never';
+        var status = s.enabled ? '<span style="color:var(--good);font-size:0.8rem">● enabled</span>' : '<span style="color:var(--muted);font-size:0.8rem">○ disabled</span>';
+        var summary = s.config_summary || {};
+        var detail = '';
+        if (s.source_type === 'github') {
+          detail = (summary.extra_repo_count || 0) + ' extra repos · ' + (summary.user_count || 0) + ' users';
+        } else if (s.source_type === 'vibez') {
+          var kw = (summary.keyword_filter || []).join(', ');
+          detail = summary.api_endpoint + (kw ? ' · ' + kw : '');
+        }
+        return '<div style="padding:0.5rem 0;border-bottom:1px solid var(--line)">' +
+          '<strong>' + esc(s.source_type) + '</strong> ' + status +
+          '<span style="margin-left:1rem;font-size:0.8rem;color:var(--muted)">Last sync: ' + esc(synced) + (s.sync_interval_minutes ? ' · every ' + s.sync_interval_minutes + 'm' : '') + '</span>' +
+          (detail ? '<div style="font-size:0.78rem;color:var(--muted);margin-top:0.15rem">' + esc(detail) + '</div>' : '') +
+          '</div>';
+      }).join('');
     }
 
     function renderIntelBriefing(briefing, history) {

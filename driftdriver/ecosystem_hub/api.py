@@ -35,8 +35,10 @@ from .intelligence_api import (
     build_decision_log,
     build_decision_trends,
     build_inbox,
+    build_tracking,
     override_signal,
     snooze_signal,
+    trigger_sync,
 )
 from .websocket import (
     LiveStreamHub,
@@ -274,6 +276,16 @@ class _HubHandler(BaseHTTPRequestHandler):
                 self._send_json(result, status=status_code)
             except Exception as exc:
                 logging.getLogger(__name__).debug("intelligence snooze failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        if route == "/intelligence/sync":
+            try:
+                pg = self._pg_config()
+                result = trigger_sync(pg)
+                self._send_json(result)
+            except Exception as exc:
+                logging.getLogger(__name__).debug("intelligence sync failed", exc_info=True)
                 self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
 
@@ -801,6 +813,11 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return
                 if route == "/intelligence/decisions/trends":
                     self._send_json(build_decision_trends(pg))
+                    return
+                if route == "/intelligence/tracking":
+                    # snapshot_path is .workgraph/service/ecosystem-hub/snapshot.json
+                    wg_dir = self.snapshot_path.parent.parent.parent
+                    self._send_json(build_tracking(pg, wg_dir=wg_dir))
                     return
                 if route == "/intelligence/decisions":
                     qs = self.path.split("?", 1)[1] if "?" in self.path else ""

@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from driftdriver.intelligence.db import PostgresConfig
+from driftdriver.updates import load_update_state
 
 
 def _get_psycopg():
@@ -428,3 +430,119 @@ def build_decision_trends(config: PostgresConfig, *, days: int = 30) -> dict[str
         daily.append(current_entry)
 
     return {"daily": daily}
+
+
+def build_tracking(config: PostgresConfig, *, wg_dir: Path | None = None) -> dict[str, Any]:
+    """Return tracking state: all monitored repos/users with current SHA, dates, and most recent signal."""
+    # Load update state (current SHA + commit_date per repo/user)
+    active_wg_dir = wg_dir or Path(".workgraph")
+    state = load_update_state(active_wg_dir)
+    state_repos: dict[str, Any] = state.get("repos") if isinstance(state.get("repos"), dict) else {}
+    state_users: dict[str, Any] = state.get("users") if isinstance(state.get("users"), dict) else {}
+
+    # Load source configs + source health from DB
+    source_configs: dict[str, dict[str, Any]] = {}
+    source_health: dict[str, dict[str, Any]] = {}
+    with _connect(**config.connection_kwargs()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT source_type, config, enabled, last_synced_at, sync_interval_minutes FROM source_configs"
+            )
+            for row in cur.fetchall():
+                st = str(row[0])
+                source_configs[st] = dict(row[1]) if isinstance(row[1], dict) else {}
+                source_health[st] = {
+                    "enabled": bool(row[2]),
+                    "last_synced_at": _iso(row[3]),
+                    "sync_interval_minutes": int(row[4]) if row[4] is not None else None,
+                }
+
+            # Most recent signal per GitHub repo path (source_id = "{repo}@{sha}")
+            cur.execute(
+                """SELECT DISTINCT ON (
+                       CASE WHEN signal_type = 'repo_update' THEN split_part(source_id, '@', 1) ELSE source_id END
+                   )
+                   source_type,
+                   CASE WHEN signal_type = 'repo_update' THEN split_part(source_id, '@', 1) ELSE source_id END AS entity,
+                   signal_type, title, detected_at, decision, decision_confidence
+                   FROM signals
+                   WHERE source_type = 'github'
+                   ORDER BY
+                       CASE WHEN signal_type = 'repo_update' THEN split_part(source_id, '@', 1) ELSE source_id END,
+                       detected_at DESC"""
+            )
+            latest_by_entity: dict[str, dict[str, Any]] = {}
+            for row in cur.fetchall():
+                entity = str(row[1])
+                latest_by_entity[entity] = {
+                    "signal_type": str(row[2]),
+                    "title": str(row[3]),
+                    "detected_at": _iso(row[4]),
+                    "decision": str(row[5]) if row[5] else None,
+                    "confidence": float(row[6]) if row[6] is not None else None,
+                }
+
+    # Build repos list from state (covers ECOSYSTEM_REPOS + extra_repos)
+    repos: list[dict[str, Any]] = []
+    for name, entry in sorted(state_repos.items(), key=lambda x: str(x[1].get("commit_date") or ""), reverse=True):
+        if not isinstance(entry, dict):
+            continue
+        repo_path = str(entry.get("repo") or "")
+        sha = str(entry.get("sha") or "")
+        repos.append({
+            "name": name,
+            "repo": repo_path,
+            "sha": sha[:12] if sha else None,
+            "commit_date": str(entry.get("commit_date") or ""),
+            "seen_at": str(entry.get("seen_at") or ""),
+            "recent_signal": latest_by_entity.get(repo_path),
+        })
+
+    # Build users list from state
+    users: list[dict[str, Any]] = []
+    for username, entry in sorted(state_users.items()):
+        if not isinstance(entry, dict):
+            continue
+        user_key = f"@{username}"
+        users.append({
+            "username": username,
+            "last_checked_at": str(entry.get("last_checked_at") or ""),
+            "recent_signal": latest_by_entity.get(user_key),
+        })
+
+    return {
+        "repos": repos,
+        "users": users,
+        "sources": [
+            {
+                "source_type": st,
+                **source_health.get(st, {}),
+                "config_summary": _summarize_source_config(st, source_configs.get(st, {})),
+            }
+            for st in sorted(source_health)
+        ],
+    }
+
+
+def _summarize_source_config(source_type: str, config: dict[str, Any]) -> dict[str, Any]:
+    if source_type == "github":
+        extra = config.get("extra_repos") or {}
+        users = config.get("github_users") or []
+        return {
+            "extra_repo_count": len(extra) if isinstance(extra, dict) else 0,
+            "user_count": len(users) if isinstance(users, list) else 0,
+        }
+    if source_type == "vibez":
+        return {
+            "api_endpoint": config.get("api_endpoint", ""),
+            "keyword_filter": config.get("keyword_filter") or [],
+        }
+    return {}
+
+
+def trigger_sync(config: PostgresConfig) -> dict[str, Any]:
+    """Run the intelligence sync pipeline and return a summary."""
+    import asyncio
+    from driftdriver.intelligence.sync import run_sync
+    summary = asyncio.run(run_sync(config))
+    return summary.as_dict()
