@@ -196,6 +196,35 @@ def render_dashboard_html() -> str:
     .section-header h2 {
       margin: 0;
     }
+    .repo-tag-badge {
+      display: inline-block;
+      margin-left: 0.3rem;
+      padding: 0.08rem 0.38rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-family: var(--mono);
+      cursor: pointer;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .repo-tag-badge:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+    .repo-tag-overflow {
+      display: inline-block;
+      margin-left: 0.3rem;
+      padding: 0.08rem 0.38rem;
+      border-radius: 999px;
+      background: var(--line);
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-family: var(--mono);
+      vertical-align: middle;
+      white-space: nowrap;
+    }
     .badge {
       display: inline-flex;
       align-items: center;
@@ -725,9 +754,300 @@ def render_dashboard_html() -> str:
     .activity-inline.no-activity { color: var(--line); }
     .activity-row td { padding-top: 0; padding-bottom: 0.4rem; border-top: none; }
     .activity-row { background: var(--panel); }
+
+    /* ── Repo Detail Panel ─────────────────────────────────────── */
+    .detail-panel {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 1.2rem 3rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+    .detail-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(255, 252, 245, 0.95);
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid var(--line);
+      padding: 0.75rem 0;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.65rem;
+    }
+    .detail-back-link {
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 0.25rem 0.55rem;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent-soft);
+      white-space: nowrap;
+    }
+    .detail-back-link:hover { background: var(--accent); color: #fff; }
+    .detail-repo-name {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--ink);
+      margin: 0;
+    }
+    .detail-role-badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-family: var(--mono);
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .detail-tag-badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-family: var(--mono);
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      background: #e8efe9;
+      color: #2f6e39;
+      border: 1px solid #b8d8bc;
+    }
+    .detail-editor-link {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      margin-left: auto;
+    }
+    .detail-editor-link:hover { color: var(--accent); }
+    .detail-section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.9rem;
+      box-shadow: 0 4px 10px rgba(24, 34, 28, 0.05);
+    }
+    .detail-section h2 {
+      margin: 0 0 0.6rem;
+      font-size: 0.88rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .detail-section-loading {
+      color: var(--muted);
+      font-style: italic;
+      font-size: 0.88rem;
+    }
+    .svc-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.7rem 0.9rem;
+      margin-bottom: 0.5rem;
+      background: #fff;
+      box-shadow: 0 2px 6px rgba(24, 34, 28, 0.04);
+    }
+    .svc-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.4rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+    .svc-status { white-space: nowrap; }
+    .svc-card-actions { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
+    .svc-btn {
+      font-size: 0.78rem;
+      padding: 0.22rem 0.7rem;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      cursor: pointer;
+      font-family: var(--mono);
+    }
+    .svc-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .svc-btn:disabled { opacity: 0.5; cursor: default; }
+    .svc-error { color: var(--bad); font-size: 0.78rem; margin-top: 0.3rem; }
+    .svc-cron-jobs { font-size: 0.82rem; font-family: var(--mono); color: var(--muted); }
+    .launch-row { margin-bottom: 0.5rem; }
+    .launch-row label { font-size: 0.84rem; margin-right: 0.4rem; }
+    .launch-row select { font-size: 0.84rem; padding: 0.2rem 0.4rem; border-radius: 6px; border: 1px solid var(--line); font-family: var(--mono); }
+    .launch-modes { margin: 0.5rem 0; }
+    .launch-mode-option { display: block; font-size: 0.84rem; margin-bottom: 0.35rem; cursor: pointer; line-height: 1.4; }
+    .launch-mode-option input { margin-right: 0.4rem; }
+    .launch-actions { margin-top: 0.6rem; }
+    #launch-btn { font-size: 0.84rem; padding: 0.35rem 1.2rem; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; font-weight: 600; }
+    #launch-btn:hover { opacity: 0.9; }
+    #launch-btn:disabled { opacity: 0.5; cursor: default; }
+    .launch-error-banner { background: #fef3c7; border: 1px solid #d97706; border-radius: 8px; padding: 0.5rem 0.8rem; margin-top: 0.5rem; font-size: 0.82rem; color: #92400e; }
+    .launch-error-banner code { font-family: var(--mono); font-size: 0.8rem; }
+    .detail-task-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #fff;
+      margin-right: 0.35rem;
+    }
+    .detail-task-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      margin-top: 0.5rem;
+    }
+    .detail-task-row {
+      display: flex;
+      align-items: baseline;
+      gap: 0.55rem;
+      font-size: 0.84rem;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .detail-task-row:last-child { border-bottom: none; }
+    .detail-task-id {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .detail-task-id:hover { color: var(--accent); }
+    .detail-task-status {
+      font-size: 0.72rem;
+      font-family: var(--mono);
+      padding: 0.08rem 0.35rem;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .detail-task-status.in-progress { background: var(--accent-soft); color: var(--accent); }
+    .detail-task-status.ready { background: #fffbea; color: #856404; }
+    .detail-commit-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      margin-top: 0.5rem;
+    }
+    .detail-commit-row {
+      display: flex;
+      gap: 0.6rem;
+      font-size: 0.82rem;
+      padding: 0.2rem 0;
+      border-bottom: 1px solid var(--line);
+      align-items: baseline;
+    }
+    .detail-commit-row:last-child { border-bottom: none; }
+    .detail-commit-hash {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .detail-commit-subject { flex: 1; }
+    .detail-commit-age { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+    .detail-summary-block {
+      font-style: italic;
+      color: var(--muted);
+      border-left: 3px solid var(--accent);
+      padding: 0.4rem 0.7rem;
+      margin-bottom: 0.6rem;
+      background: var(--accent-soft);
+      border-radius: 0 6px 6px 0;
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+    .detail-actor-row {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-size: 0.84rem;
+      padding: 0.3rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .detail-actor-row:last-child { border-bottom: none; }
+    @keyframes presencePulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.4); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    .detail-actor-dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--good);
+      flex-shrink: 0;
+    }
+    .detail-actor-dot.recent { animation: presencePulse 1.6s ease-in-out infinite; }
+    .detail-actor-dot.stale { background: #999; }
+    .detail-dep-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 0.4rem;
+    }
+    .detail-dep-col h3 {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin: 0 0 0.35rem;
+    }
+    .detail-dep-link {
+      display: block;
+      font-size: 0.84rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      padding: 0.15rem 0;
+    }
+    .detail-dep-link:hover { text-decoration: underline; }
+    .detail-findings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      margin-top: 0.35rem;
+    }
+    .detail-finding-row {
+      display: flex;
+      gap: 0.5rem;
+      font-size: 0.82rem;
+      padding: 0.2rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .detail-finding-row:last-child { border-bottom: none; }
+    .detail-tier-badge {
+      display: inline-block;
+      font-size: 0.74rem;
+      font-weight: 700;
+      padding: 0.12rem 0.45rem;
+      border-radius: 6px;
+      margin-right: 0.4rem;
+    }
+    .detail-tier-badge.healthy { background: #d4edda; color: var(--good); }
+    .detail-tier-badge.watch { background: #fff3cd; color: #856404; }
+    .detail-tier-badge.at-risk { background: #f7dfdf; color: var(--bad); }
+    .repo-name-link {
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .repo-name-link:hover { text-decoration: underline; color: var(--accent); }
   </style>
 </head>
 <body>
+  <div id="view-hub">
   <header>
     <h1>Speedrift Ecosystem Hub</h1>
     <div class="meta" id="meta">Loading ecosystem state…</div>
@@ -814,6 +1134,9 @@ def render_dashboard_html() -> str:
             <option value="risk">risk</option>
             <option value="watch">watch</option>
             <option value="healthy">healthy</option>
+          </select>
+          <select id="repo-tag-filter">
+            <option value="all">all tags</option>
           </select>
         </div>
         <table class="repo-table" id="repo-table">
@@ -961,6 +1284,93 @@ def render_dashboard_html() -> str:
       </div>
     </div><!-- end tab-intelligence -->
   </main>
+  </div><!-- end view-hub -->
+
+  <div id="view-repo-detail" hidden>
+    <div class="detail-panel">
+      <div class="detail-header" id="detail-header">
+        <a class="detail-back-link" onclick="closeRepoDetail(); return false;" href="/">\u2190 Back to Hub</a>
+        <h1 class="detail-repo-name" id="detail-repo-name">\u2014</h1>
+        <span id="detail-role-badge"></span>
+        <span id="detail-tags"></span>
+        <a class="detail-editor-link" id="detail-editor-link" href="#" target="_blank" style="display:none">\u29c9 Open in Editor</a>
+      </div>
+
+      <section class="detail-section" id="detail-git">
+        <h2>Git Activity</h2>
+        <div class="detail-section-loading" id="detail-git-content">Loading\u2026</div>
+      </section>
+
+      <section class="detail-section" id="detail-services">
+        <h2>Services</h2>
+        <div id="detail-services-content">
+          <p style="color:var(--muted);font-style:italic;font-size:0.88rem">Checking services\u2026</p>
+        </div>
+      </section>
+
+      <section class="detail-section" id="detail-workgraph">
+        <h2>Workgraph</h2>
+        <div id="detail-workgraph-content"><em style="color:var(--muted)">Loading\u2026</em></div>
+      </section>
+
+      <section class="detail-section" id="detail-agents">
+        <h2>Active Agents</h2>
+        <div id="detail-agents-content"><em style="color:var(--muted)">Loading\u2026</em></div>
+      </section>
+
+      <section class="detail-section" id="detail-agent-history">
+        <h2>Agent History</h2>
+        <div id="detail-agent-history-content"><em style="color:var(--muted)">Loading agent history\u2026</em></div>
+      </section>
+
+      <section class="detail-section" id="detail-deps">
+        <h2>Repo Dependencies</h2>
+        <div id="detail-deps-content"><em style="color:var(--muted)">Loading\u2026</em></div>
+      </section>
+
+      <section class="detail-section" id="detail-health">
+        <h2>Health</h2>
+        <div id="detail-health-content"><em style="color:var(--muted)">Loading\u2026</em></div>
+      </section>
+
+      <section class="detail-section" id="detail-launch">
+        <h2>Launch Agent</h2>
+        <div id="section-launch">
+          <div class="launch-row">
+            <label for="launch-agent-type">Agent type:</label>
+            <select id="launch-agent-type">
+              <option value="claude-code">Claude Code</option>
+              <option value="codex">Codex</option>
+              <option value="shell">Shell</option>
+            </select>
+          </div>
+          <div class="launch-modes">
+            <label class="launch-mode-option">
+              <input type="radio" name="launch-mode" value="fresh">
+              <strong>Fresh</strong> \u2014 Open a clean terminal in this repo. No context injected.
+            </label>
+            <label class="launch-mode-option">
+              <input type="radio" name="launch-mode" value="seeded" checked>
+              <strong>Context-seeded</strong> \u2014 Load recent commits + tasks as a prompt so the agent orients quickly.
+            </label>
+            <label class="launch-mode-option">
+              <input type="radio" name="launch-mode" value="continuation">
+              <strong>Continuation</strong> \u2014 Resume the last session\u2019s thread via continuation_intent.
+            </label>
+            <label class="launch-mode-option">
+              <input type="radio" name="launch-mode" value="resume">
+              <strong>Resume</strong> \u2014 Re-join a live session if one exists, otherwise fall back to context-seeded.
+            </label>
+          </div>
+          <div class="launch-actions">
+            <button id="launch-btn" onclick="launchAgent(detailRepo)">Launch \u2192</button>
+          </div>
+          <div id="launch-error" class="launch-error-banner" style="display:none"></div>
+        </div>
+      </section>
+    </div><!-- end detail-panel -->
+  </div><!-- end view-repo-detail -->
+
   <script>
     let ws = null;
     let pollTimer = null;
@@ -968,6 +1378,8 @@ def render_dashboard_html() -> str:
     let currentData = null;
     let selectedRepo = '';
     let expandedRepo = '';
+    let currentView = 'hub';   // 'hub' | 'repo-detail'
+    let detailRepo = '';
     let graphMode = 'active';
     let selectedNodeId = '';
     const graphView = {
@@ -986,10 +1398,15 @@ def render_dashboard_html() -> str:
     let repoStatusFilter = 'all';
     let repoDriftFilter = 'all';
     let repoHealthFilter = 'all';
+    let repoTagFilter = 'all';
     let repoSortCol = 'git';
     let repoSortAsc = false;
 
     function el(id) { return document.getElementById(id) || document.createElement('div'); }
+    function ahToggleExpand(div) {
+      var exp = div.querySelector('[data-ah-expand]');
+      if (exp) exp.style.display = exp.style.display === 'none' ? 'block' : 'none';
+    }
     function n(value) { return Number.isFinite(Number(value)) ? Number(value) : 0; }
     function esc(value) {
       return String(value || '')
@@ -1068,6 +1485,580 @@ def render_dashboard_html() -> str:
       }
     }
 
+    // ── Repo Detail Navigation ────────────────────────────────────
+    function showView(view) {
+      var hubEl = document.getElementById('view-hub');
+      var detailEl = document.getElementById('view-repo-detail');
+      if (!hubEl || !detailEl) return;
+      if (view === 'repo-detail') {
+        hubEl.hidden = true;
+        detailEl.hidden = false;
+      } else {
+        hubEl.hidden = false;
+        detailEl.hidden = true;
+      }
+      currentView = view;
+    }
+
+    function openRepoDetail(name) {
+      detailRepo = String(name || '');
+      if (!detailRepo) return;
+      showView('repo-detail');
+      var repo = repoByName(detailRepo);
+      renderRepoDetailHeader(repo);
+      renderRepoDetailWorkgraph(repo);
+      renderRepoDetailAgents(repo);
+      renderRepoDetailDeps(repo, currentData);
+      renderRepoDetailHealth(repo);
+      renderRepoDetailGit(null);
+      loadServiceCards(detailRepo);
+      fetchAndRenderRepoDetail(detailRepo);
+      initLaunchSection(detailRepo);
+      history.pushState({ view: 'repo-detail', repo: detailRepo }, '', '/repo/' + encodeURIComponent(detailRepo));
+    }
+
+    function closeRepoDetail() {
+      detailRepo = '';
+      showView('hub');
+      history.pushState({ view: 'hub' }, '', '/');
+    }
+
+    window.addEventListener('popstate', function(event) {
+      var state = event.state || {};
+      if (state.view === 'repo-detail' && state.repo) {
+        detailRepo = String(state.repo || '');
+        showView('repo-detail');
+        var repo = repoByName(detailRepo);
+        renderRepoDetailHeader(repo);
+        renderRepoDetailWorkgraph(repo);
+        renderRepoDetailAgents(repo);
+        renderRepoDetailDeps(repo, currentData);
+        renderRepoDetailHealth(repo);
+        loadServiceCards(detailRepo);
+        fetchAndRenderRepoDetail(detailRepo);
+        initLaunchSection(detailRepo);
+      } else {
+        detailRepo = '';
+        showView('hub');
+      }
+    });
+
+    // ── Repo Detail Render Functions ─────────────────────────────
+
+    async function fetchAndRenderRepoDetail(name) {
+      try {
+        var res = await fetch('/api/repo/' + encodeURIComponent(name));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var detail = await res.json();
+        renderRepoDetailHeader(repoByName(name), detail);
+        renderRepoDetailGit(detail);
+        renderRepoDetailWorkgraph(repoByName(name), detail);
+        renderRepoDetailAgents(repoByName(name), detail);
+        renderRepoDetailAgentHistory(detail);
+        renderRepoDetailDeps(repoByName(name), currentData, detail);
+        renderRepoDetailHealth(repoByName(name), detail);
+      } catch (err) {
+        console.warn('fetchAndRenderRepoDetail failed:', err);
+      }
+    }
+
+    function renderRepoDetailHeader(repo, detail) {
+      var name = (detail && detail.name) || (repo && repo.name) || detailRepo;
+      el('detail-repo-name').textContent = String(name || '');
+
+      var role = repo ? repoRole(repo) : ((detail && detail.ecosystem_role) || '');
+      var roleBadge = el('detail-role-badge');
+      roleBadge.innerHTML = role ? '<span class="detail-role-badge">' + esc(role) + '</span>' : '';
+
+      var tags = (detail && detail.tags) || (repo && repo.tags) || [];
+      var tagsEl = el('detail-tags');
+      if (Array.isArray(tags) && tags.length) {
+        tagsEl.innerHTML = tags.slice(0, 6).map(function(t) {
+          return '<span class="detail-tag-badge">' + esc(String(t)) + '</span>';
+        }).join(' ');
+      } else {
+        tagsEl.innerHTML = '';
+      }
+
+      var path = (detail && detail.path) || (repo && repo.path) || '';
+      var editorLink = el('detail-editor-link');
+      if (path) {
+        editorLink.href = 'cursor://open?path=' + encodeURIComponent(path);
+        editorLink.style.display = '';
+        editorLink.title = path;
+      } else {
+        editorLink.style.display = 'none';
+      }
+    }
+
+    function renderRepoDetailGit(detail) {
+      var content = el('detail-git-content');
+      if (!detail) {
+        content.innerHTML = '<div class="detail-section-loading">Loading\u2026</div>';
+        return;
+      }
+      var activity = detail.activity || {};
+      var git = detail.git || {};
+      var html = '';
+
+      var branch = esc(git.branch || 'n/a');
+      var dirty = git.dirty ? '<span class="warn">dirty</span>' : '<span class="good">clean</span>';
+      var ahead = Number(git.ahead || 0);
+      var behind = Number(git.behind || 0);
+      html += '<div style="margin-bottom:0.55rem;font-size:0.86rem">'
+        + 'Branch: <code>' + branch + '</code> \u00b7 ' + dirty
+        + (ahead ? ' \u00b7 <span class="good">+' + ahead + ' ahead</span>' : '')
+        + (behind ? ' \u00b7 <span class="warn">\u2212' + behind + ' behind</span>' : '')
+        + '</div>';
+
+      if (activity.summary) {
+        html += '<div class="detail-summary-block">' + esc(activity.summary) + '</div>';
+      } else if (!activity.last_commit_at) {
+        html += '<div class="detail-summary-block" style="color:var(--muted)">Summary pending next scan cycle.</div>';
+      }
+
+      var timeline = Array.isArray(activity.timeline) ? activity.timeline : [];
+      if (timeline.length) {
+        html += '<div class="detail-commit-list">';
+        timeline.slice(0, 10).forEach(function(c) {
+          html += '<div class="detail-commit-row">'
+            + '<span class="detail-commit-hash">' + esc(String(c.hash || '').substring(0, 7)) + '</span>'
+            + '<span class="detail-commit-subject">' + esc(c.subject || '') + '</span>'
+            + '<span class="detail-commit-age">' + esc(relativeTimeIso(c.timestamp)) + '</span>'
+            + '</div>';
+        });
+        html += '</div>';
+      } else if (activity.last_commit_at) {
+        html += '<div style="font-size:0.84rem;color:var(--muted)">Last commit: '
+          + esc(relativeTimeIso(activity.last_commit_at)) + '</div>';
+      } else {
+        html += '<div style="font-size:0.84rem;color:var(--muted)">No recent git activity (7+ days)</div>';
+      }
+
+      content.innerHTML = html;
+    }
+
+    async function loadServiceCards(repoName) {
+      var container = el('detail-services-content');
+      if (!container) return;
+      container.innerHTML = '<p style="color:var(--muted);font-style:italic;font-size:0.88rem">Checking services\u2026</p>';
+      try {
+        var resp = await fetch('/api/repo/' + encodeURIComponent(repoName) + '/services');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var data = await resp.json();
+        renderServiceCards(repoName, data, container);
+      } catch (err) {
+        container.innerHTML = '<p style="color:var(--muted);font-size:0.88rem">Could not load services: ' + esc(String(err)) + '</p>';
+      }
+    }
+
+    function _svcBtn(label, repoName, serviceType, action, plistPath) {
+      var onclick = 'serviceAction(' + JSON.stringify(repoName) + ',' + JSON.stringify(serviceType)
+        + ',' + JSON.stringify(action) + ',' + (plistPath ? JSON.stringify(plistPath) : 'null') + ',this)';
+      return '<button class="svc-btn" onclick="' + escAttr(onclick) + '">' + esc(label) + '</button>';
+    }
+
+    function renderServiceCards(repoName, data, container) {
+      var wg = data.workgraph || {};
+      var launchd = data.launchd || [];
+      var cron = data.cron || {};
+      var html = '';
+      var anyCard = false;
+
+      if (wg.present) {
+        anyCard = true;
+        var dot = wg.status === 'running'
+          ? '<span style="color:#22c55e">\u25cf</span>'
+          : '<span style="color:#6b7280">\u25cb</span>';
+        var statusLabel = wg.status === 'running' ? 'Running' : 'Stopped';
+        var btn = wg.status === 'running'
+          ? _svcBtn('Stop', repoName, 'workgraph', 'stop', null)
+          : _svcBtn('Start', repoName, 'workgraph', 'start', null);
+        html += '<div class="svc-card">'
+          + '<div class="svc-card-header"><span>\u2699 Workgraph Service</span><span class="svc-status">' + dot + ' ' + statusLabel + '</span></div>'
+          + '<div class="svc-card-actions">' + btn + '</div>'
+          + '<div class="svc-error" style="display:none"></div>'
+          + '</div>';
+      }
+
+      launchd.forEach(function(svc) {
+        anyCard = true;
+        var dot = svc.status === 'running'
+          ? '<span style="color:#22c55e">\u25cf</span>'
+          : '<span style="color:#6b7280">\u25cb</span>';
+        var statusLabel = svc.status === 'running' ? 'Running' : 'Stopped';
+        var btns = '';
+        if (svc.status === 'running') {
+          btns = _svcBtn('Stop', repoName, 'launchd', 'stop', svc.plist_path)
+            + ' ' + _svcBtn('Restart', repoName, 'launchd', 'restart', svc.plist_path);
+        } else {
+          btns = _svcBtn('Start', repoName, 'launchd', 'start', svc.plist_path);
+        }
+        html += '<div class="svc-card">'
+          + '<div class="svc-card-header"><span>\u25a0 launchd<br><code style="color:var(--muted);font-size:0.78rem">' + esc(svc.label) + '</code></span>'
+          + '<span class="svc-status">' + dot + ' ' + statusLabel + '</span></div>'
+          + '<div class="svc-card-actions">' + btns + '</div>'
+          + '<div class="svc-error" style="display:none"></div>'
+          + '</div>';
+      });
+
+      var cronJobs = (cron.jobs || []);
+      if (cronJobs.length > 0) {
+        anyCard = true;
+        var jobLines = cronJobs.map(function(j) { return '<code>' + esc(j) + '</code>'; }).join('<br>');
+        html += '<div class="svc-card">'
+          + '<div class="svc-card-header"><span>\u23f1 Cron Jobs</span><span style="color:var(--muted);font-size:0.78rem">(read-only)</span></div>'
+          + '<div class="svc-cron-jobs">' + jobLines + '</div>'
+          + '</div>';
+      }
+
+      container.innerHTML = anyCard ? html : '<p style="color:var(--muted);font-size:0.88rem">No services detected.</p>';
+    }
+
+    async function serviceAction(repoName, serviceType, action, plistPath, btn) {
+      var card = btn.closest('.svc-card');
+      var errDiv = card ? card.querySelector('.svc-error') : null;
+      btn.disabled = true;
+      var origText = btn.textContent;
+      btn.textContent = 'Working\u2026';
+      if (errDiv) { errDiv.style.display = 'none'; errDiv.textContent = ''; }
+      try {
+        var url = '/api/repo/' + encodeURIComponent(repoName) + '/service/' + serviceType + '/' + action;
+        var body = plistPath ? JSON.stringify({ plist_path: plistPath }) : '{}';
+        var resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body });
+        var data = await resp.json();
+        if (!resp.ok || data.error) {
+          var msg = data.stderr || data.message || data.error || ('HTTP ' + resp.status);
+          if (errDiv) { errDiv.textContent = 'Error: ' + String(msg).slice(0, 100); errDiv.style.display = 'block'; }
+        }
+      } catch (err) {
+        if (errDiv) { errDiv.textContent = 'Error: ' + String(err); errDiv.style.display = 'block'; }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+        loadServiceCards(repoName);
+      }
+    }
+
+    // ── Launch Agent ─────────────────────────────────────────────
+    function initLaunchSection(repoName) {
+      var section = el('section-launch');
+      if (!section) return;
+      var savedMode = localStorage.getItem('hub_launch_mode_' + repoName) || 'seeded';
+      var modeInput = section.querySelector('input[name="launch-mode"][value="' + savedMode + '"]');
+      if (modeInput) modeInput.checked = true;
+    }
+
+    async function launchAgent(repoName) {
+      var section = el('section-launch');
+      if (!section) return;
+      var agentSelect = section.querySelector('#launch-agent-type');
+      var modeInputs = section.querySelectorAll('input[name="launch-mode"]');
+      var btn = section.querySelector('#launch-btn');
+      var errDiv = section.querySelector('#launch-error');
+      var agentType = agentSelect ? agentSelect.value : 'claude-code';
+      var mode = 'fresh';
+      modeInputs.forEach(function(inp) { if (inp.checked) mode = inp.value; });
+      localStorage.setItem('hub_launch_mode_' + repoName, mode);
+      btn.disabled = true;
+      var origText = btn.textContent;
+      btn.textContent = 'Launching\u2026';
+      if (errDiv) { errDiv.style.display = 'none'; errDiv.textContent = ''; }
+      try {
+        var resp = await fetch('/api/repo/' + encodeURIComponent(repoName) + '/launch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: mode, agent_type: agentType }),
+        });
+        var data = await resp.json();
+        if (!resp.ok || data.error) {
+          var msg = data.message || data.error || ('HTTP ' + resp.status);
+          if (errDiv) {
+            errDiv.innerHTML = '<strong>Error:</strong> ' + esc(msg);
+            if (data.error === 'freshell_unavailable') {
+              errDiv.innerHTML += '<br><code>npm start</code> in the freshell directory, or check the launchd service.';
+            }
+            errDiv.style.display = 'block';
+          }
+          return;
+        }
+        if (data.session_url) {
+          if (data.resumed) btn.textContent = 'Resuming\u2026';
+          window.open(data.session_url, '_blank');
+        }
+      } catch (err) {
+        if (errDiv) {
+          errDiv.textContent = 'Error: ' + String(err);
+          errDiv.style.display = 'block';
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    }
+
+    function renderRepoDetailWorkgraph(repo, detail) {
+      var content = el('detail-workgraph-content');
+      var wg = (detail && detail.workgraph) || {};
+      var exists = wg.exists != null ? wg.exists : (repo && repo.workgraph_exists);
+      if (!exists) {
+        content.innerHTML = '<em style="color:var(--muted)">No workgraph in this repo.</em>';
+        return;
+      }
+      var counts = wg.task_counts || (repo && repo.task_counts) || {};
+      var inProgress = Array.isArray(wg.in_progress) ? wg.in_progress : (repo ? (repo.in_progress || []) : []);
+      var ready = Array.isArray(wg.ready) ? wg.ready : (repo ? (repo.ready || []) : []);
+
+      var pillsHtml = ''
+        + _taskCountPill('Open', counts.open || 0)
+        + _taskCountPill('Ready', counts.ready || 0)
+        + _taskCountPill('In Progress', counts.in_progress || 0)
+        + _taskCountPill('Done', counts.done || 0);
+
+      var tasksHtml = '';
+      if (inProgress.length || ready.length) {
+        tasksHtml = '<div class="detail-task-list">';
+        inProgress.slice(0, 5).forEach(function(t) {
+          tasksHtml += _taskRow(t, 'in-progress');
+        });
+        ready.slice(0, Math.max(0, 5 - inProgress.length)).forEach(function(t) {
+          tasksHtml += _taskRow(t, 'ready');
+        });
+        tasksHtml += '</div>';
+      }
+
+      content.innerHTML = '<div style="margin-bottom:0.5rem">' + pillsHtml + '</div>' + tasksHtml;
+    }
+
+    function _taskCountPill(label, count) {
+      return '<span class="detail-task-pill"><strong>' + esc(String(count)) + '</strong> ' + esc(label) + '</span>';
+    }
+
+    function _taskRow(task, status) {
+      var id = esc(String(task.id || ''));
+      var title = esc(String(task.title || ''));
+      var cls = status === 'in-progress' ? 'in-progress' : 'ready';
+      return '<div class="detail-task-row">'
+        + '<span class="detail-task-id" onclick="navigator.clipboard && navigator.clipboard.writeText(' + JSON.stringify(String(task.id || '')) + ')" title="Click to copy">' + id + '</span>'
+        + '<span style="flex:1">' + title + '</span>'
+        + '<span class="detail-task-status ' + cls + '">' + esc(status) + '</span>'
+        + '</div>';
+    }
+
+    function renderRepoDetailAgents(repo, detail) {
+      var content = el('detail-agents-content');
+      var actors = (detail && detail.presence_actors) || (repo && repo.presence_actors) || [];
+      if (!actors.length) {
+        content.innerHTML = '<em style="color:var(--muted)">No active agents.</em>';
+        return;
+      }
+      var now = Date.now();
+      content.innerHTML = '<div>' + actors.map(function(actor) {
+        var lastSeen = actor.last_seen ? new Date(actor.last_seen).getTime() : 0;
+        var ageMs = lastSeen ? now - lastSeen : Infinity;
+        var recentClass = ageMs < 5 * 60 * 1000 ? 'recent' : 'stale';
+        return '<div class="detail-actor-row">'
+          + '<span class="detail-actor-dot ' + recentClass + '"></span>'
+          + '<strong>' + esc(String(actor.name || actor.id || '')) + '</strong>'
+          + '<span style="color:var(--muted);font-size:0.78rem;font-family:var(--mono)">' + esc(String(actor.id || '')) + '</span>'
+          + '<span style="margin-left:auto;color:var(--muted);font-size:0.78rem">'
+          + (actor.last_seen ? 'last seen ' + relativeTimeIso(actor.last_seen) : '') + '</span>'
+          + '</div>';
+      }).join('') + '</div>';
+    }
+
+    function renderRepoDetailAgentHistory(detail) {
+      var content = el('detail-agent-history-content');
+      var history = detail && detail.agent_history;
+      if (!history || !history.sessions || !history.sessions.length) {
+        content.innerHTML = '<em style="color:var(--muted)">No session history recorded. Sessions appear here after an agent runs <code>driftdriver install</code> in this repo.</em>';
+        return;
+      }
+      var sessions = history.sessions;
+      var total = history.total_sessions_in_file || sessions.length;
+      var since = history.history_since ? new Date(history.history_since).toLocaleDateString() : null;
+
+      var OUTCOME_DOT = {
+        clean_exit: '<span style="color:#22c55e;font-size:1.1em">\u25cf</span>',
+        crashed:    '<span style="color:#ef4444;font-size:1.1em">\u25cf</span>',
+        stalled:    '<span style="color:#f59e0b;font-size:1.1em">\u25cf</span>',
+        unknown:    '<span style="color:#6b7280;font-size:1.1em">\u25cf</span>',
+        still_running: '<span style="color:#22c55e;font-size:1.1em;animation:pulse 1.5s infinite">\u25cf</span>'
+      };
+      var OUTCOME_LABEL = {
+        clean_exit: 'clean exit', crashed: 'crashed', stalled: 'stalled',
+        unknown: 'unknown', still_running: 'still running'
+      };
+
+      function fmtDuration(secs) {
+        if (secs == null) return '';
+        if (secs < 60) return secs + 's';
+        var m = Math.round(secs / 60);
+        if (m < 60) return m + 'm';
+        var h = Math.floor(m / 60), rm = m % 60;
+        return rm > 0 ? h + 'h ' + rm + 'm' : h + 'h';
+      }
+
+      var html = '<div style="font-size:0.82rem;color:var(--muted);margin-bottom:0.5rem">'
+        + sessions.length + ' session' + (sessions.length !== 1 ? 's' : '') + '</div>';
+
+      sessions.forEach(function(s, idx) {
+        var dot = OUTCOME_DOT[s.outcome] || OUTCOME_DOT.unknown;
+        var label = OUTCOME_LABEL[s.outcome] || s.outcome;
+        var dur = s.duration_seconds != null ? fmtDuration(s.duration_seconds) : '';
+        var taskCount = (s.tasks_completed || []).length;
+        var commitCount = s.commits_in_window || 0;
+        var titles = (s.task_titles || []).join(', ');
+        var titlesStr = titles.length > 120 ? titles.slice(0, 117) + '\u2026' : titles;
+        var agentBadge = '<code style="font-size:0.78rem;padding:0.1rem 0.35rem;background:var(--card-bg,#1e293b);border-radius:3px">' + esc(s.agent_type || 'unknown') + '</code>';
+        var timeAgo = relativeTimeIso(s.started_at);
+
+        html += '<div style="padding:0.35rem 0;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer" onclick="ahToggleExpand(this)">'
+          + '<div style="display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap">'
+          + dot + ' ' + agentBadge
+          + ' <span style="color:var(--muted)">\u00b7 ' + esc(timeAgo) + '</span>'
+          + (dur ? ' <span style="color:var(--muted)">\u00b7 ' + esc(dur) + '</span>' : '')
+          + ' <span style="color:var(--muted)">\u00b7 ' + esc(label) + '</span>'
+          + ' <span style="color:var(--muted)">\u00b7 ' + taskCount + ' task' + (taskCount !== 1 ? 's' : '') + '</span>'
+          + ' <span style="color:var(--muted)">\u00b7 ' + commitCount + ' commit' + (commitCount !== 1 ? 's' : '') + '</span>'
+          + '</div>';
+        if (titlesStr) {
+          html += '<div style="color:var(--muted);font-size:0.78rem;padding-left:1.5rem">' + esc(titlesStr) + '</div>';
+        }
+        // Expanded detail (hidden by default)
+        var fullTasks = (s.tasks_completed || []).map(function(id, ti) {
+          var t = (s.task_titles || [])[ti];
+          return t ? esc(id) + ': ' + esc(t) : esc(id);
+        }).join('<br>');
+        html += '<div data-ah-expand style="display:none;padding:0.3rem 0 0.3rem 1.5rem;font-size:0.78rem">'
+          + '<div style="color:var(--muted)">Session: ' + esc(s.session_id) + '</div>'
+          + (fullTasks ? '<div style="color:var(--muted)">Tasks:<br>' + fullTasks + '</div>' : '')
+          + '<div style="color:var(--muted)">Outcome: ' + esc(label) + '</div>'
+          + '</div>';
+        html += '</div>';
+      });
+
+      if (total > sessions.length) {
+        var sinceStr = since ? ' \u00b7 History since ' + since : '';
+        html += '<div style="color:var(--muted);font-size:0.78rem;margin-top:0.5rem">Showing ' + sessions.length + ' of ' + total + ' sessions' + sinceStr + '</div>';
+      }
+
+      content.innerHTML = html;
+    }
+
+    function renderRepoDetailDeps(repo, data, detail) {
+      var content = el('detail-deps-content');
+      var depSection = (detail && detail.dependencies) || null;
+
+      var dependsOn = [];
+      var dependedOnBy = [];
+
+      if (depSection) {
+        dependsOn = Array.isArray(depSection.depends_on) ? depSection.depends_on : [];
+        dependedOnBy = Array.isArray(depSection.depended_on_by) ? depSection.depended_on_by : [];
+      } else if (repo) {
+        var rawDeps = Array.isArray(repo.cross_repo_dependencies) ? repo.cross_repo_dependencies : [];
+        dependsOn = rawDeps.map(function(d) { return String(d.repo || ''); }).filter(Boolean);
+        if (data && Array.isArray(data.repos)) {
+          var repoName = String(repo.name || '');
+          data.repos.forEach(function(other) {
+            if (!other || String(other.name || '') === repoName) return;
+            var otherDeps = Array.isArray(other.cross_repo_dependencies)
+              ? other.cross_repo_dependencies.map(function(d) { return String(d.repo || ''); })
+              : [];
+            if (otherDeps.includes(repoName)) dependedOnBy.push(String(other.name || ''));
+          });
+        }
+      }
+
+      if (!dependsOn.length && !dependedOnBy.length) {
+        content.innerHTML = '<em style="color:var(--muted)">No cross-repo dependencies recorded.</em>';
+        return;
+      }
+
+      function depLink(name) {
+        return '<a class="detail-dep-link" onclick="openRepoDetail(' + JSON.stringify(name) + '); return false;" href="/repo/' + encodeURIComponent(name) + '">' + esc(name) + '</a>';
+      }
+
+      content.innerHTML = '<div class="detail-dep-cols">'
+        + '<div class="detail-dep-col"><h3>Depends on</h3>'
+        + (dependsOn.length ? dependsOn.map(depLink).join('') : '<em style="color:var(--muted)">None</em>')
+        + '</div>'
+        + '<div class="detail-dep-col"><h3>Depended on by</h3>'
+        + (dependedOnBy.length ? dependedOnBy.map(depLink).join('') : '<em style="color:var(--muted)">None</em>')
+        + '</div>'
+        + '</div>';
+    }
+
+    function renderRepoDetailHealth(repo, detail) {
+      var content = el('detail-health-content');
+      var health = (detail && detail.health) || {};
+      var northstar = (repo && repo.northstar) || {};
+
+      var driftScore = health.drift_score != null ? health.drift_score : northstar.score;
+      var driftTier = String(health.drift_tier || northstar.tier || '').toLowerCase();
+      var secFindings = Array.isArray(health.security_findings) ? health.security_findings : (repo && Array.isArray(repo.security_findings) ? repo.security_findings : []);
+      var qaFindings = Array.isArray(health.quality_findings) ? health.quality_findings : (repo && Array.isArray(repo.quality_findings) ? repo.quality_findings : []);
+      var stalled = health.stalled != null ? health.stalled : (repo && repo.stalled);
+      var stallReasons = Array.isArray(health.stall_reasons) ? health.stall_reasons : (repo && repo.stall_reasons) || [];
+      var narrative = String(health.narrative || (repo && repo.narrative) || '');
+
+      var html = '';
+
+      var tierCls = driftTier === 'healthy' ? 'healthy' : (driftTier === 'watch' ? 'watch' : 'at-risk');
+      if (driftScore != null || driftTier) {
+        html += '<div style="margin-bottom:0.55rem">';
+        if (driftTier) html += '<span class="detail-tier-badge ' + tierCls + '">' + esc(driftTier.toUpperCase()) + '</span>';
+        if (driftScore != null) html += '<span style="font-family:var(--mono);font-size:0.88rem">Score: ' + esc(String(Number(driftScore).toFixed(2))) + '</span>';
+        html += '</div>';
+      } else {
+        html += '<div style="color:var(--muted);margin-bottom:0.5rem">No drift data.</div>';
+      }
+
+      if (stalled) {
+        html += '<div style="margin-bottom:0.55rem">'
+          + '<span class="stall-badge">STALLED</span>'
+          + (stallReasons.length ? '<ul style="margin:0.25rem 0 0 1.2rem;padding:0">' + stallReasons.map(function(r) { return '<li>' + esc(String(r)) + '</li>'; }).join('') + '</ul>' : '')
+          + '</div>';
+      }
+
+      html += '<div style="margin-bottom:0.5rem"><strong>Security:</strong> ';
+      if (!secFindings.length) {
+        html += '<span class="good">No security findings.</span>';
+      } else {
+        html += '<span class="bad">' + secFindings.length + ' finding' + (secFindings.length !== 1 ? 's' : '') + '</span>';
+        html += '<div class="detail-findings-list">';
+        secFindings.slice(0, 5).forEach(function(f) {
+          var sev = String(f.severity || '').toLowerCase();
+          var cls = sev === 'critical' || sev === 'high' ? 'severity-high' : (sev === 'medium' ? 'severity-medium' : 'severity-low');
+          html += '<div class="detail-finding-row"><span class="' + cls + '">' + esc(sev) + '</span><span>' + esc(String(f.message || f.description || '')) + '</span></div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+
+      html += '<div style="margin-bottom:0.5rem"><strong>Quality:</strong> ';
+      if (!qaFindings.length) {
+        html += '<span class="good">No quality findings.</span>';
+      } else {
+        html += '<span class="warn">' + qaFindings.length + ' finding' + (qaFindings.length !== 1 ? 's' : '') + '</span>';
+        html += '<div class="detail-findings-list">';
+        qaFindings.slice(0, 5).forEach(function(f) {
+          var sev = String(f.severity || '').toLowerCase();
+          var cls = sev === 'high' ? 'severity-high' : (sev === 'medium' ? 'severity-medium' : 'severity-low');
+          html += '<div class="detail-finding-row"><span class="' + cls + '">' + esc(sev) + '</span><span>' + esc(String(f.message || f.description || '')) + '</span></div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+
+      if (narrative) {
+        html += '<div style="margin-top:0.5rem;font-size:0.88rem;line-height:1.5;color:var(--ink)">' + esc(narrative) + '</div>';
+      }
+
+      content.innerHTML = html;
+    }
+
     function syncFiltersToUrl() {
       var params = new URLSearchParams();
       if (repoSearchText) params.set('q', repoSearchText);
@@ -1075,6 +2066,7 @@ def render_dashboard_html() -> str:
       if (repoStatusFilter !== 'all') params.set('status', repoStatusFilter);
       if (repoDriftFilter !== 'all') params.set('drift', repoDriftFilter);
       if (repoHealthFilter !== 'all') params.set('health', repoHealthFilter);
+      if (repoTagFilter !== 'all') params.set('tag', repoTagFilter);
       var qs = params.toString();
       var url = qs ? '?' + qs : window.location.pathname;
       window.history.replaceState({}, '', url);
@@ -1087,11 +2079,13 @@ def render_dashboard_html() -> str:
       repoStatusFilter = params.get('status') || 'all';
       repoDriftFilter = params.get('drift') || 'all';
       repoHealthFilter = params.get('health') || 'all';
+      repoTagFilter = params.get('tag') || 'all';
       el('repo-search').value = repoSearchText;
       el('repo-role-filter').value = repoRoleFilter;
       el('repo-status-filter').value = repoStatusFilter;
       el('repo-drift-filter').value = repoDriftFilter;
       el('repo-health-filter').value = repoHealthFilter;
+      el('repo-tag-filter').value = repoTagFilter;
     }
 
     function needsHumanBadge(repo) {
@@ -1099,6 +2093,20 @@ def render_dashboard_html() -> str:
       if (String(ci.intent || '') !== 'needs_human') return '';
       var reason = esc(String(ci.reason || 'decision needed').substring(0, 60));
       return '<span class="stall-badge" title="' + escAttr(reason) + '" style="background:#f3e8d0;color:#934e1c;margin-left:0.4rem">NEEDS HUMAN</span>';
+    }
+
+    function tagBadgesHtml(repo) {
+      var tags = Array.isArray(repo.tags) ? repo.tags : [];
+      if (!tags.length) return '';
+      var visible = tags.slice(0, 3);
+      var overflow = tags.length - visible.length;
+      var html = visible.map(function(t) {
+        return '<span class="repo-tag-badge" data-tag="' + escAttr(t) + '">' + esc(t) + '</span>';
+      }).join('');
+      if (overflow > 0) {
+        html += '<span class="repo-tag-overflow">+' + overflow + '</span>';
+      }
+      return html;
     }
 
     function qualityPill(repo) {
@@ -1611,6 +2619,10 @@ def render_dashboard_html() -> str:
         var health = qualityPill(repo)[0];
         if (health !== repoHealthFilter) return false;
       }
+      if (repoTagFilter !== 'all') {
+        var tags = Array.isArray(repo.tags) ? repo.tags : [];
+        if (tags.indexOf(repoTagFilter) === -1) return false;
+      }
       return true;
     }
 
@@ -1666,6 +2678,21 @@ def render_dashboard_html() -> str:
 
     function renderRepoTable(data) {
       var allRepos = Array.isArray(data.repos) ? data.repos : [];
+
+      // Build sorted unique tag list from all repos
+      var tagSet = {};
+      allRepos.forEach(function(repo) {
+        var tags = Array.isArray(repo.tags) ? repo.tags : [];
+        tags.forEach(function(t) { tagSet[String(t)] = true; });
+      });
+      var allTags = Object.keys(tagSet).sort();
+      var tagSelect = el('repo-tag-filter');
+      var currentTagVal = tagSelect.value || 'all';
+      tagSelect.innerHTML = '<option value="all">all tags</option>'
+        + allTags.map(function(t) {
+            return '<option value="' + escAttr(t) + '"' + (currentTagVal === t ? ' selected' : '') + '>' + esc(t) + '</option>';
+          }).join('');
+
       var filtered = allRepos.filter(repoMatchesFilters);
 
       filtered.sort(function(a, b) {
@@ -1747,7 +2774,7 @@ def render_dashboard_html() -> str:
 
         rows.push(
           '<tr class="repo-row' + selectedClass + '" data-repo-name="' + escAttr(repoName) + '"' + selectedAttr + '>'
-          + '<td><strong>' + esc(repoName) + '</strong>' + needsHumanBadge(repo) + '</td>'
+          + '<td><a class="repo-name-link" href="/repo/' + encodeURIComponent(repoName) + '" onclick="openRepoDetail(' + JSON.stringify(repoName) + '); return false;">' + esc(repoName) + '</a>' + needsHumanBadge(repo) + tagBadgesHtml(repo) + '</td>'
           + '<td>' + esc(role || '\u2014') + '</td>'
           + '<td><span class="status-dot ' + status + '"></span></td>'
           + '<td>' + driftHtml + '</td>'
@@ -2187,6 +3214,14 @@ def render_dashboard_html() -> str:
       renderRepoTable(data);
       drawRepoDependencyOverview(data);
       drawExpandedRepoGraph();
+
+      // On initial load, check if URL is /repo/<name> and open detail
+      if (currentView === 'hub' && !detailRepo) {
+        var _initRoute = window.location.pathname.match(/^\\/repo\\/(.+)$/);
+        if (_initRoute) {
+          openRepoDetail(decodeURIComponent(_initRoute[1]));
+        }
+      }
     }
 
     async function refreshHttp() {
@@ -2338,6 +3373,11 @@ def render_dashboard_html() -> str:
       if (currentData) renderRepoTable(currentData);
       syncFiltersToUrl();
     });
+    el('repo-tag-filter').addEventListener('change', function(e) {
+      repoTagFilter = String(e.target.value || 'all');
+      if (currentData) renderRepoTable(currentData);
+      syncFiltersToUrl();
+    });
 
     function updateSortHeaders() {
       el('repo-table').querySelectorAll('th[data-sort]').forEach(function(th) {
@@ -2367,6 +3407,26 @@ def render_dashboard_html() -> str:
     updateSortHeaders();
 
     el('repo-body').addEventListener('click', function(e) {
+      var nameLink = e.target.closest('.repo-name-link');
+      if (nameLink) {
+        e.preventDefault();
+        e.stopPropagation();
+        var rn = nameLink.getAttribute('href') || '';
+        var match = rn.match(/^\/repo\/(.+)$/);
+        if (match) openRepoDetail(decodeURIComponent(match[1]));
+        return;
+      }
+      var badge = e.target.closest('.repo-tag-badge');
+      if (badge) {
+        var tag = String(badge.getAttribute('data-tag') || '');
+        if (tag) {
+          repoTagFilter = tag;
+          el('repo-tag-filter').value = tag;
+          if (currentData) renderRepoTable(currentData);
+          syncFiltersToUrl();
+          return;
+        }
+      }
       var startBtn = e.target.closest('[data-start-repo]');
       if (startBtn) {
         e.stopPropagation();

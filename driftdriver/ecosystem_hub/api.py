@@ -19,8 +19,14 @@ from driftdriver.control_plane import (
 )
 
 from .activity_cache import read_activity_digest
+from .agent_history import build_agent_history as _build_agent_history
 from .dashboard import render_dashboard_html
 from .discovery import _read_json
+from .services import detect_services as _detect_services, _validate_plist_path
+from .session_launcher import (
+    FreshellUnavailableError as _FreshellUnavailableError,
+    launch_session as _launch_session,
+)
 from .intelligence_api import (
     approve_signal,
     batch_approve_signals,
@@ -405,6 +411,231 @@ class _HubHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"error": str(exc), "repo": repo_name}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
+
+        # --- Workgraph service start (new route alias) ---
+        if route.startswith("/api/repo/") and route.endswith("/service/workgraph/start"):
+            repo_name = route[len("/api/repo/"):-len("/service/workgraph/start")]
+            if not repo_name:
+                self._send_json({"error": "missing_repo_name"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            repo_path = self._find_repo_path(repo_name)
+            if not repo_path or not Path(repo_path).is_dir():
+                self._send_json({"error": "repo_not_found", "repo": repo_name}, status=HTTPStatus.NOT_FOUND)
+                return
+            if not (Path(repo_path) / ".workgraph").is_dir():
+                self._send_json({"error": "no_workgraph", "repo": repo_name}, status=HTTPStatus.BAD_REQUEST)
+                return
+            import subprocess as _sp
+            try:
+                result = _sp.run(  # noqa: S603
+                    ["wg", "service", "start"],
+                    cwd=repo_path, capture_output=True, text=True, timeout=15,
+                )
+                self._send_json({
+                    "repo": repo_name, "action": "workgraph/start",
+                    "returncode": result.returncode,
+                    "stdout": result.stdout[:500], "stderr": result.stderr[:500],
+                })
+            except Exception as exc:
+                self._send_json({"error": str(exc), "repo": repo_name}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        # --- Workgraph service stop ---
+        if route.startswith("/api/repo/") and route.endswith("/service/workgraph/stop"):
+            repo_name = route[len("/api/repo/"):-len("/service/workgraph/stop")]
+            if not repo_name:
+                self._send_json({"error": "missing_repo_name"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            repo_path = self._find_repo_path(repo_name)
+            if not repo_path or not Path(repo_path).is_dir():
+                self._send_json({"error": "repo_not_found", "repo": repo_name}, status=HTTPStatus.NOT_FOUND)
+                return
+            if not (Path(repo_path) / ".workgraph").is_dir():
+                self._send_json({"error": "no_workgraph", "repo": repo_name}, status=HTTPStatus.BAD_REQUEST)
+                return
+            import subprocess as _sp
+            try:
+                result = _sp.run(  # noqa: S603
+                    ["wg", "service", "stop"],
+                    cwd=repo_path, capture_output=True, text=True, timeout=15,
+                )
+                self._send_json({
+                    "repo": repo_name, "action": "workgraph/stop",
+                    "returncode": result.returncode,
+                    "stdout": result.stdout[:500], "stderr": result.stderr[:500],
+                })
+            except Exception as exc:
+                self._send_json({"error": str(exc), "repo": repo_name}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        # --- launchd start ---
+        if route.startswith("/api/repo/") and route.endswith("/service/launchd/start"):
+            repo_name = route[len("/api/repo/"):-len("/service/launchd/start")]
+            body = self._read_body()
+            try:
+                body_data = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            plist_path = str(body_data.get("plist_path") or "")
+            if not plist_path or not _validate_plist_path(plist_path):
+                self._send_json({"error": "invalid_plist_path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            import subprocess as _sp
+            try:
+                result = _sp.run(  # noqa: S603
+                    ["launchctl", "load", plist_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self._send_json({
+                    "repo": repo_name, "action": "launchd/start",
+                    "plist_path": plist_path,
+                    "returncode": result.returncode,
+                    "stdout": result.stdout[:500], "stderr": result.stderr[:500],
+                })
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        # --- launchd stop ---
+        if route.startswith("/api/repo/") and route.endswith("/service/launchd/stop"):
+            repo_name = route[len("/api/repo/"):-len("/service/launchd/stop")]
+            body = self._read_body()
+            try:
+                body_data = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            plist_path = str(body_data.get("plist_path") or "")
+            if not plist_path or not _validate_plist_path(plist_path):
+                self._send_json({"error": "invalid_plist_path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            import subprocess as _sp
+            try:
+                result = _sp.run(  # noqa: S603
+                    ["launchctl", "unload", plist_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self._send_json({
+                    "repo": repo_name, "action": "launchd/stop",
+                    "plist_path": plist_path,
+                    "returncode": result.returncode,
+                    "stdout": result.stdout[:500], "stderr": result.stderr[:500],
+                })
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        # --- launchd restart ---
+        if route.startswith("/api/repo/") and route.endswith("/service/launchd/restart"):
+            repo_name = route[len("/api/repo/"):-len("/service/launchd/restart")]
+            body = self._read_body()
+            try:
+                body_data = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            plist_path = str(body_data.get("plist_path") or "")
+            if not plist_path or not _validate_plist_path(plist_path):
+                self._send_json({"error": "invalid_plist_path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            import subprocess as _sp
+            try:
+                unload = _sp.run(  # noqa: S603
+                    ["launchctl", "unload", plist_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if unload.returncode != 0:
+                    self._send_json({
+                        "repo": repo_name, "action": "launchd/restart",
+                        "plist_path": plist_path,
+                        "unload": {"returncode": unload.returncode,
+                                   "stdout": unload.stdout[:500],
+                                   "stderr": unload.stderr[:500]},
+                        "load": None,
+                        "error": "unload_failed",
+                    }, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                load = _sp.run(  # noqa: S603
+                    ["launchctl", "load", plist_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self._send_json({
+                    "repo": repo_name, "action": "launchd/restart",
+                    "plist_path": plist_path,
+                    "unload": {"returncode": unload.returncode,
+                               "stdout": unload.stdout[:500],
+                               "stderr": unload.stderr[:500]},
+                    "load": {"returncode": load.returncode,
+                             "stdout": load.stdout[:500],
+                             "stderr": load.stderr[:500]},
+                })
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        # --- Agent session launch ---
+        if route.startswith("/api/repo/") and route.endswith("/launch"):
+            repo_name = route[len("/api/repo/"):-len("/launch")]
+            if not repo_name:
+                self._send_json({"error": "missing_repo_name"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            body = self._read_body()
+            try:
+                body_data = json.loads(body) if body else {}
+            except (json.JSONDecodeError, ValueError):
+                self._send_json({"error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            mode = str(body_data.get("mode") or "fresh")
+            agent_type = str(body_data.get("agent_type") or "claude-code")
+            valid_modes = {"fresh", "seeded", "continuation", "resume"}
+            valid_agents = {"claude-code", "codex", "shell"}
+            if mode not in valid_modes:
+                self._send_json(
+                    {"error": "invalid_mode", "valid": sorted(valid_modes)},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            if agent_type not in valid_agents:
+                self._send_json(
+                    {"error": "invalid_agent_type", "valid": sorted(valid_agents)},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            snapshot = self._read_snapshot()
+            repo = None
+            for r in (snapshot.get("repos") or []):
+                if isinstance(r, dict) and str(r.get("name") or "") == repo_name:
+                    repo = r
+                    break
+            if not repo:
+                self._send_json({"error": "repo_not_found", "repo": repo_name}, status=HTTPStatus.NOT_FOUND)
+                return
+            activity_digest: dict | None = None
+            activity_path = getattr(self.__class__, "activity_path", None)
+            if activity_path and activity_path.exists():
+                activity_digest = read_activity_digest(activity_path)
+            try:
+                result = _launch_session(
+                    repo,
+                    mode=mode,
+                    agent_type=agent_type,
+                    activity_digest=activity_digest,
+                )
+                self._send_json(result)
+            except _FreshellUnavailableError as exc:
+                self._send_json(
+                    {"error": "freshell_unavailable", "message": str(exc)},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+            except Exception as exc:
+                logging.getLogger(__name__).debug("launch_session failed", exc_info=True)
+                self._send_json(
+                    {"error": "launch_failed", "message": str(exc)[:200]},
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+            return
+
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_GET(self) -> None:  # noqa: N802
@@ -592,6 +823,40 @@ class _HubHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
 
+        # --- GET /api/repo/:name/services ---
+        if route.startswith("/api/repo/") and route.endswith("/services"):
+            repo_name = route[len("/api/repo/"):-len("/services")]
+            if not repo_name:
+                self._send_json({"error": "missing_repo_name"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            repo_path = self._find_repo_path(repo_name)
+            if not repo_path or not Path(repo_path).is_dir():
+                self._send_json({"error": "repo_not_found", "repo": repo_name}, status=HTTPStatus.NOT_FOUND)
+                return
+            try:
+                services_payload = _detect_services(repo_name, repo_path)
+                self._send_json(services_payload)
+            except Exception as exc:
+                logging.getLogger(__name__).debug("services detect failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        if route.startswith("/api/repo/") and not route.endswith("/start"):
+            repo_name = route[len("/api/repo/"):].strip("/")
+            if not repo_name:
+                self._send_json({"error": "missing_repo_name"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            activity_path = getattr(self.__class__, "activity_path", None)
+            payload = _build_repo_detail_payload(repo_name, self.snapshot_path, activity_path)
+            if payload is None:
+                self._send_json({"error": "repo_not_found", "repo": repo_name}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
+
+        if not route.startswith("/api/") and not route.startswith("/ws"):
+            self._send_html(render_dashboard_html())
+            return
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -649,6 +914,143 @@ def _build_activity_payload(activity_path: Path, window: str = "48h") -> dict[st
         "window": window,
         "timeline": timeline,
         "repos": repos_out,
+    }
+
+
+def _build_repo_detail_payload(
+    repo_name: str,
+    snapshot_path: Path,
+    activity_path: Path | None,
+) -> dict[str, Any] | None:
+    """Assemble all per-repo signals for GET /api/repo/:name.
+
+    Returns None if snapshot is missing or repo_name is not found.
+    """
+    import glob as _glob
+
+    if not snapshot_path.exists():
+        return None
+
+    data = _read_json(snapshot_path)
+    if not data:
+        return None
+
+    repos = data.get("repos") or []
+    repo: dict[str, Any] | None = None
+    all_repos = [r for r in repos if isinstance(r, dict)]
+
+    for r in all_repos:
+        if str(r.get("name") or "") == repo_name:
+            repo = r
+            break
+
+    if repo is None:
+        return None
+
+    # --- git ---
+    git: dict[str, Any] = {
+        "branch": str(repo.get("git_branch") or ""),
+        "dirty": bool(repo.get("git_dirty")),
+        "dirty_file_count": int(repo.get("dirty_file_count") or 0),
+        "untracked_file_count": int(repo.get("untracked_file_count") or 0),
+        "ahead": int(repo.get("ahead") or 0),
+        "behind": int(repo.get("behind") or 0),
+    }
+
+    # --- services ---
+    plist_pattern = str(
+        Path.home() / "Library" / "LaunchAgents" / f"*{repo_name}*"
+    )
+    launchd_loaded = bool(_glob.glob(plist_pattern))
+    services: dict[str, Any] = {
+        "workgraph_service_running": bool(repo.get("service_running")),
+        "launchd_plist_loaded": launchd_loaded,
+        "cron_jobs": [],
+    }
+
+    # --- workgraph ---
+    workgraph: dict[str, Any] = {
+        "exists": bool(repo.get("workgraph_exists")),
+        "task_counts": dict(repo.get("task_counts") or {}),
+        "in_progress": list(repo.get("in_progress") or []),
+        "ready": list(repo.get("ready") or []),
+    }
+
+    # --- presence actors ---
+    presence_actors: list[dict[str, Any]] = list(repo.get("presence_actors") or [])
+
+    # --- dependencies ---
+    raw_deps = [r for r in (repo.get("cross_repo_dependencies") or []) if isinstance(r, dict)]
+    depends_on: list[str] = [
+        str(d.get("repo") or "") for d in raw_deps if str(d.get("repo") or "")
+    ]
+    depended_on_by: list[str] = []
+    for other in all_repos:
+        if str(other.get("name") or "") == repo_name:
+            continue
+        other_deps = [
+            str(d.get("repo") or "")
+            for d in (other.get("cross_repo_dependencies") or [])
+            if isinstance(d, dict)
+        ]
+        if repo_name in other_deps:
+            depended_on_by.append(str(other.get("name") or ""))
+
+    dependencies: dict[str, Any] = {
+        "depends_on": depends_on,
+        "depended_on_by": sorted(set(depended_on_by)),
+    }
+
+    # --- health ---
+    northstar = repo.get("northstar") or repo.get("repo_north_star") or {}
+    health: dict[str, Any] = {
+        "drift_score": northstar.get("score"),
+        "drift_tier": str(northstar.get("tier") or ""),
+        "security_findings": list(repo.get("security_findings") or []),
+        "quality_findings": list(repo.get("quality_findings") or []),
+        "stalled": bool(repo.get("stalled")),
+        "stall_reasons": list(repo.get("stall_reasons") or []),
+        "narrative": str(repo.get("narrative") or ""),
+    }
+
+    # --- activity (from digest, falls back to empty) ---
+    activity: dict[str, Any] = {
+        "last_commit_at": None,
+        "summary": None,
+        "timeline": [],
+    }
+    if activity_path and activity_path.exists():
+        digest = read_activity_digest(activity_path)
+        for entry in digest.get("repos") or []:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("name") or "") == repo_name:
+                activity["last_commit_at"] = entry.get("last_commit_at")
+                activity["summary"] = entry.get("summary")
+                activity["timeline"] = list(entry.get("timeline") or [])
+                break
+
+    # --- agent history ---
+    repo_fs_path = str(repo.get("path") or "")
+    agent_history: dict[str, Any] = {"sessions": [], "total_sessions_in_file": 0, "history_since": None}
+    if repo_fs_path and Path(repo_fs_path).is_dir():
+        agent_history = _build_agent_history(Path(repo_fs_path))
+
+    return {
+        "name": repo_name,
+        "path": repo_fs_path,
+        "exists": bool(repo.get("exists")),
+        "source": str(repo.get("source") or ""),
+        "tags": list(repo.get("tags") or []),
+        "ecosystem_role": str(repo.get("ecosystem_role") or ""),
+        "git": git,
+        "services": services,
+        "workgraph": workgraph,
+        "presence_actors": presence_actors,
+        "dependencies": dependencies,
+        "health": health,
+        "activity": activity,
+        "agent_history": agent_history,
     }
 
 

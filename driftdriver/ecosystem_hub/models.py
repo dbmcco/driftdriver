@@ -21,6 +21,7 @@ class RepoSnapshot:
     path: str
     exists: bool
     source: str = ""
+    tags: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     git_branch: str = ""
     git_dirty: bool = False

@@ -22,6 +22,7 @@ from .discovery import (
     _extract_north_star_summary,
     _git_default_ref,
     _iso_now,
+    _load_ecosystem_repo_meta,
     _load_ecosystem_repos,
     _normalize_dependencies,
     _north_star_candidate_paths,

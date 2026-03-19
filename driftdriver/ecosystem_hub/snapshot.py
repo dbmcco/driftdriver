@@ -32,6 +32,7 @@ from .discovery import (
     _discover_active_workspace_repos,
     _git_default_ref,
     _iso_now,
+    _load_ecosystem_repo_meta,
     _load_ecosystem_repos,
     _normalize_dependencies,
     _path_age_seconds,
@@ -692,6 +693,7 @@ def collect_ecosystem_snapshot(
 ) -> dict[str, Any]:
     ecosystem_file = ecosystem_toml or (workspace_root / "speedrift-ecosystem" / "ecosystem.toml")
     repo_map = _load_ecosystem_repos(ecosystem_file, workspace_root)
+    repo_meta = _load_ecosystem_repo_meta(ecosystem_file)
     repo_sources: dict[str, str] = {name: "ecosystem-toml" for name in repo_map}
     if project_dir.name not in repo_map:
         repo_map[project_dir.name] = project_dir
@@ -734,6 +736,7 @@ def collect_ecosystem_snapshot(
             qadrift_policy=qadrift_policy,
         )
         snap.source = repo_sources.get(name, "ecosystem-toml")
+        snap.tags = repo_meta.get(name, {}).get("tags") or []
         return snap
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -745,10 +748,12 @@ def collect_ecosystem_snapshot(
                 repo_snap = RepoSnapshot(name=name, path=str(path), exists=path.exists())
                 repo_snap.errors.append("snapshot_timeout: repo scan exceeded 15s")
                 repo_snap.source = repo_sources.get(name, "ecosystem-toml")
+                repo_snap.tags = repo_meta.get(name, {}).get("tags") or []
             except Exception as exc:
                 repo_snap = RepoSnapshot(name=name, path=str(path), exists=path.exists())
                 repo_snap.errors.append(f"snapshot_error: {str(exc)[:200]}")
                 repo_snap.source = repo_sources.get(name, "ecosystem-toml")
+                repo_snap.tags = repo_meta.get(name, {}).get("tags") or []
             repos.append(repo_snap)
             upstream.extend(generate_upstream_candidates(name, path))
 

@@ -796,8 +796,13 @@ class EcosystemHubTests(unittest.TestCase):
             sibling = root / "speedrift-ecosystem"
             project.mkdir(parents=True)
             sibling.mkdir(parents=True)
-            out = resolve_central_repo_path(project)
-            self.assertEqual(out, (sibling / ".workgraph" / "service" / "ecosystem-central").resolve())
+            env_backup = os.environ.pop("ECOSYSTEM_HUB_CENTRAL_REPO", None)
+            try:
+                out = resolve_central_repo_path(project)
+                self.assertEqual(out, (sibling / ".workgraph" / "service" / "ecosystem-central").resolve())
+            finally:
+                if env_backup is not None:
+                    os.environ["ECOSYSTEM_HUB_CENTRAL_REPO"] = env_backup
 
     def test_write_snapshot_once_writes_central_register(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -400,6 +400,39 @@ def _load_ecosystem_repos(ecosystem_toml: Path, workspace_root: Path) -> dict[st
     return out
 
 
+def _load_ecosystem_repo_meta(ecosystem_toml: Path) -> dict[str, dict[str, Any]]:
+    """Return {name: {"path": str, "url": str, "tags": list[str]}} for all registered repos."""
+    if not ecosystem_toml.exists():
+        return {}
+    try:
+        data = tomllib.loads(ecosystem_toml.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    repos = data.get("repos")
+    if not isinstance(repos, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for name, value in repos.items():
+        key = str(name).strip()
+        if not key:
+            continue
+        if not isinstance(value, dict):
+            out[key] = {"path": "", "url": "", "tags": []}
+            continue
+        raw_tags = value.get("tags")
+        tags: list[str] = (
+            [str(t) for t in raw_tags if isinstance(t, str)]
+            if isinstance(raw_tags, list)
+            else []
+        )
+        out[key] = {
+            "path": str(value.get("path") or ""),
+            "url": str(value.get("url") or ""),
+            "tags": tags,
+        }
+    return out
+
+
 def _north_star_candidate_paths(repo_path: Path) -> list[Path]:
     candidates: list[Path] = []
     direct = [
