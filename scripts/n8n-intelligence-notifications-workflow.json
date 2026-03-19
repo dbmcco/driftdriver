@@ -1,0 +1,122 @@
+{
+  "name": "Ecosystem Intelligence - Telegram Notifications",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "intelligence-notify",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Intelligence Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "" },
+          "conditions": [
+            {
+              "id": "has-type",
+              "leftValue": "={{ $json.body.notification_type }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ]
+        }
+      },
+      "id": "validate-payload",
+      "name": "Has notification_type?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const body = $input.item.json.body || $input.item.json;\nconst type = body.notification_type || 'unknown';\nconst summary = body.summary || '';\nconst deepLink = body.deep_link_url || '';\nconst urgency = body.urgency || 'low';\nconst signalIds = (body.signal_ids || []).join(', ');\n\nconst EMOJI = {\n  daily_briefing: '\\u{1F4CA}',\n  escalation_alert: '\\u{1F6A8}',\n  veto_reminder: '\\u{23F0}',\n  weekly_digest: '\\u{1F4CB}',\n};\nconst emoji = EMOJI[type] || '\\u{1F514}';\n\nconst TITLE = {\n  daily_briefing: 'Daily Briefing',\n  escalation_alert: 'Escalation Alert',\n  veto_reminder: 'Veto Reminder',\n  weekly_digest: 'Weekly Digest',\n};\nconst title = TITLE[type] || type;\n\nlet lines = [\n  `${emoji} *Intelligence: ${title}*`,\n  '',\n  summary,\n];\n\nif (deepLink) {\n  lines.push('');\n  lines.push(`[Open Dashboard](${deepLink})`);\n}\n\nif (signalIds) {\n  lines.push('');\n  lines.push(`_Signals: ${signalIds}_`);\n}\n\nreturn { json: { message: lines.join('\\n'), urgency } };"
+      },
+      "id": "format-message",
+      "name": "Format Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "chatId": "",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "send-telegram",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "darkly-factory-bot",
+          "name": "DarklyFactory_bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, notification_type: $('Intelligence Webhook').item.json.body.notification_type }) }}"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'missing_notification_type' }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [680, 420]
+    }
+  ],
+  "connections": {
+    "Intelligence Webhook": {
+      "main": [
+        [{ "node": "Has notification_type?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has notification_type?": {
+      "main": [
+        [{ "node": "Format Telegram Message", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Telegram Message": {
+      "main": [
+        [{ "node": "Send to Telegram", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send to Telegram": {
+      "main": [
+        [{ "node": "Respond OK", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "Receives intelligence notification payloads from driftdriver and delivers them via Telegram. Supports four notification types: daily_briefing (morning stats + dashboard link), escalation_alert (inbox items with urgency), veto_reminder (24h before auto-decision window closes), weekly_digest (end-of-week rollup). Payload schema: { notification_type, summary, deep_link_url, urgency, signal_ids }. Uses DarklyFactory_bot credentials. Configure the webhook URL in ~/.config/workgraph/notify.toml under [intelligence_notifications].webhook_url."
+  }
+}
