@@ -49,8 +49,54 @@ include_playwright = true
 include_test_health = true
 include_workgraph_health = true
 
+[northstardrift]
+enabled = true
+emit_review_tasks = true
+emit_operator_prompts = true
+daily_rollup = true
+weekly_trends = true
+max_review_tasks_per_repo = 2
+
+[northstardrift.targets]
+overall = 82.0
+continuity = 85.0
+autonomy = 82.0
+quality = 80.0
+coordination = 78.0
+self_improvement = 76.0
+
+[northstardrift.alignment]
+statement = "Driftdriver is the drift-check orchestrator that keeps code, specs, and intent in sync across the Speedrift ecosystem without hard-blocking work"
+keywords = ["drift", "quality", "orchestration", "lanes", "sync", "convergence", "attractor"]
+anti_patterns = ["hard-blocking", "manual-only", "untracked-drift"]
+
 [enforcement]
 enabled = false
 block_on_critical = true
 warn_on_error = true
 max_unresolved_warnings = 10
+
+
+[routing]
+enabled = true
+default_executor = "claude"
+
+[routing.executors.samantha]
+type = "http"
+endpoint = "http://localhost:3530/api/agent/task"
+tag_match = "agent:samantha"
+
+[routing.executors.derek]
+type = "http"
+endpoint = "http://localhost:3531/api/agent/task"
+tag_match = "agent:derek"
+
+[routing.executors.ingrid]
+type = "http"
+endpoint = "http://localhost:3532/api/agent/task"
+tag_match = "agent:ingrid"
+
+[routing.executors.caroline]
+type = "http"
+endpoint = "http://localhost:3533/api/agent/task"
+tag_match = "agent:caroline"

@@ -1,5 +1,11 @@
 # Driftdriver
 
+## North Star
+
+Driftdriver is the opinionated judgment engine for Workgraph-first agent development — it decides what's drifting, what to do about it, and who should act. Workgraph handles execution; Driftdriver handles intent, quality, and convergence across the entire repo ecosystem.
+
+---
+
 Driftdriver is an orchestrator for **Workgraph-first** agent development.
 
 - **Workgraph is the spine** (tasks, dependencies, loops, agent spawning).
