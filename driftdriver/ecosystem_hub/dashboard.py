@@ -3651,9 +3651,9 @@ def render_dashboard_html() -> str:
           '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(s.decision_reason || '-') + '</td>' +
           '<td>' + urgencySpan(urgencyFromLog || 'low') + '</td>' +
           '<td><div class="intel-actions">' +
-            '<button class="intel-btn approve" onclick="approveSignal(\'' + escAttr(s.id) + '\')">Approve</button>' +
-            '<button class="intel-btn override" onclick="showOverride(\'' + escAttr(s.id) + '\')">Override</button>' +
-            '<button class="intel-btn snooze" onclick="snoozeSignal(\'' + escAttr(s.id) + '\')">Snooze</button>' +
+            '<button class="intel-btn approve" onclick="approveSignal(\\'' + escAttr(s.id) + '\\')">Approve</button>' +
+            '<button class="intel-btn override" onclick="showOverride(\\'' + escAttr(s.id) + '\\')">Override</button>' +
+            '<button class="intel-btn snooze" onclick="snoozeSignal(\\'' + escAttr(s.id) + '\\')">Snooze</button>' +
           '</div></td>' +
         '</tr>';
       }).join('');
