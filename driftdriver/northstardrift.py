@@ -63,6 +63,17 @@ def default_northstardrift_cfg() -> dict[str, Any]:
         "target_gap_watch": 5.0,
         "target_gap_critical": 12.0,
         "dirty_repo_review_task_mode": "workgraph-only",
+        "alignment": {
+            "statement": "",
+            "keywords": [],
+            "anti_patterns": [],
+            "last_reviewed": "",
+            "review_interval_days": 30,
+            "alignment_model": "haiku",
+            "alignment_threshold_proceed": 0.7,
+            "alignment_threshold_pause": 0.4,
+            "decision_category": "alignment",
+        },
         "targets": _default_targets_cfg(),
     }
 
@@ -1494,6 +1505,36 @@ def _minimal_northstar_snapshot(project_dir: Path) -> dict[str, Any]:
     }
 
 
+def _load_alignment_config(project_dir: Path) -> dict[str, Any] | None:
+    """Load alignment config from drift-policy.toml if present and configured."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        return None
+
+    policy_path = project_dir / ".workgraph" / "drift-policy.toml"
+    if not policy_path.exists():
+        return None
+
+    try:
+        data = tomllib.loads(policy_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    ns_cfg = data.get("northstardrift")
+    if not isinstance(ns_cfg, dict):
+        return None
+
+    alignment = ns_cfg.get("alignment")
+    if not isinstance(alignment, dict):
+        return None
+
+    if not str(alignment.get("statement") or "").strip():
+        return None
+
+    return alignment
+
+
 def run_as_lane(project_dir: Path) -> "LaneResult":
     """Run northstardrift and return results in the standard lane contract format.
 
@@ -1507,7 +1548,8 @@ def run_as_lane(project_dir: Path) -> "LaneResult":
 
     try:
         snapshot = _minimal_northstar_snapshot(project_dir)
-        report = compute_northstardrift(snapshot)
+        alignment_config = _load_alignment_config(project_dir)
+        report = compute_northstardrift(snapshot, alignment_config=alignment_config)
     except Exception as exc:
         return LaneResult(
             lane="northstardrift",
@@ -1517,6 +1559,21 @@ def run_as_lane(project_dir: Path) -> "LaneResult":
         )
 
     findings: list[LaneFinding] = []
+
+    # Map alignment to findings when configured and below threshold
+    alignment_data = report.get("alignment") if isinstance(report.get("alignment"), dict) else {}
+    if alignment_data.get("configured"):
+        threshold = float(
+            (alignment_config or {}).get("alignment_threshold_proceed")
+            or default_northstardrift_cfg()["alignment"]["alignment_threshold_proceed"]
+        )
+        overall_alignment = float(alignment_data.get("overall_alignment") or 0.0)
+        if overall_alignment < threshold:
+            findings.append(LaneFinding(
+                message=f"alignment score {overall_alignment:.2f} is below threshold {threshold:.2f}",
+                severity="warning",
+                tags=["alignment", "low-alignment"],
+            ))
 
     # Map regressions to findings
     for reg in report.get("regressions", []):

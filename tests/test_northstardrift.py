@@ -479,6 +479,79 @@ class AlignmentIntegrationTests(unittest.TestCase):
         self.assertIn("alignment", northstar)
         self.assertFalse(northstar["alignment"]["configured"])
 
+    def test_run_as_lane_emits_alignment_finding_for_low_score(self) -> None:
+        """run_as_lane emits a LaneFinding when alignment is configured and low."""
+        from unittest.mock import patch
+
+        alignment_config = {
+            "statement": "Understand relationships with perfect memory",
+            "keywords": ["relationships", "memory"],
+            "anti_patterns": ["pipeline", "funnel", "conversion"],
+        }
+
+        # Patch _load_alignment_config to return our test config
+        with patch("driftdriver.northstardrift._load_alignment_config", return_value=alignment_config):
+            # Create a snapshot with anti-pattern tasks so alignment is low
+            with tempfile.TemporaryDirectory() as td:
+                project_dir = Path(td)
+                (project_dir / ".workgraph").mkdir()
+                result = run_as_lane(project_dir)
+
+        self.assertEqual(result.lane, "northstardrift")
+        # With no tasks at all, alignment defaults to neutral (0.5) which is below
+        # the default threshold — but configured=True should still surface
+        alignment_findings = [f for f in result.findings if "alignment" in f.tags]
+        # Since there are no tasks, overall_alignment is 0.5 which is below 0.7
+        self.assertGreater(len(alignment_findings), 0)
+
+    def test_run_as_lane_no_alignment_finding_when_unconfigured(self) -> None:
+        """run_as_lane does NOT emit alignment findings when config is empty."""
+        from unittest.mock import patch
+
+        with patch("driftdriver.northstardrift._load_alignment_config", return_value=None):
+            with tempfile.TemporaryDirectory() as td:
+                project_dir = Path(td)
+                (project_dir / ".workgraph").mkdir()
+                result = run_as_lane(project_dir)
+
+        alignment_findings = [f for f in result.findings if "alignment" in f.tags]
+        self.assertEqual(len(alignment_findings), 0)
+
+    def test_run_as_lane_no_alignment_finding_when_score_high(self) -> None:
+        """run_as_lane does NOT emit alignment findings when alignment score is above threshold."""
+        from unittest.mock import patch
+
+        alignment_config = {
+            "statement": "Understand relationships with perfect memory",
+            "keywords": ["relationships", "memory"],
+            "anti_patterns": [],
+            "alignment_threshold_proceed": 0.7,
+        }
+
+        def fake_snapshot(project_dir: Path) -> dict:
+            return _snapshot(
+                _repo("test-repo", in_progress=1),
+            )
+
+        # Override snapshot to have tasks with aligned titles
+        with (
+            patch("driftdriver.northstardrift._load_alignment_config", return_value=alignment_config),
+            patch("driftdriver.northstardrift._minimal_northstar_snapshot") as mock_snap,
+        ):
+            mock_snap.return_value = _snapshot(
+                {
+                    **_repo("test-repo"),
+                    "in_progress": [
+                        {"id": "t1", "title": "Add relationship memory context"},
+                        {"id": "t2", "title": "Improve memory relationships tracking"},
+                    ],
+                }
+            )
+            result = run_as_lane(Path("/tmp/test"))
+
+        alignment_findings = [f for f in result.findings if "alignment" in f.tags]
+        self.assertEqual(len(alignment_findings), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

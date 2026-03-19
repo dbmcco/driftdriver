@@ -184,6 +184,20 @@ class TestMatchExecutor(unittest.TestCase):
         result = match_executor(task, config)
         self.assertIsNone(result)
 
+    def test_agent_owner_matches_executor_without_tags(self) -> None:
+        config = self._make_config()
+        task = {"id": "t7", "agent": "samantha"}
+        result = match_executor(task, config)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.name, "samantha")
+
+    def test_agent_owner_overrides_conflicting_tags(self) -> None:
+        config = self._make_config()
+        task = {"id": "t8", "agent": "samantha", "tags": ["agent:derek"]}
+        result = match_executor(task, config)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.name, "samantha")
+
     def test_wildcard_with_various_suffixes(self) -> None:
         config = self._make_config()
         for tag in ["schedule:09:00", "schedule:2026-03-17T09:00", "schedule:daily"]:
@@ -653,6 +667,83 @@ tag_match = "agent:samantha"
             lines = (repo / ".workgraph" / "graph.jsonl").read_text().splitlines()
             task = json.loads(lines[0])
             self.assertEqual(task["status"], "in-progress")
+
+    @patch("driftdriver.task_router.urlopen")
+    def test_routes_explicit_owner_without_tag_using_executor_match(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b'{"ok": true}'
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "open",
+                "title": "Owned by Samantha",
+                "agent": "samantha",
+            },
+        ]
+        toml = b"""
+[routing]
+enabled = true
+default_executor = "wg-daemon"
+
+[routing.executors.samantha]
+type = "http"
+endpoint = "http://localhost:3530/api/agent/task"
+tag_match = "agent:samantha"
+"""
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._setup_repo(td, tasks, toml)
+            config = load_routing_config(repo / ".workgraph" / "drift-policy.toml")
+            results = route_ready_tasks(repo, config)
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].dispatched)
+        self.assertEqual(results[0].executor, "samantha")
+
+    @patch("driftdriver.task_router.subprocess")
+    def test_holds_explicit_owner_without_executor_instead_of_falling_back(
+        self, mock_subprocess: MagicMock
+    ) -> None:
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "open",
+                "title": "Owned by Braydon",
+                "agent": "braydon",
+            },
+        ]
+        toml = b"""
+[routing]
+enabled = true
+default_executor = "claude"
+
+[routing.executors.samantha]
+type = "http"
+endpoint = "http://localhost:3530/api/agent/task"
+tag_match = "agent:samantha"
+"""
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._setup_repo(td, tasks, toml)
+            config = load_routing_config(repo / ".workgraph" / "drift-policy.toml")
+            results = route_ready_tasks(repo, config)
+
+            lines = (repo / ".workgraph" / "graph.jsonl").read_text().splitlines()
+            task = json.loads(lines[0])
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].dispatched)
+        self.assertEqual(results[0].executor, "braydon")
+        self.assertIn("holding for manual work", results[0].skipped_reason)
+        self.assertEqual(task["status"], "open")
+        mock_subprocess.run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

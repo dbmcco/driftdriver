@@ -91,11 +91,40 @@ def _tag_matches(tag: str, pattern: str) -> bool:
     return tag == pattern
 
 
-def match_executor(task: dict, config: RoutingConfig) -> ExecutorConfig | None:
-    """Match a task to an executor based on its tags.
+def _task_owner(task: dict) -> str | None:
+    """Return the durable task owner recorded in Workgraph, if any."""
+    owner = task.get("agent")
+    if not isinstance(owner, str):
+        return None
+    owner = owner.strip()
+    return owner or None
 
-    Returns the first matching executor, or None if no match (use default).
+
+def _match_executor_for_owner(
+    owner: str, config: RoutingConfig
+) -> ExecutorConfig | None:
+    """Resolve an executor from a task owner using existing agent:* routing."""
+    owner_tag = f"agent:{owner}"
+    for executor in config.executors.values():
+        if _tag_matches(owner_tag, executor.tag_match):
+            return executor
+    return None
+
+
+def match_executor(task: dict, config: RoutingConfig) -> ExecutorConfig | None:
+    """Match a task to an executor based on ownership first, then tags.
+
+    Workgraph uses ``agent`` as the durable owner/designated assignee and
+    ``assigned`` as the transient runtime claimer. If a task has an explicit
+    owner, that owner is authoritative for routing; do not override it with a
+    generic fallback executor.
+
+    Returns the first matching executor, or None if no match.
     """
+    owner = _task_owner(task)
+    if owner is not None:
+        return _match_executor_for_owner(owner, config)
+
     tags = task.get("tags", [])
     if not tags:
         return None
@@ -471,8 +500,20 @@ def route_ready_tasks(
 
     results: list[DispatchResult] = []
     for task in ready:
+        owner = _task_owner(task)
         executor = match_executor(task, config)
         if executor is None:
+            if owner is not None:
+                results.append(DispatchResult(
+                    task_id=str(task["id"]),
+                    dispatched=False,
+                    executor=owner,
+                    skipped_reason=(
+                        f"Task owner '{owner}' has no configured executor; "
+                        "holding for manual work"
+                    ),
+                ))
+                continue
             # Use default executor
             executor = ExecutorConfig(
                 name=config.default_executor,
