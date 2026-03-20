@@ -160,3 +160,36 @@ def test_run_pass1_new_sha_triggers_eval(tmp_path: Path) -> None:
     assert result["repo"] == "graphwork/workgraph"
     assert result["branch"] == "main"
     assert "action" in result
+
+
+# --- Pass 2 tests ---
+
+from driftdriver.upstream_tracker import run_pass2
+
+
+def test_pass2_clean_repos_no_findings() -> None:
+    repos = [
+        {"name": "paia-shell", "ahead": 0, "working_tree_dirty": False, "exists": True},
+        {"name": "derek", "ahead": 1, "working_tree_dirty": False, "exists": True},
+    ]
+    findings = run_pass2(repos)
+    assert findings == []
+
+
+def test_pass2_ahead_repo_emits_finding() -> None:
+    repos = [
+        {"name": "paia-shell", "ahead": 5, "working_tree_dirty": False, "exists": True},
+    ]
+    findings = run_pass2(repos)
+    assert len(findings) == 1
+    assert findings[0]["repo"] == "paia-shell"
+    assert findings[0]["category"] == "unpushed-work"
+
+
+def test_pass2_dirty_tree_emits_finding() -> None:
+    repos = [
+        {"name": "lfw", "ahead": 0, "working_tree_dirty": True, "exists": True},
+    ]
+    findings = run_pass2(repos)
+    assert len(findings) == 1
+    assert findings[0]["category"] == "unpushed-work"

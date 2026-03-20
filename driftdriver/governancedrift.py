@@ -16,6 +16,7 @@ class FindingCategory(str, Enum):
     PROCESS_DEBT = "process-debt"
     ARCHITECTURE_GAP = "architecture-gap"
     POSTURE_MISMATCH = "posture-mismatch"
+    UNPUSHED_WORK = "unpushed-work"
 
 
 def classify_finding(
