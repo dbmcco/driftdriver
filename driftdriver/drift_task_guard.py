@@ -18,6 +18,52 @@ from driftdriver.budget_ledger import recent_count, record_operation
 DEFAULT_GLOBAL_CEILING = 50
 
 
+def extract_desired_outcome(repo_path: Path) -> str | None:
+    """Extract the outcome target from NORTH_STAR.md in repo_path.
+
+    Looks for the first non-empty line under "## Outcome target".
+    Falls back to the first non-heading paragraph. Returns None if
+    NORTH_STAR.md is absent or yields no usable text.
+    """
+    north_star = repo_path / "NORTH_STAR.md"
+    if not north_star.exists():
+        return None
+    try:
+        text = north_star.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    lines = text.splitlines()
+    in_outcome = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.lower().startswith("## outcome target"):
+            in_outcome = True
+            continue
+        if in_outcome:
+            if stripped.startswith("##"):
+                break
+            if stripped:
+                return stripped
+    if in_outcome:
+        return None  # Section found but empty
+
+    # Fallback: first non-heading paragraph
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return stripped
+    return None
+
+
+def stamp_desired_outcome(description: str, repo_path: Path) -> str:
+    """Append desired_outcome block to description if NORTH_STAR.md exists."""
+    outcome = extract_desired_outcome(repo_path)
+    if not outcome:
+        return description
+    return f"{description}\n\n---desired_outcome---\n{outcome}"
+
+
 def _record_escalation(
     wg_dir: Path,
     actor: Actor,
@@ -268,6 +314,9 @@ def guarded_add_drift_task(
     # 8. Emit directive (replaces direct wg add call).
     from driftdriver.directives import Action, Directive, DirectiveLog
     from driftdriver.executor_shim import ExecutorShim
+
+    # Stamp desired_outcome from NORTH_STAR.md onto description.
+    description = stamp_desired_outcome(description, wg_dir.parent)
 
     directive = Directive(
         source="drift_task_guard",

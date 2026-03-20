@@ -733,6 +733,7 @@ def compute_northstardrift(
     supervisor = snapshot.get("supervisor") if isinstance(snapshot.get("supervisor"), dict) else {}
     updates = snapshot.get("updates") if isinstance(snapshot.get("updates"), dict) else {}
     upstream_candidates = snapshot.get("upstream_candidates") if isinstance(snapshot.get("upstream_candidates"), list) else []
+    agency_eval_inputs = snapshot.get("agency_eval_inputs") if isinstance(snapshot.get("agency_eval_inputs"), dict) else {}
 
     previous_repo_scores: dict[str, dict[str, Any]] = {}
     if isinstance(previous, dict):
@@ -914,12 +915,15 @@ def compute_northstardrift(
     north_star_coverage = _ratio_score(north_star_present_repos, total_repos, default=0.0)
     throughput_score = _clamp_score(min(100.0, 55.0 + (len(upstream_candidates) * 10.0) + (10.0 if bool(updates.get("has_updates")) else 0.0) + (10.0 if bool(updates.get("has_discoveries")) else 0.0)))
     plan_integrity_coverage = _penalty_inverse((missing_dependencies * 9.0) + (blocked_total * 3.0) + (stale_active_total * 4.0))
+    agency_eval_score_raw = agency_eval_inputs.get("eval_score")
+    agency_eval_contribution = float(agency_eval_score_raw) if isinstance(agency_eval_score_raw, (int, float)) else 0.0
     self_improvement = _clamp_score(
         (0.25 * improvement_change)
         + (0.20 * rollout_coverage)
         + (0.20 * throughput_score)
         + (0.20 * north_star_coverage)
         + (0.35 * plan_integrity_coverage)
+        + (0.15 * agency_eval_contribution)  # agency evaluation feedback
     )
 
     op_health_inputs = overview.get("op_health_inputs") if isinstance(overview.get("op_health_inputs"), dict) else {}

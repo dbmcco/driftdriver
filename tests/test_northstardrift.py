@@ -553,5 +553,25 @@ class AlignmentIntegrationTests(unittest.TestCase):
         self.assertEqual(len(alignment_findings), 0)
 
 
+    def test_agency_eval_score_improves_self_improvement(self) -> None:
+        """High agency eval score should not decrease self_improvement vs no score."""
+        base_snapshot = _snapshot(_repo("driftdriver", in_progress=1))
+        base_snapshot["agency_eval_inputs"] = {"eval_score": None}
+        score_none = compute_northstardrift(base_snapshot)["axes"]["self_improvement"]["score"]
+
+        high_snapshot = _snapshot(_repo("driftdriver", in_progress=1))
+        high_snapshot["agency_eval_inputs"] = {"eval_score": 100.0}
+        score_high = compute_northstardrift(high_snapshot)["axes"]["self_improvement"]["score"]
+
+        self.assertGreaterEqual(score_high, score_none)
+
+    def test_agency_eval_score_zero_does_not_crash(self) -> None:
+        """Zero eval score blends without error."""
+        snapshot = _snapshot(_repo("driftdriver", in_progress=1))
+        snapshot["agency_eval_inputs"] = {"eval_score": 0.0}
+        northstar = compute_northstardrift(snapshot)
+        self.assertIn("self_improvement", northstar["axes"])
+
+
 if __name__ == "__main__":
     unittest.main()
