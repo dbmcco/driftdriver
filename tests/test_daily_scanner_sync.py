@@ -70,11 +70,16 @@ class TestSyncMainEntryPoint(unittest.TestCase):
 
     def test_sync_main_succeeds_with_postgres(self) -> None:
         """Sync pipeline returns 0 when Postgres is available and sources are configured."""
+        env = os.environ.copy()
+        # Ensure the evaluator routes to the Anthropic API (fast 401 fail) rather than
+        # falling through to _invoke_claude_cli, which hangs the subprocess.
+        env.setdefault("ANTHROPIC_API_KEY", "test-key-intentionally-invalid")
         result = subprocess.run(
             ["python3", "-m", "driftdriver.intelligence.sync", "--json"],
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
         # rc=0 means Postgres is up and sync worked; rc!=0 is acceptable if
         # Postgres isn't running in this environment (tested separately).

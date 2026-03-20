@@ -242,11 +242,50 @@ def _invoke_codex(model: str, system_prompt: str, user_prompt: str, schema: dict
                 pass
 
 
+def _invoke_claude_cli(model: str, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """Invoke via `claude --print` CLI — uses Claude Code's own auth, no ANTHROPIC_API_KEY needed."""
+    prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+    cmd = [
+        "claude",
+        "--print",
+        "--output-format", "json",
+        "--json-schema", json.dumps(schema),
+        "--model", model,
+        "--no-session-persistence",
+    ]
+    result = subprocess.run(
+        cmd,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=_clean_env(),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"claude cli exit {result.returncode}: {result.stderr[:300]}")
+    # --output-format json + --json-schema: structured output lands in outer["structured_output"]
+    outer = json.loads(result.stdout)
+    if outer.get("is_error"):
+        raise RuntimeError(f"claude cli error: {outer.get('result', '')[:300]}")
+    structured = outer.get("structured_output")
+    if isinstance(structured, dict):
+        return structured
+    # Fallback: parse result text as JSON
+    raw = outer.get("result", "")
+    if isinstance(raw, str) and raw.strip():
+        return json.loads(raw)
+    raise RuntimeError(f"claude cli: no structured_output and empty result")
+
+
 def default_model_invoker(model: str, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
     lower = model.lower()
-    if lower.startswith("claude") or "haiku" in lower or "sonnet" in lower or "opus" in lower:
+    is_claude = lower.startswith("claude") or "haiku" in lower or "sonnet" in lower or "opus" in lower
+    if not is_claude:
+        return _invoke_codex(model, system_prompt, user_prompt, schema)
+    # Prefer direct API when key is available; fall back to claude CLI
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"):
         return _invoke_anthropic_api(model, system_prompt, user_prompt, schema)
-    return _invoke_codex(model, system_prompt, user_prompt, schema)
+    return _invoke_claude_cli(model, system_prompt, user_prompt, schema)
 
 
 @dataclass(frozen=True)
@@ -393,11 +432,40 @@ def _serialize_veto(signal: Signal) -> dict[str, Any]:
 
 def _system_prompt() -> str:
     return (
-        "You evaluate ecosystem intelligence signals for a speedrift/workgraph engineering stack.\n"
-        "You are making the decision, not the code. Use only these decisions: skip, watch, defer, adopt.\n"
+        "You evaluate ecosystem intelligence signals for the Speedrift/Driftdriver development stack.\n\n"
+        "ECOSYSTEM CONTEXT:\n"
+        "This is a personal AI-agentic software stack. The operator builds and operates:\n"
+        "- Workgraph (graphwork/workgraph): task graph/dependency spine — core scheduling backbone for all repos\n"
+        "- Driftdriver (dbmcco/driftdriver): drift-check orchestrator (coredrift, specdrift, uxdrift, etc.)\n"
+        "- Speedrift: per-repo development workflow built on workgraph + driftdriver\n"
+        "- Paia: personal AI agent platform — paia-shell, paia-memory, paia-events, paia-identity, paia-triage, plus agents samantha/derek/ingrid/caroline\n"
+        "- Lodestar: situation intelligence / decision-support platform\n"
+        "- LFW (lfw-ai-graph-crm): relationship intelligence CRM\n"
+        "- Freshell (danshapiro/freshell): upstream shell UX layer integrated into paia-shell\n"
+        "- Amplifier (microsoft/amplifier, amplifier-core, amplifier-app-cli): agentic skill runner used in speedrift recipes\n"
+        "- Beads (steveyegge/beads): alternative task-tracking system — consider for paia workflow\n"
+        "- Mira-OSS (taylorsatula/mira-OSS): open-source AI assistant framework — evaluate patterns for paia agents\n"
+        "- Superpowers (obra/superpowers, superpowers-chrome): Claude Code skill framework — actively deployed\n"
+        "- Agency (agentbureau/agency): multi-agent orchestration — evaluate for paia-triage delegation\n"
+        "- Prime Radiant (prime-radiant-inc): stockyard (Firecracker VM orchestration for Claude Code), claude-session-viewer, llm-proxy, gsuite-mcp\n"
+        "- Metaswarm (dsifry/metaswarm): swarm coordination — evaluate for multi-agent paia patterns\n\n"
+        "SIGNAL TYPES:\n"
+        "- repo_update: a monitored dependency changed SHA — decide if the stack should incorporate the update\n"
+        "- activity: a tracked person/org pushed to a repo — evaluate the repo for ecosystem adoption potential\n"
+        "- new_repo: a tracked person/org created a new repo — decide if worth watching or adopting\n\n"
+        "DECISIONS:\n"
+        "- skip: no relevance to this stack\n"
+        "- watch: potentially relevant but needs more signal before acting\n"
+        "- defer: relevant but not actionable now — include specific reason (e.g., 'wait for stable release', 'revisit after M7')\n"
+        "- adopt: concrete action warranted — recommended_actions MUST:\n"
+        "  * Name the specific ecosystem component affected (e.g., 'workgraph', 'paia-triage', 'speedrift recipes')\n"
+        "  * State the concrete action (e.g., 'bump dep to pick up fix', 'evaluate API for...', 'port pattern to...')\n"
+        "  Examples: 'Bump workgraph dep to pick up task-cancellation fix in paia dispatch loop'\n"
+        "            'Evaluate Agency delegation API for paia-triage routing chain'\n"
+        "            'Test stockyard Firecracker sandboxing for driftdriver executor isolation'\n\n"
         "Return structured JSON only. Confidence must be between 0.0 and 1.0.\n"
         "Prefer skip/watch when evidence is weak. Use adopt only when a concrete follow-up is warranted.\n"
-        "Recommended actions should be short operator-facing actions."
+        "recommended_actions should be short, operator-facing, specific to named ecosystem components."
     )
 
 

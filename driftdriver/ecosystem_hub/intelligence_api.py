@@ -178,6 +178,19 @@ def build_briefing_history(config: PostgresConfig, *, days: int = 7) -> dict[str
     return {"days": daily}
 
 
+def _enrich_signal(sig: dict[str, Any]) -> dict[str, Any]:
+    """Add convenience fields extracted from action_log."""
+    sig["recommended_actions"] = _extract_recommended_actions(sig.get("action_log", []))
+    sig["rationale"] = sig.get("decision_reason") or ""
+    # Detect if a wg task was already created for this signal
+    task_id = None
+    for entry in sig.get("action_log", []):
+        if isinstance(entry, dict) and entry.get("action") == "adopt" and entry.get("status") == "created":
+            task_id = entry.get("task_id")
+    sig["wg_task_id"] = task_id
+    return sig
+
+
 def build_inbox(config: PostgresConfig) -> dict[str, Any]:
     with _connect(**config.connection_kwargs()) as conn:
         with conn.cursor() as cur:
@@ -194,20 +207,58 @@ def build_inbox(config: PostgresConfig) -> dict[str, Any]:
                       decision_confidence DESC,
                       evaluated_at ASC""",
             )
-            signals = [_signal_row_to_dict(row) for row in cur.fetchall()]
+            signals = [_enrich_signal(_signal_row_to_dict(row)) for row in cur.fetchall()]
 
     return {"signals": signals, "count": len(signals)}
 
 
 def approve_signal(config: PostgresConfig, *, signal_id: UUID) -> dict[str, Any]:
+    """Approve an inbox signal: create a workgraph investigation task, then mark acted_on."""
+    from driftdriver.intelligence.evaluator import default_task_creator, DecisionEnvelope
+    from driftdriver.intelligence.models import Signal as _Signal
+
     now = _utc_now()
+    # Load full signal row to build task
     with _connect(**config.connection_kwargs()) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, acted_on FROM signals WHERE id = %s", (signal_id,))
+            cur.execute(
+                f"SELECT {_SIGNAL_COLUMNS} FROM signals WHERE id = %s", (signal_id,)
+            )
             row = cur.fetchone()
             if row is None:
                 return {"error": "signal_not_found", "signal_id": str(signal_id)}
+            sig_dict = _enrich_signal(_signal_row_to_dict(row))
 
+    # Build a minimal Signal + DecisionEnvelope for task_creator
+    detected_at_raw = sig_dict.get("detected_at")
+    from datetime import datetime, timezone as _tz
+    detected_at = datetime.fromisoformat(detected_at_raw) if detected_at_raw else now
+    signal_obj = _Signal(
+        id=signal_id,
+        source_type=sig_dict["source_type"],
+        source_id=sig_dict["source_id"],
+        signal_type=sig_dict["signal_type"],
+        title=sig_dict["title"],
+        raw_payload=sig_dict.get("raw_payload") or {},
+        detected_at=detected_at,
+    )
+    envelope = DecisionEnvelope(
+        signal_id=str(signal_id),
+        decision=sig_dict.get("decision") or "adopt",
+        confidence=sig_dict.get("decision_confidence") or 0.0,
+        rationale=sig_dict.get("rationale") or sig_dict.get("decision_reason") or "",
+        recommended_actions=sig_dict.get("recommended_actions") or [],
+        relevance_to_stack="",
+        urgency="medium",
+        decided_by="human",
+    )
+
+    task_result = default_task_creator(signal_obj, envelope)
+    task_id = task_result.get("task_id")
+    task_status = task_result.get("status", "unknown")
+
+    with _connect(**config.connection_kwargs()) as conn:
+        with conn.cursor() as cur:
             cur.execute(
                 """UPDATE signals
                       SET acted_on = true,
@@ -219,6 +270,8 @@ def approve_signal(config: PostgresConfig, *, signal_id: UUID) -> dict[str, Any]
                         "action": "approve",
                         "status": "completed",
                         "decided_by": "human",
+                        "task_id": task_id,
+                        "task_status": task_status,
                         "timestamp": _iso(now),
                     }]),
                     now,
@@ -227,7 +280,12 @@ def approve_signal(config: PostgresConfig, *, signal_id: UUID) -> dict[str, Any]
             )
         conn.commit()
 
-    return {"status": "approved", "signal_id": str(signal_id)}
+    return {
+        "status": "approved",
+        "signal_id": str(signal_id),
+        "task_id": task_id,
+        "task_status": task_status,
+    }
 
 
 def override_signal(
@@ -432,6 +490,21 @@ def build_decision_trends(config: PostgresConfig, *, days: int = 30) -> dict[str
     return {"daily": daily}
 
 
+def _extract_recommended_actions(action_log: Any) -> list[str]:
+    """Pull recommended_actions from the decision_envelope entry in a signal's action_log.
+
+    _make_action_entry flattens metadata directly onto the entry dict (no 'metadata' sub-key).
+    """
+    if not isinstance(action_log, list):
+        return []
+    for entry in action_log:
+        if isinstance(entry, dict) and entry.get("action") == "decision_envelope":
+            ra = entry.get("recommended_actions")
+            if isinstance(ra, list):
+                return [str(a) for a in ra if str(a).strip()]
+    return []
+
+
 def build_tracking(config: PostgresConfig, *, wg_dir: Path | None = None) -> dict[str, Any]:
     """Return tracking state: all monitored repos/users with current SHA, dates, and most recent signal."""
     # Load update state (current SHA + commit_date per repo/user)
@@ -461,7 +534,8 @@ def build_tracking(config: PostgresConfig, *, wg_dir: Path | None = None) -> dic
             cur.execute(
                 """SELECT DISTINCT ON (split_part(source_id, '@', 1))
                    split_part(source_id, '@', 1) AS repo_path,
-                   signal_type, title, detected_at, decision, decision_confidence
+                   signal_type, title, detected_at, decision, decision_confidence,
+                   decision_reason, action_log
                    FROM signals
                    WHERE source_type = 'github'
                    ORDER BY split_part(source_id, '@', 1), detected_at DESC"""
@@ -474,6 +548,8 @@ def build_tracking(config: PostgresConfig, *, wg_dir: Path | None = None) -> dic
                     "detected_at": _iso(row[3]),
                     "decision": str(row[4]) if row[4] else None,
                     "confidence": float(row[5]) if row[5] is not None else None,
+                    "rationale": str(row[6]) if row[6] else None,
+                    "recommended_actions": _extract_recommended_actions(row[7]),
                 }
 
             # Most recent signal per user (activity/new_repo signals have title "... from @user: ...")
@@ -482,7 +558,8 @@ def build_tracking(config: PostgresConfig, *, wg_dir: Path | None = None) -> dic
                        substring(title FROM 'from @([^ :]+)')
                    )
                    substring(title FROM 'from @([^ :]+)') AS username,
-                   signal_type, title, detected_at, decision, decision_confidence
+                   signal_type, title, detected_at, decision, decision_confidence,
+                   decision_reason, action_log
                    FROM signals
                    WHERE source_type = 'github'
                      AND signal_type IN ('activity', 'new_repo')
@@ -499,6 +576,8 @@ def build_tracking(config: PostgresConfig, *, wg_dir: Path | None = None) -> dic
                         "detected_at": _iso(row[3]),
                         "decision": str(row[4]) if row[4] else None,
                         "confidence": float(row[5]) if row[5] is not None else None,
+                        "rationale": str(row[6]) if row[6] else None,
+                        "recommended_actions": _extract_recommended_actions(row[7]),
                     }
 
     # Build repos list from state (covers ECOSYSTEM_REPOS + extra_repos)

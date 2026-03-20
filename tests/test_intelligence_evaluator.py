@@ -172,6 +172,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
 
     def test_default_model_invoker_routes_haiku_models_to_anthropic_api(self) -> None:
         with (
+            mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "fake-key"}),
             mock.patch(
                 "driftdriver.intelligence.evaluator._invoke_anthropic_api",
                 return_value={"decisions": []},

@@ -436,58 +436,38 @@ def _read_graph_lines(graph_path: Path) -> list[dict[str, Any]]:
     return out
 
 
-def _write_graph_lines(graph_path: Path, nodes: list[dict[str, Any]]) -> None:
-    """Write graph lines atomically."""
-    tmp = graph_path.with_suffix(".jsonl.router-tmp")
-    tmp.write_text(
-        "\n".join(json.dumps(n) for n in nodes) + "\n",
-        encoding="utf-8",
+def _run_wg(repo_path: Path, *args: str, timeout: int = 15) -> subprocess.CompletedProcess[str]:
+    """Run a wg CLI command against the repo's workgraph directory.
+
+    Uses wg's flock-based concurrency instead of direct graph.jsonl writes.
+    """
+    wg_dir = repo_path / ".workgraph"
+    cmd = ["wg", "--dir", str(wg_dir)] + list(args)
+    return subprocess.run(
+        cmd,
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
     )
-    tmp.replace(graph_path)
 
 
-def claim_task(task_id: str, repo_path: Path) -> bool:
-    """Claim a task by setting its status to in-progress in graph.jsonl.
+def claim_task(task_id: str, repo_path: Path, *, actor: str = "driftdriver-router") -> bool:
+    """Claim a task via ``wg claim`` (flock-safe).
 
     Returns True if claimed, False if already in-progress or not found.
     """
-    graph_path = repo_path / ".workgraph" / "graph.jsonl"
-    nodes = _read_graph_lines(graph_path)
-
-    found = False
-    for node in nodes:
-        if node.get("kind") == "task" and node.get("id") == task_id:
-            if node.get("status") != "open":
-                return False
-            node["status"] = "in-progress"
-            node["started_at"] = datetime.now(timezone.utc).isoformat()
-            found = True
-            break
-
-    if not found:
+    try:
+        result = _run_wg(repo_path, "claim", task_id, "--actor", actor)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
         return False
-
-    _write_graph_lines(graph_path, nodes)
-    return True
 
 
 def _unclaim_task(task_id: str, repo_path: Path) -> None:
-    """Revert a claimed task back to open (used when dispatch fails)."""
-    graph_path = repo_path / ".workgraph" / "graph.jsonl"
-    nodes = _read_graph_lines(graph_path)
-    for node in nodes:
-        if node.get("kind") == "task" and node.get("id") == task_id:
-            if node.get("status") == "in-progress":
-                node["status"] = "open"
-                node.pop("started_at", None)
-                log = node.get("log", [])
-                if isinstance(log, list):
-                    log.append({
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "message": "Unclaimed by router: dispatch failed, returning to open",
-                    })
-            break
-    _write_graph_lines(graph_path, nodes)
+    """Revert a claimed task back to open via ``wg unclaim`` (flock-safe)."""
+    _run_wg(repo_path, "unclaim", task_id)
+    _run_wg(repo_path, "log", task_id, "Unclaimed by router: dispatch failed, returning to open")
 
 
 def route_ready_tasks(
@@ -548,7 +528,7 @@ def route_ready_tasks(
 
         # Claim before dispatch (HTTP executors only — wg spawn handles its own claiming)
         if executor.type == "http":
-            claimed = claim_task(str(task["id"]), repo_path)
+            claimed = claim_task(str(task["id"]), repo_path, actor=executor.name)
             if not claimed:
                 results.append(DispatchResult(
                     task_id=str(task["id"]),
@@ -587,13 +567,12 @@ def check_agent_completions(
     For each in-progress task with an agent tag:
     1. Match the tag to an HTTP executor
     2. GET the task status from the agent endpoint
-    3. If status is "done", mark the wg task as done with the agent's summary
-    4. If status is "failed", mark the wg task as failed
+    3. If status is "done", mark the wg task as done via ``wg done`` (flock-safe)
+    4. If status is "failed", mark the wg task as failed via ``wg fail`` (flock-safe)
     """
     graph_path = repo_path / ".workgraph" / "graph.jsonl"
     nodes = _read_graph_lines(graph_path)
     results: list[CompletionResult] = []
-    modified = False
 
     for node in nodes:
         if node.get("kind") != "task" or node.get("status") != "in-progress":
@@ -624,41 +603,23 @@ def check_agent_completions(
         summary = data.get("summary", "")
 
         if agent_status == "done":
-            node["status"] = "done"
-            node["completed_at"] = datetime.now(timezone.utc).isoformat()
-            log = node.get("log", [])
-            if not isinstance(log, list):
-                log = []
-            log.append({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "message": f"Completed by agent via router. Summary: {str(summary)[:200]}",
-            })
-            node["log"] = log
-            modified = True
+            _run_wg(repo_path, "log", task_id,
+                     f"Completed by agent via router. Summary: {str(summary)[:200]}")
+            _run_wg(repo_path, "done", task_id, "--skip-verify")
             results.append(CompletionResult(
                 task_id=task_id, completed=True, summary=str(summary)[:500],
             ))
 
         elif agent_status == "failed":
-            node["status"] = "failed"
-            node["failure_reason"] = str(data.get("error", "Agent reported failure"))[:500]
-            log = node.get("log", [])
-            if not isinstance(log, list):
-                log = []
-            log.append({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "message": f"Failed by agent via router: {node['failure_reason']}",
-            })
-            node["log"] = log
-            modified = True
+            failure_reason = str(data.get("error", "Agent reported failure"))[:500]
+            _run_wg(repo_path, "log", task_id,
+                     f"Failed by agent via router: {failure_reason}")
+            _run_wg(repo_path, "fail", task_id, "--reason", failure_reason)
             results.append(CompletionResult(
-                task_id=task_id, completed=True, error=node["failure_reason"],
+                task_id=task_id, completed=True, error=failure_reason,
             ))
 
         # Status "accepted" or "running" → still in progress, skip
-
-    if modified:
-        _write_graph_lines(graph_path, nodes)
 
     return results
 

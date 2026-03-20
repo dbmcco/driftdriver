@@ -100,3 +100,6 @@ tag_match = "agent:ingrid"
 type = "http"
 endpoint = "http://localhost:3533/api/agent/task"
 tag_match = "agent:caroline"
+
+[attractor]
+target = "onboarded"

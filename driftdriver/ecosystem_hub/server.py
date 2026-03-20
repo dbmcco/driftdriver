@@ -296,9 +296,6 @@ def run_service_foreground(
     except Exception:
         _log.debug("Factory brain not available — skipping", exc_info=True)
 
-    # Clear stale locks at startup before anything else
-    _clear_stale_graph_locks(workspace_root)
-
     # Auto-restart: track source file timestamps at startup.
     # If any driftdriver source changes, the hub restarts itself.
     _driftdriver_src = Path(__file__).resolve().parent.parent
@@ -370,6 +367,28 @@ def run_service_foreground(
                         "attempts": [],
                     }
                 snapshot["supervisor"] = supervisor
+
+                # Governance enforcement: stop daemons on repos that shouldn't have them.
+                if supervise_services:
+                    try:
+                        from driftdriver.governancedrift import enforce_daemon_posture
+
+                        enforcement = enforce_daemon_posture(
+                            repos_payload=repos_payload if isinstance(repos_payload, list) else [],
+                            directive_log=directive_log,
+                        )
+                        snapshot["daemon_enforcement"] = enforcement
+                        if enforcement.get("actions"):
+                            _log.info(
+                                "Daemon enforcement: stopped %d service(s) (%s)",
+                                len(enforcement["actions"]),
+                                ", ".join(a["repo"] for a in enforcement["actions"]),
+                            )
+                    except Exception:
+                        _log.debug("Daemon enforcement failed", exc_info=True)
+                        snapshot["daemon_enforcement"] = {"enabled": False, "error": "enforcement failed"}
+                else:
+                    snapshot["daemon_enforcement"] = {"enabled": False}
 
                 # Phase 0 dark-factory loop: produce policy-bounded cycle plan + decision ledger.
                 wg_dir = project_dir / ".workgraph"

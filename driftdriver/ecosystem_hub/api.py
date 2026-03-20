@@ -680,6 +680,23 @@ class _HubHandler(BaseHTTPRequestHandler):
         if route == "/api/quality":
             self._send_json(snapshot.get("qadrift") or {"summary": {}, "repos": []})
             return
+        if route == "/api/conformance":
+            self._send_json(extract_conformance_response(snapshot))
+            return
+        if route == "/api/convergence":
+            self._send_json(
+                snapshot.get("convergence")
+                or {
+                    "total_repos": 0,
+                    "configured": 0,
+                    "converged": 0,
+                    "progress_pct": 0.0,
+                    "by_status": {},
+                    "by_target": {},
+                    "repos": [],
+                }
+            )
+            return
         if route == "/api/effectiveness":
             self._send_json(
                 snapshot.get("northstardrift")
@@ -879,6 +896,12 @@ class _HubHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         # Keep daemon logs clean and structured in our own files.
         return
+
+
+def extract_conformance_response(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Extract conformance findings from a snapshot dict for the /api/conformance response."""
+    findings = snapshot.get("conformance_findings", [])
+    return {"findings": findings, "count": len(findings)}
 
 
 def _build_activity_payload(activity_path: Path, window: str = "48h") -> dict[str, Any]:

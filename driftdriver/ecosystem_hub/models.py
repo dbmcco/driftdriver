@@ -22,6 +22,8 @@ class RepoSnapshot:
     exists: bool
     source: str = ""
     tags: list[str] = field(default_factory=list)
+    lifecycle: str = "active"
+    daemon_posture: str = "always-on"
     errors: list[str] = field(default_factory=list)
     git_branch: str = ""
     git_dirty: bool = False
@@ -58,6 +60,9 @@ class RepoSnapshot:
     service_status: dict[str, Any] = field(default_factory=dict)
     presence_actors: list[dict[str, Any]] = field(default_factory=list)
     continuation_intent: dict[str, Any] = field(default_factory=dict)
+    attractor_target: str = ""
+    attractor_status: str = ""
+    attractor_last_run: dict[str, Any] = field(default_factory=dict)
 
     def top_next_work(self, limit: int = 3) -> list[NextWorkItem]:
         out: list[NextWorkItem] = []

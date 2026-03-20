@@ -401,7 +401,7 @@ def _load_ecosystem_repos(ecosystem_toml: Path, workspace_root: Path) -> dict[st
 
 
 def _load_ecosystem_repo_meta(ecosystem_toml: Path) -> dict[str, dict[str, Any]]:
-    """Return {name: {"path": str, "url": str, "tags": list[str]}} for all registered repos."""
+    """Return {name: {"path", "url", "tags", "lifecycle", "daemon_posture"}} for all registered repos."""
     if not ecosystem_toml.exists():
         return {}
     try:
@@ -417,7 +417,7 @@ def _load_ecosystem_repo_meta(ecosystem_toml: Path) -> dict[str, dict[str, Any]]
         if not key:
             continue
         if not isinstance(value, dict):
-            out[key] = {"path": "", "url": "", "tags": []}
+            out[key] = {"path": "", "url": "", "tags": [], "lifecycle": "active", "daemon_posture": "always-on"}
             continue
         raw_tags = value.get("tags")
         tags: list[str] = (
@@ -429,6 +429,8 @@ def _load_ecosystem_repo_meta(ecosystem_toml: Path) -> dict[str, dict[str, Any]]
             "path": str(value.get("path") or ""),
             "url": str(value.get("url") or ""),
             "tags": tags,
+            "lifecycle": str(value.get("lifecycle") or "active"),
+            "daemon_posture": str(value.get("daemon_posture") or "always-on"),
         }
     return out
 

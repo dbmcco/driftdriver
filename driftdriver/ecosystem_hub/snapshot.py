@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from driftdriver.governancedrift import collect_ecosystem_governance
 from driftdriver.northstardrift import (
     apply_northstardrift,
     emit_northstar_review_tasks,
@@ -500,6 +501,30 @@ def collect_repo_snapshot(
     if isinstance(control_data, dict) and isinstance(control_data.get("continuation_intent"), dict):
         snap.continuation_intent = control_data["continuation_intent"]
 
+    # Attractor convergence state from drift-policy.toml + current-run.json.
+    policy_path = wg_dir / "drift-policy.toml"
+    if policy_path.exists():
+        try:
+            import tomllib
+            policy_data = tomllib.loads(policy_path.read_text(encoding="utf-8"))
+            snap.attractor_target = str(
+                (policy_data.get("attractor") or {}).get("target", "")
+            )
+        except Exception:
+            pass
+    current_run_path = wg_dir / "service" / "attractor" / "current-run.json"
+    run_data = _read_json(current_run_path)
+    if isinstance(run_data, dict) and run_data.get("status"):
+        snap.attractor_status = str(run_data.get("status") or "")
+        snap.attractor_last_run = {
+            "status": str(run_data.get("status") or ""),
+            "attractor": str(run_data.get("attractor") or ""),
+            "started_at": str(run_data.get("started_at") or ""),
+            "pass_count": len(run_data.get("passes") or []),
+            "remaining_findings": len(run_data.get("remaining_findings") or []),
+            "escalation_count": int(run_data.get("escalation_count") or 0),
+        }
+
     # Service status is best-effort; missing wg is non-fatal.
     rc, status_json, _ = _run_cmd(["wg", "--dir", str(wg_dir), "service", "status", "--json"], cwd=repo_path)
     if rc == 0 and status_json:
@@ -736,7 +761,10 @@ def collect_ecosystem_snapshot(
             qadrift_policy=qadrift_policy,
         )
         snap.source = repo_sources.get(name, "ecosystem-toml")
-        snap.tags = repo_meta.get(name, {}).get("tags") or []
+        meta = repo_meta.get(name, {})
+        snap.tags = meta.get("tags") or []
+        snap.lifecycle = meta.get("lifecycle", "active")
+        snap.daemon_posture = meta.get("daemon_posture", "always-on")
         return snap
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -748,12 +776,18 @@ def collect_ecosystem_snapshot(
                 repo_snap = RepoSnapshot(name=name, path=str(path), exists=path.exists())
                 repo_snap.errors.append("snapshot_timeout: repo scan exceeded 15s")
                 repo_snap.source = repo_sources.get(name, "ecosystem-toml")
-                repo_snap.tags = repo_meta.get(name, {}).get("tags") or []
+                meta = repo_meta.get(name, {})
+                repo_snap.tags = meta.get("tags") or []
+                repo_snap.lifecycle = meta.get("lifecycle", "active")
+                repo_snap.daemon_posture = meta.get("daemon_posture", "always-on")
             except Exception as exc:
                 repo_snap = RepoSnapshot(name=name, path=str(path), exists=path.exists())
                 repo_snap.errors.append(f"snapshot_error: {str(exc)[:200]}")
                 repo_snap.source = repo_sources.get(name, "ecosystem-toml")
-                repo_snap.tags = repo_meta.get(name, {}).get("tags") or []
+                meta = repo_meta.get(name, {})
+                repo_snap.tags = meta.get("tags") or []
+                repo_snap.lifecycle = meta.get("lifecycle", "active")
+                repo_snap.daemon_posture = meta.get("daemon_posture", "always-on")
             repos.append(repo_snap)
             upstream.extend(generate_upstream_candidates(name, path))
 
@@ -860,6 +894,16 @@ def collect_ecosystem_snapshot(
     repo_dependency_overview = build_repo_dependency_overview(repos)
     narrative = build_ecosystem_narrative(overview)
 
+    # Governance: collect conformance findings and Op. Health inputs
+    governance_meta = [
+        {"name": r.name, "lifecycle": r.lifecycle, "daemon_posture": r.daemon_posture}
+        for r in repos
+    ]
+    try:
+        governance = collect_ecosystem_governance(governance_meta, workspace_root)
+    except Exception:
+        governance = {"conformance_findings": [], "op_health_inputs": {}}
+
     snapshot = {
         "schema": 1,
         "generated_at": _iso_now(),
@@ -877,8 +921,43 @@ def collect_ecosystem_snapshot(
         "narrative": narrative,
         "secdrift": build_secdrift_overview(repos),
         "qadrift": build_qadrift_overview(repos),
+        "conformance_findings": governance.get("conformance_findings", []),
+        "op_health_inputs": governance.get("op_health_inputs", {}),
+        "convergence": _build_convergence_summary(repos),
     }
     return snapshot
+
+
+def _build_convergence_summary(repos: list[RepoSnapshot]) -> dict[str, Any]:
+    """Aggregate attractor convergence status across all repos."""
+    by_status: dict[str, int] = {}
+    by_target: dict[str, int] = {}
+    repo_entries: list[dict[str, Any]] = []
+    for r in repos:
+        target = r.attractor_target or ""
+        status = r.attractor_status or ""
+        if target:
+            by_target[target] = by_target.get(target, 0) + 1
+        if status:
+            by_status[status] = by_status.get(status, 0) + 1
+        if target or status:
+            repo_entries.append({
+                "name": r.name,
+                "target": target,
+                "status": status,
+                "last_run": r.attractor_last_run or {},
+            })
+    configured = len([r for r in repos if r.attractor_target])
+    converged = by_status.get("converged", 0)
+    return {
+        "total_repos": len(repos),
+        "configured": configured,
+        "converged": converged,
+        "progress_pct": round(converged / configured * 100, 1) if configured else 0.0,
+        "by_status": by_status,
+        "by_target": by_target,
+        "repos": repo_entries,
+    }
 
 
 def service_paths(project_dir: Path) -> dict[str, Path]:

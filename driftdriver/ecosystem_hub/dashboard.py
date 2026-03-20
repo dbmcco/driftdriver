@@ -547,13 +547,218 @@ def render_dashboard_html() -> str:
     .hub-tab-content { display: none; }
     .hub-tab-content.active { display: block; }
 
+    /* Conformance tab styles */
+    .conf-scores { padding: 0.85rem 0.9rem; }
+    .conf-score-row {
+      display: flex;
+      gap: 1.2rem;
+      margin-top: 0.5rem;
+    }
+    .conf-score-card {
+      flex: 1;
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      text-align: center;
+    }
+    .conf-score-label {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+    }
+    .conf-score-label small { font-size: 0.7rem; }
+    .conf-score-value {
+      display: block;
+      font-size: 1.6rem;
+      font-weight: 700;
+      font-family: var(--mono);
+    }
+    .conf-lifecycle { padding: 0.85rem 0.9rem; }
+    .lifecycle-buckets {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+    .lifecycle-bucket {
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 0.6rem 0.75rem;
+    }
+    .lifecycle-bucket h3 {
+      margin: 0 0 0.35rem;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .bucket-repos { font-size: 0.78rem; line-height: 1.55; }
+    .bucket-repo-tag {
+      display: inline-block;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      margin: 0.12rem 0.15rem;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+    }
+    .conf-violations { padding: 0.85rem 0.9rem; }
+    .conf-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .conf-table th {
+      text-align: left;
+      padding: 0.4rem 0.5rem;
+      border-bottom: 2px solid var(--line);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .conf-table td {
+      padding: 0.4rem 0.5rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .conf-table .severity-high { color: var(--bad); font-weight: 600; }
+    .conf-table .severity-medium { color: var(--warn); }
+    .conf-table .severity-low { color: var(--muted); }
+    .conf-action-btn {
+      padding: 0.2rem 0.55rem;
+      font-size: 0.72rem;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      cursor: pointer;
+      font-family: var(--sans);
+    }
+    .conf-action-btn:hover {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Convergence tab styles */
+    .conv-summary { padding: 0.85rem 0.9rem; }
+    .conv-progress-row {
+      display: flex;
+      gap: 1.2rem;
+      margin-top: 0.5rem;
+      align-items: stretch;
+    }
+    .conv-stat-card {
+      flex: 1;
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      text-align: center;
+    }
+    .conv-stat-label {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+    }
+    .conv-stat-value {
+      display: block;
+      font-size: 1.6rem;
+      font-weight: 700;
+      font-family: var(--mono);
+    }
+    .conv-bar-wrap {
+      margin-top: 0.65rem;
+      background: var(--line);
+      border-radius: 6px;
+      height: 18px;
+      overflow: hidden;
+      position: relative;
+    }
+    .conv-bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      background: var(--good);
+      transition: width 0.6s ease;
+    }
+    .conv-bar-label {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 0.7rem;
+      font-family: var(--mono);
+      font-weight: 600;
+      line-height: 18px;
+      color: var(--ink);
+    }
+    .conv-status-grid {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+    .conv-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .conv-status-pill .pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+    }
+    .conv-repos-section { padding: 0.85rem 0.9rem; }
+    .conv-repo-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .conv-repo-table th {
+      text-align: left;
+      padding: 0.4rem 0.5rem;
+      border-bottom: 2px solid var(--line);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .conv-repo-table td {
+      padding: 0.4rem 0.5rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .conv-status-badge {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .conv-status-badge.converged { background: #d4edda; color: var(--good); }
+    .conv-status-badge.plateau { background: #fff3cd; color: var(--warn); }
+    .conv-status-badge.escalated { background: #f7dfdf; color: var(--bad); }
+    .conv-status-badge.pending { background: var(--accent-soft); color: var(--accent); }
+    .conv-status-badge.max_passes,
+    .conv-status-badge.budget_exhausted,
+    .conv-status-badge.timeout { background: #ede0d4; color: var(--warn); }
+    .conv-unconfigured { color: var(--muted); font-style: italic; }
+
     /* Intelligence tab styles */
-    .intel-sub-tabs {
+    .intel-sub-tabs, .ops-sub-tabs {
       display: flex;
       gap: 0.5rem;
       margin-bottom: 0.75rem;
     }
-    .intel-sub-tab {
+    .intel-sub-tab, .ops-sub-tab {
       padding: 0.35rem 0.85rem;
       font-size: 0.8rem;
       border-radius: 6px;
@@ -563,12 +768,15 @@ def render_dashboard_html() -> str:
       cursor: pointer;
       font-family: var(--sans);
     }
-    .intel-sub-tab:hover { color: var(--ink); border-color: var(--accent); }
-    .intel-sub-tab.active {
+    .intel-sub-tab:hover, .ops-sub-tab:hover { color: var(--ink); border-color: var(--accent); }
+    .intel-sub-tab.active, .ops-sub-tab.active {
       background: var(--accent-soft);
       color: var(--accent);
       border-color: var(--accent);
     }
+    .ops-sub-panel { padding: 0.85rem 0.9rem 0.9rem; }
+    .ops-sub-content { display: none; }
+    .ops-sub-content.active { display: block; }
     .intel-stats {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -1057,6 +1265,8 @@ def render_dashboard_html() -> str:
     <nav class="hub-tabs" id="hub-tabs">
       <button class="hub-tab active" data-tab="operations">Operations</button>
       <button class="hub-tab" data-tab="intelligence">Intelligence</button>
+      <button class="hub-tab" data-tab="conformance">Conformance</button>
+      <button class="hub-tab" data-tab="convergence">Convergence</button>
     </nav>
 
     <!-- Operations Tab (existing content) -->
@@ -1080,7 +1290,7 @@ def render_dashboard_html() -> str:
       </div>
       <svg id="repo-dep-graph" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="graph-meta" id="repo-dep-meta">Loading repo dependency graph...</div>
-      <div class="graph-note" id="repo-dep-note">Click a repo node to focus and expand that repo below.</div>
+      <div class="graph-note" id="repo-dep-note">Click a repo node to open its detail view.</div>
       <div class="graph-legend">
         <span><span class="dot" style="background:#2f6e39"></span>Done</span>
         <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
@@ -1089,26 +1299,15 @@ def render_dashboard_html() -> str:
       </div>
     </section>
 
-    <!-- Activity Panel -->
-    <section class="activity-panel card" id="activity-section">
-      <h2>Recent Activity</h2>
-      <div class="activity-window-pills" id="activity-pills">
-        <button class="activity-pill" data-window="24h">24h</button>
-        <button class="activity-pill active" data-window="48h">48h</button>
-        <button class="activity-pill" data-window="72h">72h</button>
-        <button class="activity-pill" data-window="7d">7d</button>
+    <!-- Tabbed panel: Repos | Activity -->
+    <div class="ops-sub-panel card" id="ops-sub-panel">
+      <div class="ops-sub-tabs" id="ops-sub-tabs">
+        <button class="ops-sub-tab active" data-ops-view="repos">Repos <span class="badge" id="repo-count">0</span></button>
+        <button class="ops-sub-tab" data-ops-view="activity">Activity</button>
       </div>
-      <div class="activity-feed" id="activity-feed">
-        <div class="activity-item"><span class="activity-age">Loading\u2026</span></div>
-      </div>
-    </section>
 
-    <!-- Zone 4: Repo Table -->
-    <section class="repo-panel card" id="repo-section">
-        <div class="section-header">
-          <h2>Repos</h2>
-          <span class="badge" id="repo-count">0</span>
-        </div>
+      <!-- Repos sub-view -->
+      <div class="ops-sub-content active" id="ops-repos">
         <div class="repo-filter-bar" id="repo-filters">
           <input type="text" id="repo-search" placeholder="Search repos..." />
           <select id="repo-role-filter">
@@ -1149,50 +1348,43 @@ def render_dashboard_html() -> str:
               <th data-sort="tasks">Tasks</th>
               <th>Trend</th>
               <th data-sort="health">Health</th>
-              <th data-sort="git">Coded</th>
-              <th data-sort="activity">Heartbeat</th>
+              <th data-sort="git">Last Changed</th>
+              <th data-sort="activity">Last Ops</th>
             </tr>
           </thead>
           <tbody id="repo-body"></tbody>
         </table>
-    </section>
+      </div>
 
-    <!-- Task Graph Drawer (full-width, opens when repo expanded) -->
-    <section class="task-graph-drawer card" id="task-graph-drawer">
-      <div class="section-header">
-        <h2>Task Graph: <span class="drawer-repo-name" id="drawer-repo-name"></span></h2>
-        <div class="graph-controls">
-          <select id="drawer-graph-mode">
-            <option value="active">active + blocked</option>
-            <option value="full">full graph</option>
-            <option value="focus">focus chain</option>
-          </select>
-          <button type="button" id="drawer-zoom-out">&#x2212;</button>
-          <button type="button" id="drawer-zoom-in">+</button>
-          <button type="button" id="drawer-zoom-reset">reset</button>
+      <!-- Activity sub-view -->
+      <div class="ops-sub-content" id="ops-activity" style="display:none">
+        <div class="activity-window-pills" id="activity-pills" style="margin-bottom:0.5rem">
+          <button class="activity-pill" data-window="24h">24h</button>
+          <button class="activity-pill active" data-window="48h">48h</button>
+          <button class="activity-pill" data-window="72h">72h</button>
+          <button class="activity-pill" data-window="7d">7d</button>
+        </div>
+        <div class="activity-feed" id="activity-feed">
+          <div class="activity-item"><span class="activity-age">Loading\u2026</span></div>
         </div>
       </div>
-      <div class="repo-graph-wrap">
-        <svg class="task-dag-svg" id="drawer-graph-svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMin meet"></svg>
-      </div>
-      <div class="graph-legend" style="margin-top:0.35rem">
-        <span><span class="dot" style="background:#2f6e39"></span>Done</span>
-        <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
-        <span><span class="dot" style="background:#a26c13"></span>Open</span>
-        <span><span class="dot" style="background:#b85c1c"></span>Aging 3d+</span>
-        <span><span class="dot" style="background:#8c2f2f"></span>Aging 7d+</span>
-        <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
-        <span>Pulsing = active runtime task</span>
-      </div>
-      <div class="graph-path" id="drawer-graph-path" style="margin-top:0.3rem">Select a repo to view its task graph.</div>
-    </section>
+    </div><!-- end ops-sub-panel -->
 
-    <!-- Chat Panel stub (Approach C) -->
+    <!-- Chat Panel stub -->
     <aside id="chat-panel" hidden>
       <div class="section-header"><h2>Chat</h2></div>
       <div id="chat-messages"></div>
       <input type="text" id="chat-input" placeholder="Ask about your ecosystem..." />
     </aside>
+
+    <!-- Kept for JS compat: drawer elements are referenced by existing event wiring -->
+    <div style="display:none" aria-hidden="true">
+      <select id="drawer-graph-mode"><option value="active">active</option><option value="full">full</option><option value="focus">focus</option></select>
+      <button id="drawer-zoom-out"></button><button id="drawer-zoom-in"></button><button id="drawer-zoom-reset"></button>
+      <svg id="drawer-graph-svg"></svg>
+      <div id="drawer-graph-path"></div>
+      <span id="drawer-repo-name"></span>
+    </div>
     </div><!-- end tab-operations -->
 
     <!-- Intelligence Tab -->
@@ -1228,23 +1420,9 @@ def render_dashboard_html() -> str:
       <!-- Inbox View -->
       <div class="intel-sub-content" id="intel-inbox">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
-          <span style="font-size:0.82rem;color:var(--muted)" id="inbox-summary">0 signals awaiting review</span>
-          <button class="intel-btn batch" id="batch-approve-btn" onclick="batchApprove()">Batch Approve All</button>
+          <span style="font-size:0.82rem;color:var(--muted)" id="inbox-summary">0 items pending</span>
         </div>
-        <table class="intel-table" id="inbox-table">
-          <thead>
-            <tr>
-              <th>Source</th>
-              <th>Signal</th>
-              <th>LLM Rec</th>
-              <th>Confidence</th>
-              <th>Rationale</th>
-              <th>Urgency</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="inbox-body"></tbody>
-        </table>
+        <div id="inbox-body"></div>
       </div>
 
       <!-- Decision Log View -->
@@ -1299,8 +1477,7 @@ def render_dashboard_html() -> str:
                 <th>GitHub Path</th>
                 <th>Last Commit</th>
                 <th>Commit Date</th>
-                <th>Seen At</th>
-                <th>Recent Signal</th>
+                <th>Recommendation</th>
               </tr>
             </thead>
             <tbody id="tracking-repos-body"></tbody>
@@ -1313,6 +1490,7 @@ def render_dashboard_html() -> str:
               <tr>
                 <th>GitHub User</th>
                 <th>Recent Pushes</th>
+                <th>Recommendation</th>
               </tr>
             </thead>
             <tbody id="tracking-users-body"></tbody>
@@ -1324,6 +1502,115 @@ def render_dashboard_html() -> str:
         </div>
       </div>
     </div><!-- end tab-intelligence -->
+
+    <!-- Conformance Tab -->
+    <div class="hub-tab-content" id="tab-conformance">
+      <div id="conformance-panel">
+
+        <!-- Score comparison -->
+        <div class="conf-scores card">
+          <h2>Score Comparison</h2>
+          <div class="conf-score-row">
+            <div class="conf-score-card">
+              <span class="conf-score-label">Real Score <small>(active repos only)</small></span>
+              <span class="conf-score-value" id="score-real">&mdash;</span>
+            </div>
+            <div class="conf-score-card">
+              <span class="conf-score-label">Raw Score <small>(all repos)</small></span>
+              <span class="conf-score-value" id="score-raw">&mdash;</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Lifecycle map -->
+        <div class="conf-lifecycle card">
+          <h2>Lifecycle Map</h2>
+          <div class="lifecycle-buckets">
+            <div class="lifecycle-bucket" id="bucket-active">
+              <h3>Active</h3>
+              <div class="bucket-repos"></div>
+            </div>
+            <div class="lifecycle-bucket" id="bucket-maintenance">
+              <h3>Maintenance</h3>
+              <div class="bucket-repos"></div>
+            </div>
+            <div class="lifecycle-bucket" id="bucket-retired">
+              <h3>Retired</h3>
+              <div class="bucket-repos"></div>
+            </div>
+            <div class="lifecycle-bucket" id="bucket-experimental">
+              <h3>Experimental</h3>
+              <div class="bucket-repos"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Violation table -->
+        <div class="conf-violations card">
+          <h2>Conformance Violations</h2>
+          <div id="violation-empty" style="display:none; color:var(--muted); padding:0.5rem 0;">No violations found.</div>
+          <table class="conf-table" id="violation-table" style="display:none;">
+            <thead>
+              <tr><th>Repo</th><th>Category</th><th>Severity</th><th>Declared</th><th>Observed</th><th>Action</th></tr>
+            </thead>
+            <tbody id="violation-rows"></tbody>
+          </table>
+        </div>
+
+      </div><!-- end conformance-panel -->
+    </div><!-- end tab-conformance -->
+
+    <!-- Convergence Tab -->
+    <div class="hub-tab-content" id="tab-convergence">
+      <div id="convergence-panel">
+
+        <!-- Progress summary -->
+        <div class="conv-summary card">
+          <h2>Convergence Progress</h2>
+          <div class="conv-progress-row">
+            <div class="conv-stat-card">
+              <span class="conv-stat-label">Configured</span>
+              <span class="conv-stat-value" id="conv-configured">&mdash;</span>
+            </div>
+            <div class="conv-stat-card">
+              <span class="conv-stat-label">Converged</span>
+              <span class="conv-stat-value good" id="conv-converged">&mdash;</span>
+            </div>
+            <div class="conv-stat-card">
+              <span class="conv-stat-label">Progress</span>
+              <span class="conv-stat-value" id="conv-progress-pct">&mdash;</span>
+            </div>
+          </div>
+          <div class="conv-bar-wrap">
+            <div class="conv-bar-fill" id="conv-bar-fill" style="width:0%"></div>
+            <span class="conv-bar-label" id="conv-bar-label">0%</span>
+          </div>
+          <div class="conv-status-grid" id="conv-status-grid"></div>
+        </div>
+
+        <!-- Per-repo table -->
+        <div class="conv-repos-section card">
+          <h2>Repo Convergence Status</h2>
+          <div id="conv-unconfigured-note" class="conv-unconfigured" style="display:none"></div>
+          <table class="conv-repo-table" id="conv-repo-table">
+            <thead>
+              <tr>
+                <th>Repo</th>
+                <th>Target</th>
+                <th>Status</th>
+                <th>Passes</th>
+                <th>Remaining</th>
+                <th>Escalations</th>
+                <th>Last Run</th>
+              </tr>
+            </thead>
+            <tbody id="conv-repo-rows"></tbody>
+          </table>
+        </div>
+
+      </div><!-- end convergence-panel -->
+    </div><!-- end tab-convergence -->
+
   </main>
   </div><!-- end view-hub -->
 
@@ -1352,6 +1639,29 @@ def render_dashboard_html() -> str:
       <section class="detail-section" id="detail-workgraph">
         <h2>Workgraph</h2>
         <div id="detail-workgraph-content"><em style="color:var(--muted)">Loading\u2026</em></div>
+        <div class="graph-controls" id="detail-graph-controls" style="display:none;margin-top:0.65rem">
+          <select id="detail-graph-mode">
+            <option value="active">active + blocked</option>
+            <option value="full">full graph</option>
+            <option value="focus">focus chain</option>
+          </select>
+          <button type="button" id="detail-zoom-out">&#x2212;</button>
+          <button type="button" id="detail-zoom-in">+</button>
+          <button type="button" id="detail-zoom-reset">reset</button>
+        </div>
+        <div class="repo-graph-wrap" id="detail-graph-wrap" style="display:none;margin-top:0.4rem">
+          <svg class="task-dag-svg" id="detail-graph-svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMin meet"></svg>
+        </div>
+        <div class="graph-legend" id="detail-graph-legend" style="display:none;margin-top:0.35rem">
+          <span><span class="dot" style="background:#2f6e39"></span>Done</span>
+          <span><span class="dot" style="background:#0f6f7c"></span>In progress</span>
+          <span><span class="dot" style="background:#a26c13"></span>Open</span>
+          <span><span class="dot" style="background:#b85c1c"></span>Aging 3d+</span>
+          <span><span class="dot" style="background:#8c2f2f"></span>Aging 7d+</span>
+          <span><span class="dot" style="background:#9c2525"></span>Blocked</span>
+          <span>Pulsing = active runtime task</span>
+        </div>
+        <div class="graph-path" id="detail-graph-path" style="margin-top:0.3rem"></div>
       </section>
 
       <section class="detail-section" id="detail-agents">
@@ -1483,18 +1793,7 @@ def render_dashboard_html() -> str:
       }
     }
     function drawExpandedRepoGraph() {
-      var drawer = el('task-graph-drawer');
-      if (!currentData || !expandedRepo) {
-        drawer.classList.remove('open');
-        return;
-      }
-      drawer.classList.add('open');
-      var repo = repoByName(expandedRepo);
-      var nameEl = el('drawer-repo-name');
-      nameEl.innerHTML = esc(expandedRepo)
-        + (repo && repo.stalled ? '<span class="stall-badge">STALLED</span>' : '');
-      var modeSelect = el('drawer-graph-mode');
-      if (modeSelect) modeSelect.value = graphMode;
+      if (!currentData || !expandedRepo) return;
       var repo = repoByName(expandedRepo);
       if (repo) drawTaskDag(repo, el('drawer-graph-svg'), el('drawer-graph-path'));
     }
@@ -1869,6 +2168,21 @@ def render_dashboard_html() -> str:
       }
 
       content.innerHTML = '<div style="margin-bottom:0.5rem">' + pillsHtml + '</div>' + tasksHtml;
+
+      // Show SVG graph if repo has graph data
+      var detailGraphControls = el('detail-graph-controls');
+      var detailGraphWrap = el('detail-graph-wrap');
+      var detailGraphLegend = el('detail-graph-legend');
+      var detailGraphPath = el('detail-graph-path');
+      var detailGraphSvg = el('detail-graph-svg');
+      var repoForGraph = repo || repoByName(detailRepo);
+      if (repoForGraph && detailGraphSvg) {
+        detailGraphControls.style.display = '';
+        detailGraphWrap.style.display = '';
+        detailGraphLegend.style.display = '';
+        resetGraphViewState();
+        drawTaskDag(repoForGraph, detailGraphSvg, detailGraphPath);
+      }
     }
 
     function _taskCountPill(label, count) {
@@ -3256,6 +3570,11 @@ def render_dashboard_html() -> str:
       drawRepoDependencyOverview(data);
       drawExpandedRepoGraph();
 
+      // Real-time convergence update when data arrives over WebSocket
+      if (data.convergence && convergenceLoaded) {
+        renderConvergencePanel(data.convergence);
+      }
+
       // On initial load, check if URL is /repo/<name> and open detail
       if (currentView === 'hub' && !detailRepo) {
         var _initRoute = window.location.pathname.match(/^\\/repo\\/(.+)$/);
@@ -3386,7 +3705,7 @@ def render_dashboard_html() -> str:
       if (!nodeEl) return;
       const name = String(nodeEl.getAttribute('data-focus-repo') || '');
       if (!name) return;
-      selectRepo(name, { forceExpanded: true, scrollIntoView: true });
+      openRepoDetail(name);
     });
 
     el('repo-search').addEventListener('input', function(e) {
@@ -3501,7 +3820,7 @@ def render_dashboard_html() -> str:
       if (!row) return;
       var name = String(row.getAttribute('data-repo-name') || '');
       if (!name) return;
-      selectRepo(name, { toggleExpanded: true });
+      openRepoDetail(name);
     });
 
     // Drawer graph controls
@@ -3547,6 +3866,63 @@ def render_dashboard_html() -> str:
     drawerSvg.addEventListener('pointerup', endGraphDrag);
     drawerSvg.addEventListener('pointercancel', endGraphDrag);
 
+    // Detail view graph controls
+    function redrawDetailGraph() {
+      var repo = repoByName(detailRepo);
+      if (!repo) return;
+      drawTaskDag(repo, el('detail-graph-svg'), el('detail-graph-path'));
+    }
+    el('detail-graph-mode').addEventListener('change', function() {
+      graphMode = String(el('detail-graph-mode').value || 'active');
+      selectedNodeId = '';
+      resetGraphViewState();
+      redrawDetailGraph();
+    });
+    el('detail-zoom-in').addEventListener('click', function() {
+      graphView.scale = Math.min(3.6, graphView.scale * 1.18);
+      redrawDetailGraph();
+    });
+    el('detail-zoom-out').addEventListener('click', function() {
+      graphView.scale = Math.max(0.45, graphView.scale / 1.18);
+      redrawDetailGraph();
+    });
+    el('detail-zoom-reset').addEventListener('click', function() {
+      resetGraphViewState();
+      redrawDetailGraph();
+    });
+
+    // Detail view graph pan/drag and node selection
+    var detailSvg = el('detail-graph-svg');
+    detailSvg.addEventListener('pointerdown', function(event) {
+      var nodeEl = event.target && event.target.closest ? event.target.closest('[data-node-id]') : null;
+      if (nodeEl) {
+        selectedNodeId = String(nodeEl.getAttribute('data-node-id') || '');
+        redrawDetailGraph();
+        return;
+      }
+      graphView.drag = true;
+      graphView.dragStartX = event.clientX;
+      graphView.dragStartY = event.clientY;
+      graphView.dragBaseX = graphView.tx;
+      graphView.dragBaseY = graphView.ty;
+      detailSvg.classList.add('dragging');
+      try { detailSvg.setPointerCapture(event.pointerId); } catch (_err) {}
+    });
+    detailSvg.addEventListener('pointermove', function(event) {
+      if (!graphView.drag) return;
+      graphView.tx = graphView.dragBaseX + (event.clientX - graphView.dragStartX);
+      graphView.ty = graphView.dragBaseY + (event.clientY - graphView.dragStartY);
+      redrawDetailGraph();
+    });
+    function endDetailGraphDrag(event) {
+      if (!graphView.drag) return;
+      graphView.drag = false;
+      detailSvg.classList.remove('dragging');
+      try { detailSvg.releasePointerCapture(event.pointerId); } catch (_err) {}
+    }
+    detailSvg.addEventListener('pointerup', endDetailGraphDrag);
+    detailSvg.addEventListener('pointercancel', endDetailGraphDrag);
+
     // --- Tab navigation ---
     document.querySelectorAll('.hub-tab').forEach(function(tab) {
       tab.addEventListener('click', function() {
@@ -3557,6 +3933,30 @@ def render_dashboard_html() -> str:
         var content = document.getElementById('tab-' + target);
         if (content) content.classList.add('active');
         if (target === 'intelligence') loadIntelligenceData();
+        if (target === 'conformance') loadConformancePanel();
+        if (target === 'convergence') loadConvergencePanel();
+      });
+    });
+
+    // --- Ops sub-tabs (Repos | Activity) ---
+    document.querySelectorAll('.ops-sub-tab').forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        var view = tab.getAttribute('data-ops-view');
+        document.querySelectorAll('.ops-sub-tab').forEach(function(t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        var reposEl = el('ops-repos');
+        var activityEl = el('ops-activity');
+        if (view === 'repos') {
+          reposEl.style.display = '';
+          activityEl.style.display = 'none';
+          reposEl.classList.add('active');
+          activityEl.classList.remove('active');
+        } else {
+          reposEl.style.display = 'none';
+          activityEl.style.display = '';
+          activityEl.classList.add('active');
+          reposEl.classList.remove('active');
+        }
       });
     });
 
@@ -3593,6 +3993,201 @@ def render_dashboard_html() -> str:
     function shortDate(iso) {
       if (!iso) return '-';
       return iso.substring(0, 10);
+    }
+
+    // --- Conformance panel ---
+    var conformanceLoaded = false;
+    async function loadConformancePanel() {
+      if (conformanceLoaded) return;
+      try {
+        var [confData, reposData, effData] = await Promise.all([
+          fetch('/api/conformance').then(function(r) { return r.json(); }),
+          fetch('/api/repos').then(function(r) { return r.json(); }),
+          fetch('/api/effectiveness').then(function(r) { return r.json(); })
+        ]);
+
+        // Score comparison
+        var realScore = (effData.summary || {}).overall_score;
+        el('score-real').textContent = realScore != null ? realScore.toFixed(1) : '--';
+        el('score-real').className = 'conf-score-value ' + (realScore >= 75 ? 'good' : realScore >= 50 ? 'warn' : 'bad');
+
+        // Raw score: average of ALL repo scores
+        var allScores = (effData.repo_scores || []);
+        var rawScore = 0;
+        if (allScores.length > 0) {
+          var sum = 0;
+          for (var i = 0; i < allScores.length; i++) sum += (allScores[i].score || 0);
+          rawScore = sum / allScores.length;
+        }
+        el('score-raw').textContent = allScores.length > 0 ? rawScore.toFixed(1) : '--';
+        el('score-raw').className = 'conf-score-value ' + (rawScore >= 75 ? 'good' : rawScore >= 50 ? 'warn' : 'bad');
+
+        // Lifecycle map
+        var buckets = { active: [], maintenance: [], retired: [], experimental: [] };
+        for (var j = 0; j < reposData.length; j++) {
+          var repo = reposData[j];
+          var lc = repo.lifecycle || 'active';
+          if (!buckets[lc]) buckets[lc] = [];
+          buckets[lc].push(repo.name || repo.repo || '?');
+        }
+        ['active', 'maintenance', 'retired', 'experimental'].forEach(function(key) {
+          var bucket = document.querySelector('#bucket-' + key + ' .bucket-repos');
+          if (!bucket) return;
+          bucket.innerHTML = '';
+          var names = buckets[key] || [];
+          if (names.length === 0) {
+            bucket.innerHTML = '<span style="color:var(--muted)">None</span>';
+            return;
+          }
+          names.sort();
+          names.forEach(function(name) {
+            var tag = document.createElement('span');
+            tag.className = 'bucket-repo-tag';
+            tag.textContent = name;
+            bucket.appendChild(tag);
+          });
+        });
+
+        // Violation table
+        var findings = confData.findings || [];
+        var rows = el('violation-rows');
+        var table = el('violation-table');
+        var empty = el('violation-empty');
+        rows.innerHTML = '';
+        if (findings.length === 0) {
+          table.style.display = 'none';
+          empty.style.display = '';
+        } else {
+          table.style.display = '';
+          empty.style.display = 'none';
+          findings.forEach(function(f) {
+            var tr = document.createElement('tr');
+            var sevClass = (f.severity || '').toLowerCase() === 'high' ? 'severity-high'
+              : (f.severity || '').toLowerCase() === 'medium' ? 'severity-medium' : 'severity-low';
+            var actionHtml = '';
+            if (f.category === 'lifecycle-violation' || f.category === 'daemon-posture') {
+              actionHtml = '<button class="conf-action-btn" onclick="stopDaemon(\'' + (f.repo || '').replace(/'/g, "\\'") + '\')">Stop Daemon</button>';
+            }
+            tr.innerHTML = '<td><code>' + (f.repo || '') + '</code></td>'
+              + '<td>' + (f.category || '') + '</td>'
+              + '<td class="' + sevClass + '">' + (f.severity || '') + '</td>'
+              + '<td>' + (f.declared || '') + '</td>'
+              + '<td>' + (f.observed || '') + '</td>'
+              + '<td>' + actionHtml + '</td>';
+            rows.appendChild(tr);
+          });
+        }
+        conformanceLoaded = true;
+      } catch (err) {
+        console.error('Conformance panel load error:', err);
+      }
+    }
+
+    function stopDaemon(repoName) {
+      if (!confirm('Stop workgraph daemon for ' + repoName + '?')) return;
+      fetch('/api/repo/' + encodeURIComponent(repoName) + '/service/workgraph/stop', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          alert(data.ok ? 'Daemon stopped for ' + repoName : 'Error: ' + (data.error || 'unknown'));
+          conformanceLoaded = false;
+          loadConformancePanel();
+        })
+        .catch(function(err) { alert('Request failed: ' + err.message); });
+    }
+
+    // --- Convergence panel ---
+    var convergenceLoaded = false;
+    async function loadConvergencePanel() {
+      if (convergenceLoaded) return;
+      try {
+        var convData = await fetch('/api/convergence').then(function(r) { return r.json(); });
+        renderConvergencePanel(convData);
+        convergenceLoaded = true;
+      } catch (err) {
+        console.error('Convergence panel load error:', err);
+      }
+    }
+
+    function renderConvergencePanel(data) {
+      var configured = data.configured || 0;
+      var converged = data.converged || 0;
+      var pct = data.progress_pct || 0;
+      var totalRepos = data.total_repos || 0;
+      var unconfigured = totalRepos - configured;
+
+      el('conv-configured').textContent = configured + '/' + totalRepos;
+      el('conv-converged').textContent = String(converged);
+      el('conv-progress-pct').textContent = pct.toFixed(1) + '%';
+      el('conv-progress-pct').className = 'conv-stat-value ' + (pct >= 80 ? 'good' : pct >= 40 ? 'warn' : 'bad');
+
+      el('conv-bar-fill').style.width = pct + '%';
+      el('conv-bar-label').textContent = converged + '/' + configured + ' converged';
+
+      // Status pills
+      var statusColors = {
+        converged: '#2f6e39', plateau: '#a26c13', escalated: '#9c2525',
+        pending: '#0f6f7c', max_passes: '#7a5c2e', budget_exhausted: '#7a5c2e',
+        timeout: '#7a5c2e', continue: '#0f6f7c'
+      };
+      var grid = el('conv-status-grid');
+      grid.innerHTML = '';
+      var byStatus = data.by_status || {};
+      var statusKeys = Object.keys(byStatus).sort();
+      for (var i = 0; i < statusKeys.length; i++) {
+        var key = statusKeys[i];
+        var pill = document.createElement('span');
+        pill.className = 'conv-status-pill';
+        var dotColor = statusColors[key] || 'var(--muted)';
+        pill.innerHTML = '<span class="pill-dot" style="background:' + dotColor + '"></span>'
+          + esc(key) + ': ' + byStatus[key];
+        grid.appendChild(pill);
+      }
+      // Target pills
+      var byTarget = data.by_target || {};
+      var targetKeys = Object.keys(byTarget).sort();
+      for (var j = 0; j < targetKeys.length; j++) {
+        var tkey = targetKeys[j];
+        var tpill = document.createElement('span');
+        tpill.className = 'conv-status-pill';
+        tpill.innerHTML = '<span class="pill-dot" style="background:var(--accent)"></span>'
+          + esc(tkey) + ': ' + byTarget[tkey];
+        grid.appendChild(tpill);
+      }
+
+      // Unconfigured note
+      var noteEl = el('conv-unconfigured-note');
+      if (unconfigured > 0) {
+        noteEl.textContent = unconfigured + ' repo(s) have no attractor target configured.';
+        noteEl.style.display = '';
+      } else {
+        noteEl.style.display = 'none';
+      }
+
+      // Repo table
+      var rows = el('conv-repo-rows');
+      rows.innerHTML = '';
+      var repos = data.repos || [];
+      repos.sort(function(a, b) {
+        var sa = a.status === 'converged' ? 1 : 0;
+        var sb = b.status === 'converged' ? 1 : 0;
+        if (sa !== sb) return sa - sb;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      for (var k = 0; k < repos.length; k++) {
+        var r = repos[k];
+        var run = r.last_run || {};
+        var tr = document.createElement('tr');
+        var statusClass = (r.status || '').replace(/[^a-z_]/g, '');
+        var lastRunDate = run.started_at ? run.started_at.substring(0, 16).replace('T', ' ') : '-';
+        tr.innerHTML = '<td><code>' + esc(r.name || '') + '</code></td>'
+          + '<td><code>' + esc(r.target || '-') + '</code></td>'
+          + '<td><span class="conv-status-badge ' + statusClass + '">' + esc(r.status || '-') + '</span></td>'
+          + '<td>' + (run.pass_count != null ? run.pass_count : '-') + '</td>'
+          + '<td>' + (run.remaining_findings != null ? run.remaining_findings : '-') + '</td>'
+          + '<td>' + (run.escalation_count != null ? run.escalation_count : '-') + '</td>'
+          + '<td><small>' + esc(lastRunDate) + '</small></td>';
+        rows.appendChild(tr);
+      }
     }
 
     async function loadIntelligenceData() {
@@ -3639,7 +4234,7 @@ def render_dashboard_html() -> str:
 
     function renderIntelTracking(data) {
       if (!data || data.error) {
-        el('tracking-repos-body').innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1rem">' + esc((data && data.error) || 'Unavailable') + '</td></tr>';
+        el('tracking-repos-body').innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1rem">' + esc((data && data.error) || 'Unavailable') + '</td></tr>';
         return;
       }
       var repos = data.repos || [];
@@ -3647,27 +4242,34 @@ def render_dashboard_html() -> str:
       var sources = data.sources || [];
       el('tracking-summary').textContent = repos.length + ' repos · ' + users.length + ' people tracked';
 
+      function recommendationHtml(sig) {
+        if (!sig) return '<span style="color:var(--line);font-size:0.8rem">not yet evaluated</span>';
+        var actions = sig.recommended_actions || [];
+        var rationale = sig.rationale || '';
+        var d = sig.decision;
+        if (!d) return '<span style="color:var(--muted);font-size:0.8rem">—</span>';
+        var badge = decisionBadge(d);
+        var conf = sig.confidence != null ? '<span style="font-size:0.7rem;color:var(--muted);margin-left:0.3rem">' + Math.round(sig.confidence * 100) + '%</span>' : '';
+        var actHtml = actions.length > 0
+          ? '<ul style="margin:0.3rem 0 0 0;padding-left:1.1rem;font-size:0.78rem">' + actions.map(function(a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'
+          : (rationale ? '<div style="font-size:0.75rem;color:var(--muted);margin-top:0.2rem;max-width:280px">' + esc(rationale.substring(0, 120)) + (rationale.length > 120 ? '…' : '') + '</div>' : '');
+        var date = sig.detected_at ? '<div style="font-size:0.7rem;color:var(--muted);margin-top:0.15rem">' + shortDate(sig.detected_at) + '</div>' : '';
+        return badge + conf + actHtml + date;
+      }
+
       // Repos table
       if (repos.length === 0) {
-        el('tracking-repos-body').innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1rem">No repos tracked yet</td></tr>';
+        el('tracking-repos-body').innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1rem">No repos tracked yet</td></tr>';
       } else {
         el('tracking-repos-body').innerHTML = repos.map(function(r) {
-          var sig = r.recent_signal;
-          var sigHtml = sig
-            ? '<span style="font-size:0.75rem">' + esc(sig.title.replace(/^Repo update detected: /, '').replace(/^Repo activity from /, '')) + '</span>' +
-              (sig.decision ? ' ' + decisionBadge(sig.decision) : '') +
-              '<br><span style="font-size:0.7rem;color:var(--muted)">' + shortDate(sig.detected_at) + '</span>'
-            : '<span style="color:var(--muted);font-size:0.8rem">—</span>';
           var ghUrl = r.repo ? 'https://github.com/' + r.repo : '#';
           var commitDate = r.commit_date ? r.commit_date.substring(0, 10) : '—';
-          var seenDate = r.seen_at ? r.seen_at.substring(0, 10) : '—';
           return '<tr>' +
             '<td style="font-weight:500">' + esc(r.name) + '</td>' +
             '<td><a href="' + esc(ghUrl) + '" target="_blank" style="color:var(--accent);font-size:0.8rem">' + esc(r.repo || '—') + '</a></td>' +
             '<td style="font-family:var(--mono);font-size:0.75rem">' + esc(r.sha || '—') + '</td>' +
             '<td style="font-size:0.8rem">' + esc(commitDate) + '</td>' +
-            '<td style="font-size:0.8rem;color:var(--muted)">' + esc(seenDate) + '</td>' +
-            '<td>' + sigHtml + '</td>' +
+            '<td>' + recommendationHtml(r.recent_signal) + '</td>' +
             '</tr>';
         }).join('');
       }
@@ -3682,18 +4284,18 @@ def render_dashboard_html() -> str:
             ? '<span style="color:var(--muted);font-size:0.8rem">—</span>'
             : recRepos.map(function(r) {
                 var pushed = r.pushed_at ? r.pushed_at.substring(0, 10) : '';
-                var desc = r.description ? ' — ' + r.description : '';
-                return '<div style="margin-bottom:0.2rem">' +
+                return '<div style="margin-bottom:0.25rem">' +
                   '<a href="' + esc(r.html_url) + '" target="_blank" style="color:var(--accent);font-size:0.78rem;font-weight:500">' + esc(r.path) + '</a>' +
                   (pushed ? '<span style="color:var(--muted);font-size:0.72rem;margin-left:0.4rem">' + esc(pushed) + '</span>' : '') +
-                  (desc ? '<div style="color:var(--muted);font-size:0.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px">' + esc(r.description) + '</div>' : '') +
+                  (r.description ? '<div style="color:var(--muted);font-size:0.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">' + esc(r.description) + '</div>' : '') +
                   '</div>';
               }).join('');
           var checked = u.seen_at ? u.seen_at.substring(0, 10) : '—';
           return '<tr>' +
             '<td style="vertical-align:top"><a href="https://github.com/' + esc(u.username) + '" target="_blank" style="color:var(--accent);font-weight:500">@' + esc(u.username) + '</a>' +
             '<div style="font-size:0.72rem;color:var(--muted)">checked ' + esc(checked) + '</div></td>' +
-            '<td>' + reposHtml + '</td>' +
+            '<td style="vertical-align:top">' + reposHtml + '</td>' +
+            '<td style="vertical-align:top">' + recommendationHtml(u.recent_signal) + '</td>' +
             '</tr>';
         }).join('');
       }
@@ -3780,30 +4382,85 @@ def render_dashboard_html() -> str:
     function renderIntelInbox(inbox) {
       var signals = inbox.signals || [];
       el('inbox-count').textContent = String(signals.length);
-      el('inbox-summary').textContent = signals.length + ' signal' + (signals.length !== 1 ? 's' : '') + ' awaiting review';
+      var technical = signals.filter(function(s) { return s.source_type !== 'vibez'; });
+      var community = signals.filter(function(s) { return s.source_type === 'vibez'; });
+      el('inbox-summary').textContent =
+        (technical.length ? technical.length + ' investigation' + (technical.length !== 1 ? 's' : '') : '') +
+        (technical.length && community.length ? ' · ' : '') +
+        (community.length ? community.length + ' community action' + (community.length !== 1 ? 's' : '') : '') ||
+        '0 items pending';
+
       if (signals.length === 0) {
-        el('inbox-body').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:1.5rem">No signals awaiting review</td></tr>';
+        el('inbox-body').innerHTML = '<div style="color:var(--muted);padding:2rem;text-align:center">No items pending review</div>';
         return;
       }
-      el('inbox-body').innerHTML = signals.map(function(s) {
-        var urgencyFromLog = '';
-        (s.action_log || []).forEach(function(entry) {
-          if (entry && entry.urgency) urgencyFromLog = entry.urgency;
-        });
-        return '<tr>' +
-          '<td>' + sourceBadge(s.source_type) + '</td>' +
-          '<td>' + esc(s.title) + '</td>' +
-          '<td>' + decisionBadge(s.decision) + '</td>' +
-          '<td>' + confStr(s.decision_confidence) + '</td>' +
-          '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(s.decision_reason || '-') + '</td>' +
-          '<td>' + urgencySpan(urgencyFromLog || 'low') + '</td>' +
-          '<td><div class="intel-actions">' +
-            '<button class="intel-btn approve" onclick="approveSignal(\\'' + escAttr(s.id) + '\\')">Approve</button>' +
-            '<button class="intel-btn override" onclick="showOverride(\\'' + escAttr(s.id) + '\\')">Override</button>' +
-            '<button class="intel-btn snooze" onclick="snoozeSignal(\\'' + escAttr(s.id) + '\\')">Snooze</button>' +
-          '</div></td>' +
-        '</tr>';
-      }).join('');
+
+      function inboxCard(s) {
+        var isCommunity = s.source_type === 'vibez';
+        var actions = s.recommended_actions || [];
+        var rationale = s.rationale || s.decision_reason || '';
+        var urgency = 'low';
+        (s.action_log || []).forEach(function(e) { if (e && e.urgency) urgency = e.urgency; });
+
+        // What happens on approve
+        var approveLabel, approveNote;
+        if (isCommunity) {
+          approveLabel = 'Queue';
+          approveNote = 'Creates a reminder task in workgraph for you to act on';
+        } else {
+          approveLabel = 'Dispatch';
+          approveNote = 'Creates investigation task in workgraph — agent will check, report findings';
+        }
+
+        var cardBorder = s.decision === 'adopt' ? 'border-left:3px solid var(--warn)' : 'border-left:3px solid var(--line)';
+        var typeLabel = isCommunity
+          ? '<span style="font-size:0.7rem;background:#e8f4e8;color:var(--good);padding:0.1rem 0.35rem;border-radius:3px;font-weight:600">COMMUNITY</span>'
+          : '<span style="font-size:0.7rem;background:#f4f0e8;color:var(--warn);padding:0.1rem 0.35rem;border-radius:3px;font-weight:600">INVESTIGATE</span>';
+
+        var actionsHtml = actions.length > 0
+          ? '<ul style="margin:0.4rem 0 0 0;padding-left:1.2rem;font-size:0.8rem">' +
+              actions.map(function(a) { return '<li style="margin-bottom:0.2rem">' + esc(a) + '</li>'; }).join('') +
+            '</ul>'
+          : '';
+        var rationaleHtml = rationale
+          ? '<div style="font-size:0.76rem;color:var(--muted);margin-top:0.35rem;font-style:italic">' + esc(rationale.substring(0, 160)) + (rationale.length > 160 ? '…' : '') + '</div>'
+          : '';
+
+        return '<div class="card" style="margin-bottom:0.5rem;' + cardBorder + '">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
+            '<div style="flex:1">' +
+              '<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem">' +
+                typeLabel + ' ' + decisionBadge(s.decision) + ' ' + urgencySpan(urgency) +
+                '<span style="font-size:0.72rem;color:var(--muted)">' + confStr(s.decision_confidence) + '</span>' +
+                '<span style="font-size:0.72rem;color:var(--muted)">' + sourceBadge(s.source_type) + '</span>' +
+              '</div>' +
+              '<div style="font-size:0.82rem;font-weight:600;color:var(--ink)">' + esc(s.title) + '</div>' +
+              actionsHtml +
+              rationaleHtml +
+            '</div>' +
+            '<div style="flex-shrink:0;margin-left:1rem;display:flex;flex-direction:column;align-items:flex-end;gap:0.3rem">' +
+              '<div class="intel-actions">' +
+                '<button class="intel-btn approve" onclick="approveSignal(\\'' + escAttr(s.id) + '\\')" title="' + esc(approveNote) + '">' + esc(approveLabel) + '</button>' +
+                '<button class="intel-btn snooze" onclick="snoozeSignal(\\'' + escAttr(s.id) + '\\')">Snooze</button>' +
+                '<button class="intel-btn override" onclick="showOverride(\\'' + escAttr(s.id) + '\\')">Override</button>' +
+              '</div>' +
+              '<div style="font-size:0.68rem;color:var(--muted);text-align:right;max-width:180px">' + esc(approveNote) + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }
+
+      var html = '';
+      if (technical.length > 0) {
+        html += '<div style="font-size:0.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem">Investigation Queue</div>';
+        html += technical.map(inboxCard).join('');
+      }
+      if (community.length > 0) {
+        html += '<div style="font-size:0.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:' + (technical.length ? '1rem' : '0') + ' 0 0.4rem">' +
+          'Community Actions <span style="font-weight:400;font-size:0.72rem">(things worth contributing to — queue to your task list)</span></div>';
+        html += community.map(inboxCard).join('');
+      }
+      el('inbox-body').innerHTML = html;
     }
 
     function renderIntelDecisions(decisions, trends) {
@@ -3849,7 +4506,14 @@ def render_dashboard_html() -> str:
     // --- Intelligence inbox actions ---
     async function approveSignal(id) {
       try {
-        await fetch('/intelligence/inbox/' + id + '/approve', { method: 'POST' });
+        var resp = await fetch('/intelligence/inbox/' + id + '/approve', { method: 'POST' });
+        var result = await resp.json();
+        if (result.task_id) {
+          var msg = result.task_status === 'created'
+            ? 'Dispatched: ' + result.task_id + ' created in workgraph'
+            : 'Approved — task creation ' + (result.task_status || 'unknown');
+          el('inbox-summary').textContent = msg;
+        }
         loadIntelligenceData();
       } catch (err) { console.warn('Approve failed:', err); }
     }

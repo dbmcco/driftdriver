@@ -79,7 +79,7 @@ def _recv_exact(sock_obj: socket.socket, count: int) -> bytes:
     return bytes(chunks)
 
 
-def _ws_connect(port: int) -> socket.socket:
+def _ws_connect(port: int) -> tuple[socket.socket, bytes]:
     key = base64.b64encode(os.urandom(16)).decode("ascii")
     sock_obj = socket.create_connection(("127.0.0.1", port), timeout=2.0)
     request = (
@@ -99,22 +99,43 @@ def _ws_connect(port: int) -> socket.socket:
         response += chunk
     if b"101 Switching Protocols" not in response:
         raise RuntimeError(f"unexpected_handshake:{response.decode('utf-8', errors='replace')}")
-    return sock_obj
+    # On loopback the server often flushes the 101 headers and the initial WS
+    # frame in a single TCP segment.  Bytes after \r\n\r\n are the start of the
+    # first WebSocket frame — capture them so they aren't silently discarded.
+    _, _, leftover = response.partition(b"\r\n\r\n")
+    return sock_obj, leftover
 
 
-def _ws_read_text(sock_obj: socket.socket, timeout: float = 3.0) -> str:
+def _ws_read_text(sock_obj: socket.socket, timeout: float = 3.0, *, prefix: bytes = b"") -> str:
     sock_obj.settimeout(timeout)
-    header = _recv_exact(sock_obj, 2)
+    _buf = bytearray(prefix)
+
+    def _read(count: int) -> bytes:
+        result = bytearray()
+        while len(result) < count:
+            needed = count - len(result)
+            if _buf:
+                take = min(len(_buf), needed)
+                result.extend(_buf[:take])
+                del _buf[:take]
+            else:
+                part = sock_obj.recv(needed)
+                if not part:
+                    raise RuntimeError("socket_closed")
+                result.extend(part)
+        return bytes(result)
+
+    header = _read(2)
     first, second = header[0], header[1]
     opcode = first & 0x0F
     if opcode != 0x1:
         raise RuntimeError(f"unexpected_opcode:{opcode}")
     size = second & 0x7F
     if size == 126:
-        size = struct.unpack("!H", _recv_exact(sock_obj, 2))[0]
+        size = struct.unpack("!H", _read(2))[0]
     elif size == 127:
-        size = struct.unpack("!Q", _recv_exact(sock_obj, 8))[0]
-    payload = _recv_exact(sock_obj, size) if size else b""
+        size = struct.unpack("!Q", _read(8))[0]
+    payload = _read(size) if size else b""
     return payload.decode("utf-8")
 
 
@@ -918,17 +939,18 @@ class EcosystemHubTests(unittest.TestCase):
                 draft_pr_title_prefix="speedrift",
             )
             ws_sock: socket.socket | None = None
+            ws_leftover: bytes = b""
             try:
                 deadline = time.time() + 6.0
                 while time.time() < deadline:
                     try:
-                        ws_sock = _ws_connect(port)
+                        ws_sock, ws_leftover = _ws_connect(port)
                         break
                     except Exception:
                         time.sleep(0.1)
                 self.assertIsNotNone(ws_sock)
                 assert ws_sock is not None
-                payload = json.loads(_ws_read_text(ws_sock))
+                payload = json.loads(_ws_read_text(ws_sock, prefix=ws_leftover))
                 self.assertIn("schema", payload)
                 self.assertIn("repos", payload)
             finally:

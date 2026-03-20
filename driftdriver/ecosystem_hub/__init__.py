@@ -53,6 +53,7 @@ from .snapshot import (
     _SUPERVISOR_DEFAULT_MAX_STARTS,
     _SUPERVISOR_LAST_ATTEMPT,
     _attach_sec_qa_signals,
+    _build_convergence_summary,
     _build_repo_narrative,
     _build_repo_task_graph,
     _decorate_snapshot_with_northstardrift,

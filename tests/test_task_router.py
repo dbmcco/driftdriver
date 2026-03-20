@@ -16,6 +16,8 @@ from driftdriver.task_router import (
     ExecutorConfig,
     RoutingConfig,
     claim_task,
+    _unclaim_task,
+    check_agent_completions,
     dispatch_task,
     load_routing_config,
     match_executor,
@@ -327,58 +329,213 @@ class TestFindReadyTasks(unittest.TestCase):
 # ClaimTests
 # ---------------------------------------------------------------------------
 class TestClaimTask(unittest.TestCase):
-    """Claim a task by updating graph.jsonl."""
+    """Claim a task via wg claim CLI with actor registration."""
 
-    def _write_graph(self, td: str, tasks: list[dict]) -> Path:
-        wg_dir = Path(td) / ".workgraph"
+    @patch("driftdriver.task_router.subprocess.run")
+    def test_claim_calls_wg_claim_with_actor(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        repo = Path("/fake/repo")
+        result = claim_task("t1", repo, actor="samantha")
+        self.assertTrue(result)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("claim", cmd)
+        self.assertIn("t1", cmd)
+        self.assertIn("--actor", cmd)
+        self.assertIn("samantha", cmd)
+
+    @patch("driftdriver.task_router.subprocess.run")
+    def test_claim_uses_default_actor(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        repo = Path("/fake/repo")
+        result = claim_task("t1", repo)
+        self.assertTrue(result)
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--actor", cmd)
+        self.assertIn("driftdriver-router", cmd)
+
+    @patch("driftdriver.task_router.subprocess.run")
+    def test_claim_returns_false_on_wg_failure(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=1, stderr="Task not found")
+        result = claim_task("t999", Path("/fake/repo"))
+        self.assertFalse(result)
+
+    @patch("driftdriver.task_router.subprocess.run")
+    def test_claim_returns_false_on_subprocess_error(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = FileNotFoundError("wg not found")
+        result = claim_task("t1", Path("/fake/repo"))
+        self.assertFalse(result)
+
+    @patch("driftdriver.task_router.subprocess.run")
+    def test_claim_passes_wg_dir(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        repo = Path("/my/project")
+        claim_task("t1", repo)
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--dir", cmd)
+        dir_idx = cmd.index("--dir")
+        self.assertEqual(cmd[dir_idx + 1], str(repo / ".workgraph"))
+
+
+# ---------------------------------------------------------------------------
+# UnclaimTests
+# ---------------------------------------------------------------------------
+class TestUnclaimTask(unittest.TestCase):
+    """Unclaim a task via wg unclaim CLI."""
+
+    @patch("driftdriver.task_router.subprocess.run")
+    def test_unclaim_calls_wg_unclaim(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        _unclaim_task("t1", Path("/fake/repo"))
+        calls = mock_run.call_args_list
+        # Should call wg unclaim
+        unclaim_cmd = calls[0][0][0]
+        self.assertIn("unclaim", unclaim_cmd)
+        self.assertIn("t1", unclaim_cmd)
+
+    @patch("driftdriver.task_router.subprocess.run")
+    def test_unclaim_logs_reason(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        _unclaim_task("t1", Path("/fake/repo"))
+        calls = mock_run.call_args_list
+        # Should have a log call after unclaim
+        self.assertGreaterEqual(len(calls), 2)
+        log_cmd = calls[1][0][0]
+        self.assertIn("log", log_cmd)
+        self.assertIn("t1", log_cmd)
+
+
+# ---------------------------------------------------------------------------
+# AgentCompletionTests
+# ---------------------------------------------------------------------------
+class TestCheckAgentCompletions(unittest.TestCase):
+    """Poll HTTP agent endpoints and mark tasks done/failed via wg CLI."""
+
+    def _setup_repo(self, td: str, tasks: list[dict]) -> Path:
+        repo = Path(td)
+        wg_dir = repo / ".workgraph"
         wg_dir.mkdir(parents=True)
-        graph_path = wg_dir / "graph.jsonl"
-        graph_path.write_text(
+        (wg_dir / "graph.jsonl").write_text(
             "\n".join(json.dumps(t) for t in tasks) + "\n",
             encoding="utf-8",
         )
-        return Path(td)
+        return repo
 
-    def test_claim_open_task(self) -> None:
+    def _make_config(self) -> RoutingConfig:
+        return RoutingConfig(
+            enabled=True,
+            default_executor="wg-daemon",
+            executors={
+                "samantha": ExecutorConfig(
+                    name="samantha",
+                    type="http",
+                    endpoint="http://localhost:3530/api/agent/task",
+                    tag_match="agent:samantha",
+                ),
+            },
+        )
+
+    @patch("driftdriver.task_router.subprocess.run")
+    @patch("driftdriver.task_router.urlopen")
+    def test_done_task_calls_wg_done(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {"status": "done", "summary": "Task completed"}
+        ).encode()
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "in-progress",
+                "title": "Test",
+                "tags": ["agent:samantha"],
+            },
+        ]
         with tempfile.TemporaryDirectory() as td:
-            repo = self._write_graph(td, [
-                {"kind": "task", "id": "t1", "status": "open", "title": "Do stuff"},
-            ])
-            result = claim_task("t1", repo)
-            self.assertTrue(result)
+            repo = self._setup_repo(td, tasks)
+            results = check_agent_completions(repo, self._make_config())
 
-            # Verify the graph was updated
-            lines = (repo / ".workgraph" / "graph.jsonl").read_text().splitlines()
-            task = json.loads(lines[0])
-            self.assertEqual(task["status"], "in-progress")
-            self.assertIn("started_at", task)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].completed)
+        self.assertEqual(results[0].summary, "Task completed")
+        # Verify wg done was called
+        done_calls = [
+            c for c in mock_run.call_args_list
+            if "done" in c[0][0]
+        ]
+        self.assertEqual(len(done_calls), 1)
+        self.assertIn("t1", done_calls[0][0][0])
 
-    def test_claim_already_in_progress(self) -> None:
+    @patch("driftdriver.task_router.subprocess.run")
+    @patch("driftdriver.task_router.urlopen")
+    def test_failed_task_calls_wg_fail(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {"status": "failed", "error": "Something broke"}
+        ).encode()
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "in-progress",
+                "title": "Test",
+                "tags": ["agent:samantha"],
+            },
+        ]
         with tempfile.TemporaryDirectory() as td:
-            repo = self._write_graph(td, [
-                {"kind": "task", "id": "t1", "status": "in-progress", "title": "Busy"},
-            ])
-            result = claim_task("t1", repo)
-            self.assertFalse(result)
+            repo = self._setup_repo(td, tasks)
+            results = check_agent_completions(repo, self._make_config())
 
-    def test_claim_nonexistent_task(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            repo = self._write_graph(td, [
-                {"kind": "task", "id": "t1", "status": "open", "title": "Do stuff"},
-            ])
-            result = claim_task("t999", repo)
-            self.assertFalse(result)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].completed)
+        self.assertIn("Something broke", results[0].error)
+        # Verify wg fail was called with reason
+        fail_calls = [
+            c for c in mock_run.call_args_list
+            if "fail" in c[0][0]
+        ]
+        self.assertEqual(len(fail_calls), 1)
+        fail_cmd = fail_calls[0][0][0]
+        self.assertIn("--reason", fail_cmd)
 
-    def test_claim_preserves_other_tasks(self) -> None:
+    @patch("driftdriver.task_router.urlopen")
+    def test_running_task_not_completed(self, mock_urlopen: MagicMock) -> None:
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {"status": "running"}
+        ).encode()
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "in-progress",
+                "title": "Test",
+                "tags": ["agent:samantha"],
+            },
+        ]
         with tempfile.TemporaryDirectory() as td:
-            repo = self._write_graph(td, [
-                {"kind": "task", "id": "t1", "status": "open", "title": "First"},
-                {"kind": "task", "id": "t2", "status": "done", "title": "Second"},
-            ])
-            claim_task("t1", repo)
-            lines = (repo / ".workgraph" / "graph.jsonl").read_text().splitlines()
-            t2 = json.loads(lines[1])
-            self.assertEqual(t2["status"], "done")
+            repo = self._setup_repo(td, tasks)
+            results = check_agent_completions(repo, self._make_config())
+
+        self.assertEqual(len(results), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -540,14 +697,18 @@ class TestRouteReadyTasks(unittest.TestCase):
         (wg_dir / "drift-policy.toml").write_bytes(toml_bytes)
         return repo
 
+    @patch("driftdriver.task_router.subprocess.run")
     @patch("driftdriver.task_router.urlopen")
-    def test_routes_multiple_tasks(self, mock_urlopen: MagicMock) -> None:
+    def test_routes_multiple_tasks(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
+    ) -> None:
         mock_response = MagicMock()
         mock_response.status = 200
         mock_response.read.return_value = b'{"ok": true}'
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
 
         tasks = [
             {
@@ -630,14 +791,18 @@ tag_match = "agent:samantha"
 
         self.assertEqual(len(results), 0)
 
+    @patch("driftdriver.task_router.subprocess.run")
     @patch("driftdriver.task_router.urlopen")
-    def test_claims_before_dispatch(self, mock_urlopen: MagicMock) -> None:
+    def test_claims_before_dispatch(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
+    ) -> None:
         mock_response = MagicMock()
         mock_response.status = 200
         mock_response.read.return_value = b'{"ok": true}'
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
 
         tasks = [
             {
@@ -663,14 +828,19 @@ tag_match = "agent:samantha"
             config = load_routing_config(repo / ".workgraph" / "drift-policy.toml")
             route_ready_tasks(repo, config)
 
-            # Verify the task was claimed (in-progress)
-            lines = (repo / ".workgraph" / "graph.jsonl").read_text().splitlines()
-            task = json.loads(lines[0])
-            self.assertEqual(task["status"], "in-progress")
+        # Verify wg claim was called with actor
+        claim_calls = [
+            c for c in mock_run.call_args_list
+            if "claim" in c[0][0] and "unclaim" not in c[0][0]
+        ]
+        self.assertEqual(len(claim_calls), 1)
+        cmd = claim_calls[0][0][0]
+        self.assertIn("--actor", cmd)
 
+    @patch("driftdriver.task_router.subprocess.run")
     @patch("driftdriver.task_router.urlopen")
     def test_routes_explicit_owner_without_tag_using_executor_match(
-        self, mock_urlopen: MagicMock
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
     ) -> None:
         mock_response = MagicMock()
         mock_response.status = 200
@@ -678,6 +848,7 @@ tag_match = "agent:samantha"
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
 
         tasks = [
             {
@@ -784,14 +955,18 @@ manual_owner_policy = "assist"
 class TestRouteEcosystem(unittest.TestCase):
     """Route tasks across multiple repos."""
 
+    @patch("driftdriver.task_router.subprocess.run")
     @patch("driftdriver.task_router.urlopen")
-    def test_iterates_repos(self, mock_urlopen: MagicMock) -> None:
+    def test_iterates_repos(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
+    ) -> None:
         mock_response = MagicMock()
         mock_response.status = 200
         mock_response.read.return_value = b'{"ok": true}'
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
 
         toml = b"""
 [routing]

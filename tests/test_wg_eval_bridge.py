@@ -110,7 +110,7 @@ class TestBridgeReport:
 # ---------------------------------------------------------------------------
 # AttributionTests
 # ---------------------------------------------------------------------------
-class TestAttribution:
+class AttributionTests:
     def _make_assignment(self, tmp_path, task_id, *, agent_id="agent-1",
                          composition_id="role-abc"):
         assignments_dir = tmp_path / ".workgraph" / "agency" / "assignments"
@@ -177,6 +177,7 @@ class TestAttribution:
         result = attribute_finding(tmp_path, finding)
         assert result is not None
         assert result["role_id"] == "unknown"
+
 
 
 # ---------------------------------------------------------------------------
