@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from driftdriver.agency_score_reader import read_agency_eval_score
 from driftdriver.governancedrift import collect_ecosystem_governance
 from driftdriver.northstardrift import (
     apply_northstardrift,
@@ -904,6 +905,19 @@ def collect_ecosystem_snapshot(
     except Exception:
         governance = {"conformance_findings": [], "op_health_inputs": {}}
 
+    # Agency eval inputs: aggregate rolling scores across all repos
+    _agency_scores = [
+        s for s in (
+            read_agency_eval_score(Path(r.path))
+            for r in repos
+            if r.path and r.exists
+        )
+        if s is not None
+    ]
+    _agency_eval_inputs = {
+        "eval_score": round(sum(_agency_scores) / len(_agency_scores), 1) if _agency_scores else None,
+    }
+
     snapshot = {
         "schema": 1,
         "generated_at": _iso_now(),
@@ -923,6 +937,7 @@ def collect_ecosystem_snapshot(
         "qadrift": build_qadrift_overview(repos),
         "conformance_findings": governance.get("conformance_findings", []),
         "op_health_inputs": governance.get("op_health_inputs", {}),
+        "agency_eval_inputs": _agency_eval_inputs,
         "convergence": _build_convergence_summary(repos),
     }
     return snapshot
