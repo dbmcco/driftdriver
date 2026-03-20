@@ -1267,6 +1267,7 @@ def render_dashboard_html() -> str:
       <button class="hub-tab" data-tab="intelligence">Intelligence</button>
       <button class="hub-tab" data-tab="conformance">Conformance</button>
       <button class="hub-tab" data-tab="convergence">Convergence</button>
+      <button class="hub-tab" data-tab="factory">Factory</button>
     </nav>
 
     <!-- Operations Tab (existing content) -->
@@ -1610,6 +1611,49 @@ def render_dashboard_html() -> str:
 
       </div><!-- end convergence-panel -->
     </div><!-- end tab-convergence -->
+
+    <!-- Factory Tab -->
+    <div class="hub-tab-content" id="tab-factory">
+      <div id="factory-panel">
+
+        <!-- Upstream Tracker -->
+        <div class="factory-upstream card">
+          <h2>Upstream Tracker</h2>
+          <div class="factory-upstream-meta" id="upstream-meta" style="color:var(--muted); margin-bottom:0.75rem;"></div>
+
+          <h3 style="font-size:0.9rem; margin:0.5rem 0 0.25rem;">External Repo Evaluations <small>(Pass 1)</small></h3>
+          <div id="upstream-pass1-empty" style="display:none; color:var(--muted); padding:0.25rem 0;">No evaluations recorded yet.</div>
+          <table class="conf-table" id="upstream-pass1-table" style="display:none;">
+            <thead>
+              <tr><th>Repo</th><th>Branch</th><th>Category</th><th>Relevance</th><th>Action</th><th>Risk</th><th>When</th></tr>
+            </thead>
+            <tbody id="upstream-pass1-rows"></tbody>
+          </table>
+
+          <h3 style="font-size:0.9rem; margin:1rem 0 0.25rem;">Unpushed Work <small>(Pass 2)</small></h3>
+          <div id="upstream-pass2-empty" style="display:none; color:var(--muted); padding:0.25rem 0;">No unpushed-work findings.</div>
+          <table class="conf-table" id="upstream-pass2-table" style="display:none;">
+            <thead>
+              <tr><th>Repo</th><th>Severity</th><th>Observed</th></tr>
+            </thead>
+            <tbody id="upstream-pass2-rows"></tbody>
+          </table>
+        </div>
+
+        <!-- Creation Pipeline -->
+        <div class="factory-pipeline card">
+          <h2>Creation Pipeline</h2>
+          <div id="pipeline-empty" style="display:none; color:var(--muted); padding:0.5rem 0;">No projects in intake queue.</div>
+          <table class="conf-table" id="pipeline-table" style="display:none;">
+            <thead>
+              <tr><th>Project</th><th>Status</th><th>Complexity</th><th>Design Panel</th><th>Repo</th></tr>
+            </thead>
+            <tbody id="pipeline-rows"></tbody>
+          </table>
+        </div>
+
+      </div><!-- end factory-panel -->
+    </div><!-- end tab-factory -->
 
   </main>
   </div><!-- end view-hub -->
@@ -3935,6 +3979,7 @@ def render_dashboard_html() -> str:
         if (target === 'intelligence') loadIntelligenceData();
         if (target === 'conformance') loadConformancePanel();
         if (target === 'convergence') loadConvergencePanel();
+        if (target === 'factory') loadFactoryPanel();
       });
     });
 
@@ -4187,6 +4232,103 @@ def render_dashboard_html() -> str:
           + '<td>' + (run.escalation_count != null ? run.escalation_count : '-') + '</td>'
           + '<td><small>' + esc(lastRunDate) + '</small></td>';
         rows.appendChild(tr);
+      }
+    }
+
+    // --- Factory panel ---
+    var factoryLoaded = false;
+    async function loadFactoryPanel() {
+      if (factoryLoaded) return;
+      try {
+        var [trackerData, pipelineData] = await Promise.all([
+          fetch('/api/upstream-tracker').then(function(r) { return r.json(); }),
+          fetch('/api/creation-pipeline').then(function(r) { return r.json(); }),
+        ]);
+
+        // Upstream tracker meta
+        var lastRun = trackerData.pass1_last_run;
+        el('upstream-meta').textContent = lastRun
+          ? 'Pass 1 last run: ' + lastRun.substring(0, 16).replace('T', ' ') + ' UTC'
+          : 'Pass 1 has not run yet — trigger via wg cycle task.';
+
+        // Pass 1 results
+        var pass1Results = trackerData.pass1_results || [];
+        var p1rows = el('upstream-pass1-rows');
+        var p1table = el('upstream-pass1-table');
+        var p1empty = el('upstream-pass1-empty');
+        p1rows.innerHTML = '';
+        if (pass1Results.length === 0) {
+          p1table.style.display = 'none';
+          p1empty.style.display = '';
+        } else {
+          p1table.style.display = '';
+          p1empty.style.display = 'none';
+          pass1Results.forEach(function(r) {
+            var actionClass = r.action === 'alert' ? 'severity-high' : 'severity-low';
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td><code>' + esc(r.repo || '') + '</code></td>'
+              + '<td><code>' + esc(r.branch || '') + '</code></td>'
+              + '<td>' + esc(r.category || '') + '</td>'
+              + '<td>' + (r.relevance_score != null ? r.relevance_score.toFixed(2) : '-') + '</td>'
+              + '<td class="' + actionClass + '">' + esc(r.action || '') + '</td>'
+              + '<td>' + (r.risk_score != null ? r.risk_score.toFixed(2) : '-') + '</td>'
+              + '<td><small>' + esc((r.timestamp || '').substring(0, 10)) + '</small></td>';
+            p1rows.appendChild(tr);
+          });
+        }
+
+        // Pass 2 findings
+        var pass2Findings = trackerData.pass2_findings || [];
+        var p2rows = el('upstream-pass2-rows');
+        var p2table = el('upstream-pass2-table');
+        var p2empty = el('upstream-pass2-empty');
+        p2rows.innerHTML = '';
+        if (pass2Findings.length === 0) {
+          p2table.style.display = 'none';
+          p2empty.style.display = '';
+        } else {
+          p2table.style.display = '';
+          p2empty.style.display = 'none';
+          pass2Findings.forEach(function(f) {
+            var sevClass = f.severity === 'medium' ? 'severity-medium' : 'severity-low';
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td><code>' + esc(f.repo || '') + '</code></td>'
+              + '<td class="' + sevClass + '">' + esc(f.severity || '') + '</td>'
+              + '<td>' + esc(f.observed || '') + '</td>';
+            p2rows.appendChild(tr);
+          });
+        }
+
+        // Creation pipeline
+        var projects = pipelineData || [];
+        var plrows = el('pipeline-rows');
+        var pltable = el('pipeline-table');
+        var plempty = el('pipeline-empty');
+        plrows.innerHTML = '';
+        if (projects.length === 0) {
+          pltable.style.display = 'none';
+          plempty.style.display = '';
+        } else {
+          pltable.style.display = '';
+          plempty.style.display = 'none';
+          projects.forEach(function(p) {
+            var statusClass = p.status === 'scaffolded' ? 'severity-low' : '';
+            var complexity = p.complexity != null ? (p.complexity * 100).toFixed(0) + '%' : '-';
+            var panelDone = p.design_panel_done ? '✓' : '—';
+            var repoPath = p.repo_path ? '<code>' + esc(p.repo_path.split('/').slice(-1)[0]) + '</code>' : '—';
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td><strong>' + esc(p.name || '') + '</strong></td>'
+              + '<td class="' + statusClass + '">' + esc(p.status || 'intake') + '</td>'
+              + '<td>' + complexity + '</td>'
+              + '<td>' + panelDone + '</td>'
+              + '<td>' + repoPath + '</td>';
+            plrows.appendChild(tr);
+          });
+        }
+
+        factoryLoaded = true;
+      } catch (err) {
+        console.error('Factory panel load error:', err);
       }
     }
 

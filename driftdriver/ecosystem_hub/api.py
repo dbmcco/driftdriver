@@ -683,6 +683,16 @@ class _HubHandler(BaseHTTPRequestHandler):
         if route == "/api/conformance":
             self._send_json(extract_conformance_response(snapshot))
             return
+        if route == "/api/upstream-tracker":
+            self._send_json(snapshot.get("upstream_tracker") or {
+                "pass1_last_run": None,
+                "pass1_results": [],
+                "pass2_findings": [],
+            })
+            return
+        if route == "/api/creation-pipeline":
+            self._send_json(snapshot.get("creation_pipeline") or [])
+            return
         if route == "/api/convergence":
             self._send_json(
                 snapshot.get("convergence")
