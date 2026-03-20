@@ -193,3 +193,23 @@ def test_pass2_dirty_tree_emits_finding() -> None:
     findings = run_pass2(repos)
     assert len(findings) == 1
     assert findings[0]["category"] == "unpushed-work"
+
+
+# --- Snapshot entry tests ---
+
+from driftdriver.upstream_tracker import build_snapshot_entry
+
+
+def test_build_snapshot_entry_no_state(tmp_path: Path) -> None:
+    repos = [{"name": "paia", "ahead": 0, "working_tree_dirty": False, "exists": True}]
+    entry = build_snapshot_entry(repos, state_dir=tmp_path)
+    assert "pass1_last_run" in entry
+    assert "pass2_findings" in entry
+    assert entry["pass2_findings"] == []
+
+
+def test_build_snapshot_entry_with_pass2_finding(tmp_path: Path) -> None:
+    repos = [{"name": "paia", "ahead": 5, "working_tree_dirty": False, "exists": True}]
+    entry = build_snapshot_entry(repos, state_dir=tmp_path)
+    assert len(entry["pass2_findings"]) == 1
+    assert entry["pass2_findings"][0]["category"] == "unpushed-work"

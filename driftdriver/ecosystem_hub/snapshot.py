@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from driftdriver.agency_score_reader import read_agency_eval_score
+from driftdriver.upstream_tracker import build_snapshot_entry as _build_upstream_entry
 from driftdriver.governancedrift import collect_ecosystem_governance
 from driftdriver.northstardrift import (
     apply_northstardrift,
@@ -918,6 +919,12 @@ def collect_ecosystem_snapshot(
         "eval_score": round(sum(_agency_scores) / len(_agency_scores), 1) if _agency_scores else None,
     }
 
+    # Upstream tracker entry — pass2 inline, pass1 from last saved state
+    _upstream_tracker = _build_upstream_entry(
+        [asdict(r) for r in repos],
+        state_dir=project_dir / ".driftdriver",
+    )
+
     snapshot = {
         "schema": 1,
         "generated_at": _iso_now(),
@@ -935,9 +942,10 @@ def collect_ecosystem_snapshot(
         "narrative": narrative,
         "secdrift": build_secdrift_overview(repos),
         "qadrift": build_qadrift_overview(repos),
-        "conformance_findings": governance.get("conformance_findings", []),
+        "conformance_findings": governance.get("conformance_findings", []) + _upstream_tracker["pass2_findings"],
         "op_health_inputs": governance.get("op_health_inputs", {}),
         "agency_eval_inputs": _agency_eval_inputs,
+        "upstream_tracker": _upstream_tracker,
         "convergence": _build_convergence_summary(repos),
     }
     return snapshot
