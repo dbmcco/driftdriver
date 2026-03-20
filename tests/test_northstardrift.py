@@ -176,7 +176,7 @@ class NorthstarDriftTests(unittest.TestCase):
         self.assertIn("summary", northstar)
         self.assertIn("axes", northstar)
         self.assertIn("repo_scores", northstar)
-        self.assertEqual(set(northstar["axes"].keys()), {"continuity", "autonomy", "quality", "coordination", "self_improvement"})
+        self.assertEqual(set(northstar["axes"].keys()), {"continuity", "autonomy", "product_quality", "coordination", "self_improvement", "operational_health"})
         self.assertEqual(len(northstar["repo_scores"]), 2)
         worst = northstar["repo_scores"][0]
         self.assertEqual(worst["repo"], "meridian")

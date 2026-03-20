@@ -8,22 +8,25 @@ from pathlib import Path
 from typing import Any
 
 from driftdriver.drift_task_guard import guarded_add_drift_task
+from driftdriver.governancedrift import score_operational_health
 
 
 AXIS_NAMES = (
     "continuity",
     "autonomy",
-    "quality",
+    "product_quality",
     "coordination",
     "self_improvement",
+    "operational_health",
 )
 
 AXIS_WEIGHTS: dict[str, float] = {
-    "continuity": 0.25,
-    "autonomy": 0.20,
-    "quality": 0.20,
-    "coordination": 0.20,
-    "self_improvement": 0.15,
+    "continuity": 0.22,
+    "autonomy": 0.18,
+    "product_quality": 0.18,
+    "coordination": 0.18,
+    "self_improvement": 0.12,
+    "operational_health": 0.12,
 }
 
 
@@ -33,9 +36,10 @@ def _default_targets_cfg() -> dict[str, Any]:
         "axes": {
             "continuity": 85.0,
             "autonomy": 82.0,
-            "quality": 80.0,
+            "product_quality": 80.0,
             "coordination": 78.0,
             "self_improvement": 76.0,
+            "operational_health": 75.0,
         },
     }
 
@@ -754,6 +758,11 @@ def compute_northstardrift(
 
     total_repos = len(repos)
     participating_repos = sum(1 for repo in repos if isinstance(repo, dict) and _is_participating_repo(repo))
+    participating_repos_active = sum(
+        1 for repo in repos
+        if isinstance(repo, dict) and _is_participating_repo(repo)
+        and str(repo.get("lifecycle", "active")) == "active"
+    )
     latent_repos = sum(1 for repo in repos if isinstance(repo, dict) and _is_latent_repo(repo))
     reporting_repos = sum(1 for repo in repos if isinstance(repo, dict) and bool(repo.get("reporting")))
     north_star_present_repos = sum(
@@ -860,7 +869,7 @@ def compute_northstardrift(
     regression_penalty_inverse = _penalty_inverse((stalled_repos * 8.0) + (blocked_total * 2.5) + (stale_active_total * 5.0))
     dirtiness_penalty_inverse = _ratio_score(total_repos - dirty_repos, total_repos, default=100.0)
     divergence_penalty_inverse = _penalty_inverse((total_behind / max(1, total_repos)) * 6.0)
-    quality = _clamp_score(
+    product_quality = _clamp_score(
         (0.35 * average_quality)
         + (0.18 * qadrift_pressure_inverse)
         + (0.17 * secdrift_pressure_inverse)
@@ -913,12 +922,23 @@ def compute_northstardrift(
         + (0.35 * plan_integrity_coverage)
     )
 
+    op_health_inputs = overview.get("op_health_inputs") if isinstance(overview.get("op_health_inputs"), dict) else {}
+    operational_health = _clamp_score(
+        score_operational_health(
+            zombie_ratio=float(op_health_inputs.get("zombie_ratio", 0.0)),
+            failed_abandoned_ratio=float(op_health_inputs.get("failed_abandoned_ratio", 0.0)),
+            posture_alignment_ratio=float(op_health_inputs.get("posture_alignment_ratio", 1.0)),
+            abandoned_age_pressure=float(op_health_inputs.get("abandoned_age_pressure", 0.0)),
+        )
+    )
+
     axis_raw = {
         "continuity": continuity,
         "autonomy": autonomy,
-        "quality": quality,
+        "product_quality": product_quality,
         "coordination": coordination,
         "self_improvement": self_improvement,
+        "operational_health": operational_health,
     }
     previous_axes = previous.get("axes") if isinstance(previous, dict) and isinstance(previous.get("axes"), dict) else {}
     axes: dict[str, dict[str, Any]] = {}
@@ -1174,6 +1194,7 @@ def compute_northstardrift(
         "counts": {
             "tracked_repos": total_repos,
             "participating_repos": participating_repos,
+            "participating_repos_active": participating_repos_active,
             "reporting_repos": reporting_repos,
             "repos_with_north_star": north_star_present_repos,
             "repos_missing_north_star": missing_north_star_repos,
