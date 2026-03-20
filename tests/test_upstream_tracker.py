@@ -94,3 +94,69 @@ def test_deep_eval_returns_risk_score() -> None:
     )
     assert "risk_score" in result
     assert result["recommended_action"] in ("adopt", "watch", "ignore")
+
+
+# --- Pass 1 tests ---
+
+from driftdriver.upstream_tracker import _git_current_sha, run_pass1
+
+
+def _make_git_repo(path: Path) -> str:
+    """Init a real git repo with one commit; return current SHA."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True)
+    (path / "README.md").write_text("hello")
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=path, check=True, capture_output=True)
+    result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True)
+    return result.stdout.strip()
+
+
+def test_git_current_sha(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    expected_sha = _make_git_repo(repo)
+    sha = _git_current_sha(repo, "HEAD")
+    assert sha == expected_sha
+
+
+def test_run_pass1_no_change_returns_empty(tmp_path: Path) -> None:
+    repo = tmp_path / "wg"
+    sha = _make_git_repo(repo)
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+
+    from driftdriver.upstream_pins import load_pins, save_pins, set_sha
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", sha)
+    save_pins(pins_path, pins)
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+        }]
+    }
+    results = run_pass1(config, pins_path, llm_caller=_fake_haiku_caller)
+    assert results == []
+
+
+def test_run_pass1_new_sha_triggers_eval(tmp_path: Path) -> None:
+    repo = tmp_path / "wg"
+    _make_git_repo(repo)
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    # No pin set → treat as new, triggers eval
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+        }]
+    }
+    results = run_pass1(config, pins_path, llm_caller=_fake_haiku_caller, deep_eval_caller=_fake_sonnet_caller)
+    assert len(results) == 1
+    result = results[0]
+    assert result["repo"] == "graphwork/workgraph"
+    assert result["branch"] == "main"
+    assert "action" in result
