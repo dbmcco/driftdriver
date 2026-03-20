@@ -1252,6 +1252,59 @@ def render_dashboard_html() -> str:
       font-weight: 600;
     }
     .repo-name-link:hover { text-decoration: underline; color: var(--accent); }
+
+    /* --- Chat side panel --- */
+    #chat-panel {
+      position: fixed; top: 0; right: -440px; width: 440px; height: 100vh;
+      background: var(--panel); border-left: 1px solid var(--line);
+      display: flex; flex-direction: column; z-index: 1000;
+      transition: right 0.25s ease; box-shadow: -4px 0 24px rgba(0,0,0,0.10);
+    }
+    #chat-panel.open { right: 0; }
+    #chat-toggle {
+      position: fixed; right: 1.25rem; bottom: 1.5rem; z-index: 1001;
+      background: var(--accent); color: #fff; border: none; border-radius: 24px;
+      padding: 0.55rem 1.1rem; font-size: 0.82rem; font-weight: 700;
+      cursor: pointer; box-shadow: 0 2px 14px rgba(0,0,0,0.18);
+      letter-spacing: 0.04em;
+    }
+    #chat-toggle:hover { opacity: 0.88; }
+    #chat-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.8rem 1rem; border-bottom: 1px solid var(--line); flex-shrink: 0;
+    }
+    #chat-messages {
+      flex: 1; overflow-y: auto; padding: 1rem;
+      display: flex; flex-direction: column; gap: 0.6rem;
+    }
+    .chat-msg-user {
+      align-self: flex-end; background: var(--accent); color: #fff;
+      border-radius: 14px 14px 3px 14px; padding: 0.5rem 0.9rem;
+      max-width: 88%; font-size: 0.875rem; line-height: 1.45;
+    }
+    .chat-msg-agent {
+      align-self: flex-start; background: var(--bg); border: 1px solid var(--line);
+      border-radius: 14px 14px 14px 3px; padding: 0.5rem 0.9rem;
+      max-width: 95%; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap;
+    }
+    .chat-msg-agent.streaming { border-color: var(--accent-soft); }
+    #chat-input-row {
+      display: flex; gap: 0.5rem; padding: 0.75rem;
+      border-top: 1px solid var(--line);
+    }
+    #chat-input {
+      flex: 1; border: 1px solid var(--line); border-radius: 8px;
+      padding: 0.5rem 0.75rem; font-size: 0.875rem; resize: none;
+      background: var(--bg); color: var(--ink); font-family: inherit;
+      min-height: 40px; max-height: 120px;
+    }
+    #chat-input:focus { outline: none; border-color: var(--accent); }
+    #chat-send {
+      background: var(--accent); color: #fff; border: none; border-radius: 8px;
+      padding: 0.5rem 1rem; font-weight: 700; cursor: pointer; font-size: 0.85rem;
+      align-self: flex-end;
+    }
+    #chat-send:disabled { opacity: 0.45; cursor: default; }
   </style>
 </head>
 <body>
@@ -1268,6 +1321,7 @@ def render_dashboard_html() -> str:
       <button class="hub-tab" data-tab="conformance">Conformance</button>
       <button class="hub-tab" data-tab="convergence">Convergence</button>
       <button class="hub-tab" data-tab="factory">Factory</button>
+      <button class="hub-tab" data-tab="sessions">Sessions</button>
     </nav>
 
     <!-- Operations Tab (existing content) -->
@@ -1654,6 +1708,20 @@ def render_dashboard_html() -> str:
 
       </div><!-- end factory-panel -->
     </div><!-- end tab-factory -->
+
+    <!-- Sessions Tab -->
+    <div class="hub-tab-content" id="tab-sessions">
+      <section class="card" style="margin:1rem 1.5rem;padding:1.25rem 1.5rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+          <h2 style="margin:0;font-size:1rem;font-weight:700;letter-spacing:0.04em">ACTIVE SESSIONS</h2>
+          <div style="display:flex;gap:0.5rem;align-items:center">
+            <a href="http://localhost:3550" target="_blank" style="font-size:0.8rem;color:var(--accent)">Open Freshell \u2197</a>
+            <button onclick="refreshSessions()" style="font-size:0.8rem;padding:0.25rem 0.75rem;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">Refresh</button>
+          </div>
+        </div>
+        <div id="sessions-list"><p style="color:var(--muted);font-size:0.88rem">Loading sessions\u2026</p></div>
+      </section>
+    </div><!-- end tab-sessions -->
 
   </main>
   </div><!-- end view-hub -->
@@ -3968,9 +4036,11 @@ def render_dashboard_html() -> str:
     detailSvg.addEventListener('pointercancel', endDetailGraphDrag);
 
     // --- Tab navigation ---
+    var currentTab = 'operations';
     document.querySelectorAll('.hub-tab').forEach(function(tab) {
       tab.addEventListener('click', function() {
         var target = tab.getAttribute('data-tab');
+        currentTab = target;
         document.querySelectorAll('.hub-tab').forEach(function(t) { t.classList.remove('active'); });
         document.querySelectorAll('.hub-tab-content').forEach(function(c) { c.classList.remove('active'); });
         tab.classList.add('active');
@@ -3980,6 +4050,7 @@ def render_dashboard_html() -> str:
         if (target === 'conformance') loadConformancePanel();
         if (target === 'convergence') loadConvergencePanel();
         if (target === 'factory') loadFactoryPanel();
+        if (target === 'sessions') refreshSessions();
       });
     });
 
@@ -4111,7 +4182,7 @@ def render_dashboard_html() -> str:
               : (f.severity || '').toLowerCase() === 'medium' ? 'severity-medium' : 'severity-low';
             var actionHtml = '';
             if (f.category === 'lifecycle-violation' || f.category === 'daemon-posture') {
-              actionHtml = '<button class="conf-action-btn" onclick="stopDaemon(\'' + (f.repo || '').replace(/'/g, "\\'") + '\')">Stop Daemon</button>';
+              actionHtml = '<button class="conf-action-btn" data-repo="' + esc(f.repo || '') + '" onclick="stopDaemon(this.dataset.repo)">Stop Daemon</button>';
             }
             tr.innerHTML = '<td><code>' + (f.repo || '') + '</code></td>'
               + '<td>' + (f.category || '') + '</td>'
@@ -4790,7 +4861,220 @@ def render_dashboard_html() -> str:
     // Reload activity every 5 minutes
     loadActivityData(currentActivityWindow);
     setInterval(function() { loadActivityData(currentActivityWindow); }, 5 * 60 * 1000);
+
+    // -----------------------------------------------------------------------
+    // Sessions tab
+    // -----------------------------------------------------------------------
+    function refreshSessions() {
+      var container = el('sessions-list');
+      if (!container) return;
+      fetch('/api/sessions')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var sessions = data.sessions || [];
+          var freshellUrl = data.freshell_url || 'http://localhost:3550';
+          if (sessions.length === 0) {
+            container.innerHTML = '<p style="color:var(--muted);font-size:0.88rem">No active sessions. Launch one from a repo detail page or ask the Agent to open one.</p>';
+            return;
+          }
+          var rows = sessions.map(function(s) {
+            var sid = s.id || s.session_id || '';
+            var url = s.url || (freshellUrl + '/session/' + sid);
+            var repo = esc(s.repo || s.repo_name || 'unknown');
+            var agent = esc(s.agent_type || 'claude-code');
+            var started = s.started_at ? relativeTimeIso(s.started_at) : '\u2014';
+            var active = s.last_active_at ? relativeTimeIso(s.last_active_at) : '\u2014';
+            return '<tr style="border-bottom:1px solid var(--line)">'
+              + '<td style="padding:0.5rem;font-weight:600">' + repo + '</td>'
+              + '<td style="padding:0.5rem;color:var(--muted)">' + agent + '</td>'
+              + '<td style="padding:0.5rem;color:var(--muted)">' + started + '</td>'
+              + '<td style="padding:0.5rem;color:var(--muted)">' + active + '</td>'
+              + '<td style="padding:0.5rem"><a href="' + esc(url) + '" target="_blank" '
+              + 'style="color:var(--accent);font-weight:700;text-decoration:none">Open \u2197</a></td>'
+              + '</tr>';
+          }).join('');
+          container.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.85rem">'
+            + '<thead><tr style="border-bottom:2px solid var(--line)">'
+            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Repo</th>'
+            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Agent</th>'
+            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Started</th>'
+            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Last Active</th>'
+            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Open</th>'
+            + '</tr></thead><tbody>' + rows + '</tbody></table>';
+        })
+        .catch(function() {
+          if (container) container.innerHTML = '<p style="color:var(--muted);font-size:0.88rem">Could not reach sessions API.</p>';
+        });
+    }
+
+    setInterval(function() {
+      if (typeof currentTab !== 'undefined' && currentTab === 'sessions') refreshSessions();
+    }, 15000);
+
+    // -----------------------------------------------------------------------
+    // Chat side panel
+    // -----------------------------------------------------------------------
+    var chatOpen = false;
+    var chatStreaming = false;
+
+    function toggleChat() {
+      chatOpen = !chatOpen;
+      var panel = document.getElementById('chat-panel');
+      var toggle = document.getElementById('chat-toggle');
+      if (chatOpen) {
+        panel.classList.add('open');
+        toggle.textContent = 'Agent \u25C4';
+        if (document.getElementById('chat-messages').children.length === 0) {
+          loadAgentChatHistory();
+        }
+        setTimeout(function() {
+          var inp = document.getElementById('chat-input');
+          if (inp) inp.focus();
+        }, 300);
+      } else {
+        panel.classList.remove('open');
+        toggle.textContent = 'Agent \u25BA';
+      }
+    }
+
+    function loadAgentChatHistory() {
+      fetch('/api/agent/chat/history')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var history = data.history || [];
+          var container = document.getElementById('chat-messages');
+          if (!container) return;
+          container.innerHTML = '';
+          history.forEach(function(turn) {
+            appendChatMsg(turn.user, 'user');
+            appendChatMsg(turn.assistant, 'agent');
+          });
+          scrollChatBottom();
+        })
+        .catch(function() {});
+    }
+
+    function appendChatMsg(text, role) {
+      var container = document.getElementById('chat-messages');
+      if (!container) return null;
+      var div = document.createElement('div');
+      div.className = role === 'user' ? 'chat-msg-user' : 'chat-msg-agent';
+      div.textContent = text;
+      container.appendChild(div);
+      return div;
+    }
+
+    function scrollChatBottom() {
+      var c = document.getElementById('chat-messages');
+      if (c) c.scrollTop = c.scrollHeight;
+    }
+
+    function clearAgentChat() {
+      fetch('/api/agent/chat/clear', {method: 'POST'})
+        .then(function() {
+          var c = document.getElementById('chat-messages');
+          if (c) c.innerHTML = '';
+        });
+    }
+
+    function sendAgentMessage() {
+      if (chatStreaming) return;
+      var input = document.getElementById('chat-input');
+      if (!input) return;
+      var message = input.value.trim();
+      if (!message) return;
+
+      input.value = '';
+      input.style.height = 'auto';
+      appendChatMsg(message, 'user');
+      scrollChatBottom();
+
+      chatStreaming = true;
+      var sendBtn = document.getElementById('chat-send');
+      if (sendBtn) sendBtn.disabled = true;
+
+      var agentDiv = appendChatMsg('', 'agent');
+      if (agentDiv) agentDiv.classList.add('streaming');
+      scrollChatBottom();
+
+      fetch('/api/agent/chat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({message: message}),
+      }).then(function(response) {
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+
+        function pump() {
+          return reader.read().then(function(result) {
+            if (result.done) {
+              chatStreaming = false;
+              if (sendBtn) sendBtn.disabled = false;
+              if (agentDiv) agentDiv.classList.remove('streaming');
+              scrollChatBottom();
+              return;
+            }
+            buffer += decoder.decode(result.value, {stream: true});
+            var lines = buffer.split('\\n');
+            buffer = lines.pop();
+            lines.forEach(function(line) {
+              if (!line.startsWith('data: ')) return;
+              try {
+                var evt = JSON.parse(line.slice(6));
+                if (evt.type === 'text' && agentDiv) {
+                  agentDiv.textContent += evt.text;
+                  scrollChatBottom();
+                }
+              } catch(e) {}
+            });
+            return pump();
+          });
+        }
+        return pump();
+      }).catch(function(e) {
+        if (agentDiv) agentDiv.textContent = 'Error: ' + (e.message || String(e));
+        chatStreaming = false;
+        if (sendBtn) sendBtn.disabled = false;
+        if (agentDiv) agentDiv.classList.remove('streaming');
+      });
+    }
+
+    (function() {
+      var input = document.getElementById('chat-input');
+      if (input) {
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendAgentMessage();
+          }
+        });
+        input.addEventListener('input', function() {
+          this.style.height = 'auto';
+          this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+      }
+    })();
+
   </script>
+
+  <!-- Chat side panel -->
+  <div id="chat-panel">
+    <div id="chat-header">
+      <span style="font-weight:700;font-size:0.88rem;letter-spacing:0.05em">ECOSYSTEM AGENT</span>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <button onclick="clearAgentChat()" style="font-size:0.75rem;color:var(--muted);background:none;border:none;cursor:pointer;padding:0.2rem 0.4rem;border-radius:4px">Clear</button>
+        <button onclick="toggleChat()" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--muted);line-height:1;padding:0.2rem 0.4rem">&times;</button>
+      </div>
+    </div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-row">
+      <textarea id="chat-input" rows="1" placeholder="Ask the agent anything or give it work to do\u2026"></textarea>
+      <button id="chat-send" onclick="sendAgentMessage()">Send</button>
+    </div>
+  </div>
+  <button id="chat-toggle" onclick="toggleChat()">Agent &#x25BA;</button>
+
 </body>
 </html>
 """

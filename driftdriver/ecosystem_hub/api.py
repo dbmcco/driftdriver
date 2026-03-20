@@ -204,6 +204,87 @@ class _HubHandler(BaseHTTPRequestHandler):
         from driftdriver.intelligence.db import PostgresConfig as _PgConfig
         return _PgConfig()
 
+    def _agent_chat_history_path(self) -> Path:
+        return self.snapshot_path.parent / "chat_history.jsonl"
+
+    def _handle_get_sessions(self) -> None:
+        import urllib.request as urlreq
+        freshell_base = "http://localhost:3550"
+        try:
+            with urlreq.urlopen(f"{freshell_base}/api/sessions", timeout=2) as resp:
+                data = json.loads(resp.read())
+                sessions = data if isinstance(data, list) else data.get("sessions", [])
+        except Exception:
+            sessions = []
+        self._send_json({"sessions": sessions, "freshell_url": freshell_base})
+
+    def _handle_get_agent_chat_history(self) -> None:
+        from driftdriver.ecosystem_hub.chat_history import ChatHistory
+        h = ChatHistory(self._agent_chat_history_path())
+        self._send_json({"history": h.load(limit=100)})
+
+    def _handle_clear_agent_chat_history(self) -> None:
+        from driftdriver.ecosystem_hub.chat_history import ChatHistory
+        h = ChatHistory(self._agent_chat_history_path())
+        h.clear()
+        self._send_json({"ok": True})
+
+    def _handle_post_agent_chat(self) -> None:
+        body = self._read_body()
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json({"error": "invalid_json"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        message = str(data.get("message", "")).strip()
+        if not message:
+            self._send_json({"error": "empty message"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        from driftdriver.ecosystem_hub.chat_agent import EcosystemAgent
+        from driftdriver.ecosystem_hub.chat_history import ChatHistory
+
+        history_path = self._agent_chat_history_path()
+        history = ChatHistory(history_path)
+        agent = EcosystemAgent(
+            snapshot_path=self.snapshot_path,
+            history_path=history_path,
+        )
+        history_messages = history.to_anthropic_messages(limit=20)
+
+        # SSE streaming response
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        full_response = ""
+        try:
+            for chunk in agent.stream_response(message, history_messages):
+                event_data = json.dumps({"type": "text", "text": chunk})
+                self.wfile.write(f"data: {event_data}\n\n".encode())
+                self.wfile.flush()
+                full_response += chunk
+        except Exception as exc:
+            logging.getLogger(__name__).debug("agent chat stream failed", exc_info=True)
+            err_data = json.dumps({"type": "error", "text": str(exc)[:300]})
+            try:
+                self.wfile.write(f"data: {err_data}\n\n".encode())
+                self.wfile.flush()
+            except Exception:
+                pass
+        finally:
+            if full_response:
+                history.append(message, full_response)
+            try:
+                done_data = json.dumps({"type": "done"})
+                self.wfile.write(f"data: {done_data}\n\n".encode())
+                self.wfile.flush()
+            except Exception:
+                pass
+
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
 
@@ -648,6 +729,14 @@ class _HubHandler(BaseHTTPRequestHandler):
                 )
             return
 
+        if route == "/api/agent/chat":
+            self._handle_post_agent_chat()
+            return
+
+        if route == "/api/agent/chat/clear":
+            self._handle_clear_agent_chat_history()
+            return
+
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_GET(self) -> None:  # noqa: N802
@@ -896,6 +985,14 @@ class _HubHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "repo_not_found", "repo": repo_name}, status=HTTPStatus.NOT_FOUND)
                 return
             self._send_json(payload)
+            return
+
+        if route == "/api/sessions":
+            self._handle_get_sessions()
+            return
+
+        if route == "/api/agent/chat/history":
+            self._handle_get_agent_chat_history()
             return
 
         if not route.startswith("/api/") and not route.startswith("/ws"):
