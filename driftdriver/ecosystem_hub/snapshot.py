@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from driftdriver.agency_score_reader import read_agency_eval_score
 from driftdriver.upstream_tracker import build_snapshot_entry as _build_upstream_entry
+from driftdriver.factory.intake import scan_intake_dir as _scan_intake_dir, compute_complexity_score as _compute_complexity_score
 from driftdriver.governancedrift import collect_ecosystem_governance
 from driftdriver.northstardrift import (
     apply_northstardrift,
@@ -925,6 +926,29 @@ def collect_ecosystem_snapshot(
         state_dir=project_dir / ".driftdriver",
     )
 
+    # Factory creation pipeline — scan intake dir for pending/in-progress projects
+    _creation_pipeline: list[dict[str, Any]] = []
+    try:
+        _intake_dir = workspace_root / "factory" / "intake"
+        for _p in _scan_intake_dir(_intake_dir):
+            _state_file = _p.north_star_path.parent / ".factory-state.json"
+            _p_state: dict[str, Any] = {}
+            if _state_file.exists():
+                try:
+                    import json as _json
+                    _p_state = _json.loads(_state_file.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            _creation_pipeline.append({
+                "name": _p.name,
+                "status": _p_state.get("status", "intake"),
+                "complexity": _compute_complexity_score(_p.complexity_hints),
+                "design_panel_done": _p_state.get("design_panel_done", False),
+                "repo_path": _p_state.get("repo_path"),
+            })
+    except Exception:
+        pass
+
     snapshot = {
         "schema": 1,
         "generated_at": _iso_now(),
@@ -946,6 +970,7 @@ def collect_ecosystem_snapshot(
         "op_health_inputs": governance.get("op_health_inputs", {}),
         "agency_eval_inputs": _agency_eval_inputs,
         "upstream_tracker": _upstream_tracker,
+        "creation_pipeline": _creation_pipeline,
         "convergence": _build_convergence_summary(repos),
     }
     return snapshot
