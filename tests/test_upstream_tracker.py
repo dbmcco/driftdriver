@@ -160,6 +160,45 @@ def test_run_pass1_new_sha_triggers_eval(tmp_path: Path) -> None:
     assert result["repo"] == "graphwork/workgraph"
     assert result["branch"] == "main"
     assert "action" in result
+    # llm_eval key must always be present (None when relevance too low for deep eval)
+    assert "llm_eval" in result
+
+
+def test_run_pass1_high_relevance_populates_llm_eval(tmp_path: Path) -> None:
+    """When relevance is high, deep eval runs and llm_eval dict is set in the result."""
+    from driftdriver.upstream_pins import load_pins, save_pins, set_sha
+
+    repo = tmp_path / "wg"
+    old_sha = _make_git_repo(repo)
+
+    # Add a second commit with an API-surface file so classify_changes returns 'api-surface'
+    (repo / "src").mkdir()
+    (repo / "src" / "commands.rs").write_text("pub fn new_cmd() {}")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "feat: add new-cmd"], cwd=repo, check=True, capture_output=True)
+
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", old_sha)
+    save_pins(pins_path, pins)
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+        }]
+    }
+    results = run_pass1(
+        config, pins_path,
+        llm_caller=_fake_haiku_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+    )
+    assert len(results) == 1
+    result = results[0]
+    assert result["llm_eval"] is not None
+    assert result["llm_eval"]["impact"] == "moderate"
+    assert result["llm_eval"]["risk_score"] == pytest.approx(0.2)
 
 
 # --- Pass 2 tests ---

@@ -315,10 +315,12 @@ def run_pass1(
                     llm_caller=deep_eval_caller,
                 )
                 eval_result.update(deep)
+                eval_result["llm_eval"] = deep
                 risk_score = float(deep.get("risk_score", 0.5))
             else:
                 risk_score = 0.1
                 eval_result["recommended_action"] = "ignore"
+                eval_result["llm_eval"] = None
 
             eval_result["action"] = (
                 "alert" if risk_score >= _RISK_ALERT_THRESHOLD else "auto_adopt"
