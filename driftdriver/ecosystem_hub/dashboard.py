@@ -512,11 +512,6 @@ def render_dashboard_html() -> str:
     }
     .graph-path { font-family: var(--mono); font-size: 0.78rem; }
 
-    /* Chat panel stub */
-    #chat-panel[hidden] {
-      display: none;
-    }
-
     /* Tab navigation */
     .hub-tabs {
       display: flex;
@@ -1253,22 +1248,14 @@ def render_dashboard_html() -> str:
     }
     .repo-name-link:hover { text-decoration: underline; color: var(--accent); }
 
-    /* --- Chat side panel --- */
+    /* --- Chat side panel (always visible, not an overlay) --- */
+    body { display: flex; height: 100vh; overflow: hidden; margin: 0; }
+    #hub-main-area { flex: 1; overflow-y: auto; min-width: 0; }
     #chat-panel {
-      position: fixed; top: 0; right: -440px; width: 440px; height: 100vh;
+      width: 400px; flex-shrink: 0; height: 100vh;
       background: var(--panel); border-left: 1px solid var(--line);
-      display: flex; flex-direction: column; z-index: 1000;
-      transition: right 0.25s ease; box-shadow: -4px 0 24px rgba(0,0,0,0.10);
+      display: flex; flex-direction: column;
     }
-    #chat-panel.open { right: 0; }
-    #chat-toggle {
-      position: fixed; right: 1.25rem; bottom: 1.5rem; z-index: 1001;
-      background: var(--accent); color: #fff; border: none; border-radius: 24px;
-      padding: 0.55rem 1.1rem; font-size: 0.82rem; font-weight: 700;
-      cursor: pointer; box-shadow: 0 2px 14px rgba(0,0,0,0.18);
-      letter-spacing: 0.04em;
-    }
-    #chat-toggle:hover { opacity: 0.88; }
     #chat-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 0.8rem 1rem; border-bottom: 1px solid var(--line); flex-shrink: 0;
@@ -1308,6 +1295,7 @@ def render_dashboard_html() -> str:
   </style>
 </head>
 <body>
+<div id="hub-main-area">
   <div id="view-hub">
   <header>
     <h1>Speedrift Ecosystem Hub</h1>
@@ -1322,6 +1310,7 @@ def render_dashboard_html() -> str:
       <button class="hub-tab" data-tab="convergence">Convergence</button>
       <button class="hub-tab" data-tab="factory">Factory</button>
       <button class="hub-tab" data-tab="sessions">Sessions</button>
+      <button class="hub-tab" data-tab="services">Services</button>
     </nav>
 
     <!-- Operations Tab (existing content) -->
@@ -1424,13 +1413,6 @@ def render_dashboard_html() -> str:
         </div>
       </div>
     </div><!-- end ops-sub-panel -->
-
-    <!-- Chat Panel stub -->
-    <aside id="chat-panel" hidden>
-      <div class="section-header"><h2>Chat</h2></div>
-      <div id="chat-messages"></div>
-      <input type="text" id="chat-input" placeholder="Ask about your ecosystem..." />
-    </aside>
 
     <!-- Kept for JS compat: drawer elements are referenced by existing event wiring -->
     <div style="display:none" aria-hidden="true">
@@ -1714,14 +1696,24 @@ def render_dashboard_html() -> str:
       <section class="card" style="margin:1rem 1.5rem;padding:1.25rem 1.5rem">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
           <h2 style="margin:0;font-size:1rem;font-weight:700;letter-spacing:0.04em">ACTIVE SESSIONS</h2>
-          <div style="display:flex;gap:0.5rem;align-items:center">
-            <a href="http://localhost:3550" target="_blank" style="font-size:0.8rem;color:var(--accent)">Open Freshell \u2197</a>
-            <button onclick="refreshSessions()" style="font-size:0.8rem;padding:0.25rem 0.75rem;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">Refresh</button>
-          </div>
+          <button onclick="refreshSessions()" style="font-size:0.8rem;padding:0.25rem 0.75rem;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">Refresh</button>
         </div>
         <div id="sessions-list"><p style="color:var(--muted);font-size:0.88rem">Loading sessions\u2026</p></div>
       </section>
     </div><!-- end tab-sessions -->
+
+    <div class="hub-tab-content" id="tab-services">
+      <section class="card" style="margin:1rem 1.5rem;padding:1.25rem 1.5rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+          <h2 style="margin:0;font-size:1rem;font-weight:700;letter-spacing:0.04em">LAUNCHD SERVICES</h2>
+          <div style="display:flex;gap:0.75rem;align-items:center">
+            <span id="svc-summary" style="font-size:0.8rem;color:var(--muted)"></span>
+            <button onclick="refreshServicesManifest()" style="font-size:0.8rem;padding:0.25rem 0.75rem;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">Refresh</button>
+          </div>
+        </div>
+        <div id="services-manifest-list"><p style="color:var(--muted);font-size:0.88rem">Loading\u2026</p></div>
+      </section>
+    </div><!-- end tab-services -->
 
   </main>
   </div><!-- end view-hub -->
@@ -4051,6 +4043,7 @@ def render_dashboard_html() -> str:
         if (target === 'convergence') loadConvergencePanel();
         if (target === 'factory') loadFactoryPanel();
         if (target === 'sessions') refreshSessions();
+        if (target === 'services') refreshServicesManifest();
       });
     });
 
@@ -4865,6 +4858,32 @@ def render_dashboard_html() -> str:
     // -----------------------------------------------------------------------
     // Sessions tab
     // -----------------------------------------------------------------------
+    function _rewriteToCurrentHost(url) {
+      // Replace localhost/127.0.0.1 with the actual host the hub is served from,
+      // so Tailscale and remote access work without manual URL changes.
+      try {
+        var u = new URL(url);
+        if (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '0.0.0.0') {
+          u.hostname = window.location.hostname;
+        }
+        return u.toString();
+      } catch(e) { return url; }
+    }
+
+    function openFreshellSession(btn) {
+      var url = _rewriteToCurrentHost(btn.dataset.url);
+      var tabId = btn.dataset.tabid;
+      // Pre-select the tab in Freshell for any already-open Freshell windows
+      if (tabId) {
+        fetch('/api/sessions/select', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({tab_id: tabId})
+        }).catch(function() {});
+      }
+      window.open(url, 'freshell');
+    }
+
     function refreshSessions() {
       var container = el('sessions-list');
       if (!container) return;
@@ -4872,34 +4891,36 @@ def render_dashboard_html() -> str:
         .then(function(r) { return r.json(); })
         .then(function(data) {
           var sessions = data.sessions || [];
-          var freshellUrl = data.freshell_url || 'http://localhost:3550';
+          var freshellBase = data.freshell_url || ('http://' + window.location.hostname + ':3550');
           if (sessions.length === 0) {
-            container.innerHTML = '<p style="color:var(--muted);font-size:0.88rem">No active sessions. Launch one from a repo detail page or ask the Agent to open one.</p>';
+            container.innerHTML = '<p style="color:var(--muted);font-size:0.88rem">'
+              + 'No active terminals. Ask the agent to launch one, or open '
+              + '<a href="' + freshellBase + '" target="freshell" style="color:var(--accent)">Freshell</a>'
+              + ' and create a terminal tab.</p>';
             return;
           }
           var rows = sessions.map(function(s) {
-            var sid = s.id || s.session_id || '';
-            var url = s.url || (freshellUrl + '/session/' + sid);
-            var repo = esc(s.repo || s.repo_name || 'unknown');
-            var agent = esc(s.agent_type || 'claude-code');
+            var sid = s.session_id || '';
+            var url = s.url || freshellBase;
+            var repo = esc(s.repo || sid || 'unknown');
             var started = s.started_at ? relativeTimeIso(s.started_at) : '\u2014';
-            var active = s.last_active_at ? relativeTimeIso(s.last_active_at) : '\u2014';
+            var attrUrl = url.replace(/"/g, '&quot;');
+            var tabId = esc(s.tab_id || '');
             return '<tr style="border-bottom:1px solid var(--line)">'
               + '<td style="padding:0.5rem;font-weight:600">' + repo + '</td>'
-              + '<td style="padding:0.5rem;color:var(--muted)">' + agent + '</td>'
               + '<td style="padding:0.5rem;color:var(--muted)">' + started + '</td>'
-              + '<td style="padding:0.5rem;color:var(--muted)">' + active + '</td>'
-              + '<td style="padding:0.5rem"><a href="' + esc(url) + '" target="_blank" '
-              + 'style="color:var(--accent);font-weight:700;text-decoration:none">Open \u2197</a></td>'
-              + '</tr>';
+              + '<td style="padding:0.5rem;text-align:right">'
+              + '<button onclick="openFreshellSession(this)" '
+              + 'data-url="' + attrUrl + '" data-tabid="' + tabId + '" '
+              + 'style="font-size:0.8rem;padding:0.2rem 0.65rem;border-radius:5px;border:1px solid var(--accent);'
+              + 'color:var(--accent);background:transparent;cursor:pointer;font-weight:600">\u2197 Open</button>'
+              + '</td></tr>';
           }).join('');
           container.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.85rem">'
             + '<thead><tr style="border-bottom:2px solid var(--line)">'
-            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Repo</th>'
-            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Agent</th>'
+            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Session</th>'
             + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Started</th>'
-            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Last Active</th>'
-            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Open</th>'
+            + '<th></th>'
             + '</tr></thead><tbody>' + rows + '</tbody></table>';
         })
         .catch(function() {
@@ -4909,7 +4930,85 @@ def render_dashboard_html() -> str:
 
     setInterval(function() {
       if (typeof currentTab !== 'undefined' && currentTab === 'sessions') refreshSessions();
-    }, 15000);
+      if (typeof currentTab !== 'undefined' && currentTab === 'services') refreshServicesManifest();
+    }, 30000);
+
+    // -----------------------------------------------------------------------
+    // Services manifest
+    // -----------------------------------------------------------------------
+    function refreshServicesManifest() {
+      var container = el('services-manifest-list');
+      var summary = el('svc-summary');
+      if (!container) return;
+      fetch('/api/services/manifest')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var s = data.summary || {};
+          if (summary) {
+            summary.textContent = s.running + ' running  \u00B7  '
+              + s.stopped + ' stopped  \u00B7  '
+              + s.not_loaded + ' not loaded';
+          }
+          var groups = data.by_repo || [];
+          var unmatched = data.unmatched || [];
+          var html = '';
+
+          groups.forEach(function(group) {
+            if (!group.services || group.services.length === 0) return;
+            var repoLabel = esc(group.repo || group.path || 'unknown');
+            html += '<div style="margin-bottom:1.25rem">'
+              + '<div style="font-weight:700;font-size:0.82rem;letter-spacing:0.05em;color:var(--muted);margin-bottom:0.4rem;text-transform:uppercase">'
+              + repoLabel + '</div>';
+
+            group.services.forEach(function(svc) {
+              var statusColor = svc.status === 'running' ? '#22c55e'
+                : svc.status === 'stopped' ? '#f59e0b' : '#ef4444';
+              var statusDot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'
+                + statusColor + ';margin-right:0.5rem;flex-shrink:0"></span>';
+              var label = esc(svc.label || '');
+              var shortLabel = label.replace(/^com\.[^.]+\./, '');
+              var flags = (svc.flags || []);
+              var flagHtml = flags.map(function(f) {
+                var fc = f === 'error_exit' || f === 'not_loaded' ? '#ef4444'
+                  : f === 'duplicate_wd' ? '#f59e0b' : '#6b7280';
+                return '<span style="font-size:0.7rem;background:' + fc
+                  + '22;color:' + fc + ';border-radius:3px;padding:0.1rem 0.35rem;margin-left:0.3rem">'
+                  + esc(f) + '</span>';
+              }).join('');
+              var pidStr = svc.pid ? ' pid=' + svc.pid : '';
+              var exitStr = svc.exit_code != null && svc.exit_code !== 0
+                ? ' <span style="color:#f59e0b">[exit=' + svc.exit_code + ']</span>' : '';
+
+              html += '<div style="display:flex;align-items:center;padding:0.35rem 0;border-bottom:1px solid var(--line);gap:0.25rem">'
+                + statusDot
+                + '<span style="flex:1;font-size:0.85rem">' + shortLabel + flagHtml + '</span>'
+                + '<span style="font-size:0.75rem;color:var(--muted)">' + esc(svc.status) + esc(pidStr) + '</span>'
+                + exitStr
+                + '</div>';
+            });
+            html += '</div>';
+          });
+
+          if (unmatched.length) {
+            html += '<div style="margin-top:1rem"><div style="font-weight:700;font-size:0.82rem;letter-spacing:0.05em;color:var(--muted);margin-bottom:0.4rem;text-transform:uppercase">UNMATCHED / ORPHANED</div>';
+            unmatched.forEach(function(svc) {
+              var statusColor = svc.status === 'running' ? '#22c55e' : svc.status === 'stopped' ? '#f59e0b' : '#ef4444';
+              html += '<div style="display:flex;align-items:center;padding:0.35rem 0;border-bottom:1px solid var(--line);gap:0.25rem">'
+                + '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + statusColor + ';margin-right:0.5rem;flex-shrink:0"></span>'
+                + '<span style="flex:1;font-size:0.85rem">' + esc(svc.label) + '</span>'
+                + '<span style="font-size:0.75rem;color:var(--muted)">' + esc(svc.working_dir || '') + '</span>'
+                + '</div>';
+            });
+            html += '</div>';
+          }
+
+          if (!html) html = '<p style="color:var(--muted);font-size:0.88rem">No project services found.</p>';
+          container.innerHTML = html;
+        })
+        .catch(function() {
+          if (container) container.innerHTML = '<p style="color:var(--muted)">Could not load service manifest.</p>';
+        });
+    }
 
     // -----------------------------------------------------------------------
     // Chat side panel
@@ -4917,24 +5016,80 @@ def render_dashboard_html() -> str:
     var chatOpen = false;
     var chatStreaming = false;
 
-    function toggleChat() {
-      chatOpen = !chatOpen;
-      var panel = document.getElementById('chat-panel');
-      var toggle = document.getElementById('chat-toggle');
-      if (chatOpen) {
-        panel.classList.add('open');
-        toggle.textContent = 'Agent \u25C4';
-        if (document.getElementById('chat-messages').children.length === 0) {
-          loadAgentChatHistory();
-        }
-        setTimeout(function() {
-          var inp = document.getElementById('chat-input');
-          if (inp) inp.focus();
-        }, 300);
+    function newAgentChat() {
+      fetch('/api/agent/chat/new', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function() {
+          var c = document.getElementById('chat-messages');
+          if (c) c.innerHTML = '';
+          loadChatSessionList();
+        })
+        .catch(function() {});
+    }
+
+    function toggleChatHistory() {
+      var panel = document.getElementById('chat-history-panel');
+      var btn = document.getElementById('history-toggle-btn');
+      if (!panel) return;
+      if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+        if (btn) btn.style.opacity = '1';
+        loadChatSessionList();
       } else {
-        panel.classList.remove('open');
-        toggle.textContent = 'Agent \u25BA';
+        panel.style.display = 'none';
+        if (btn) btn.style.opacity = '0.6';
       }
+    }
+
+    function loadChatSessionList() {
+      fetch('/api/agent/chat/sessions')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var sessions = data.sessions || [];
+          var panel = document.getElementById('chat-history-panel');
+          if (!panel) return;
+          panel.innerHTML = '';
+          if (!sessions.length) {
+            panel.innerHTML = '<div style="color:var(--muted);font-size:0.8rem;padding:0.3rem">No previous sessions</div>';
+            return;
+          }
+          sessions.forEach(function(s) {
+            var row = document.createElement('div');
+            row.style.cssText = 'padding:0.3rem 0.2rem;cursor:pointer;border-radius:4px;font-size:0.8rem';
+            row.onmouseover = function() { row.style.background = 'var(--bg)'; };
+            row.onmouseout = function() { row.style.background = ''; };
+            var label = s.label || ('Session ' + s.id);
+            var when = (s.last_at || '').slice(0, 10);
+            var turns = s.turn_count || 0;
+            row.innerHTML = '<span style="color:var(--muted);margin-right:0.4rem">' + when + '</span>'
+              + '<span style="color:' + (s.active ? 'var(--accent)' : 'var(--ink)') + '">' + label.slice(0, 45) + '</span>'
+              + '<span style="color:var(--muted);margin-left:0.4rem;font-size:0.75rem">(' + turns + ' turns)</span>';
+            row.onclick = function() {
+              loadChatSession(s.id);
+              document.getElementById('chat-history-panel').style.display = 'none';
+            };
+            panel.appendChild(row);
+          });
+        })
+        .catch(function() {});
+    }
+
+    function loadChatSession(sessionId) {
+      var url = sessionId === 'active' ? '/api/agent/chat/history' : '/api/agent/chat/session/' + sessionId;
+      fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var history = data.history || [];
+          var container = document.getElementById('chat-messages');
+          if (!container) return;
+          container.innerHTML = '';
+          history.forEach(function(turn) {
+            appendChatMsg(turn.user, 'user');
+            appendChatMsg(turn.assistant, 'agent');
+          });
+          scrollChatBottom();
+        })
+        .catch(function() {});
     }
 
     function loadAgentChatHistory() {
@@ -5054,26 +5209,30 @@ def render_dashboard_html() -> str:
           this.style.height = Math.min(this.scrollHeight, 120) + 'px';
         });
       }
+      // Load active session history on page load
+      loadAgentChatHistory();
     })();
 
   </script>
 
-  <!-- Chat side panel -->
-  <div id="chat-panel">
-    <div id="chat-header">
-      <span style="font-weight:700;font-size:0.88rem;letter-spacing:0.05em">ECOSYSTEM AGENT</span>
-      <div style="display:flex;gap:0.5rem;align-items:center">
-        <button onclick="clearAgentChat()" style="font-size:0.75rem;color:var(--muted);background:none;border:none;cursor:pointer;padding:0.2rem 0.4rem;border-radius:4px">Clear</button>
-        <button onclick="toggleChat()" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--muted);line-height:1;padding:0.2rem 0.4rem">&times;</button>
-      </div>
-    </div>
-    <div id="chat-messages"></div>
-    <div id="chat-input-row">
-      <textarea id="chat-input" rows="1" placeholder="Ask the agent anything or give it work to do\u2026"></textarea>
-      <button id="chat-send" onclick="sendAgentMessage()">Send</button>
+</div><!-- end hub-main-area -->
+
+<!-- Chat side panel (flex sibling so it's always visible) -->
+<div id="chat-panel">
+  <div id="chat-header">
+    <span style="font-weight:700;font-size:0.88rem;letter-spacing:0.05em">ECOSYSTEM AGENT</span>
+    <div style="display:flex;gap:0.5rem;align-items:center">
+      <button onclick="newAgentChat()" style="font-size:0.75rem;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:4px;cursor:pointer;padding:0.2rem 0.5rem">+ New</button>
+      <button onclick="toggleChatHistory()" style="font-size:0.75rem;color:var(--muted);background:none;border:none;cursor:pointer;padding:0.2rem 0.4rem;border-radius:4px;opacity:0.6" id="history-toggle-btn">History</button>
     </div>
   </div>
-  <button id="chat-toggle" onclick="toggleChat()">Agent &#x25BA;</button>
+  <div id="chat-history-panel" style="display:none;border-bottom:1px solid var(--line);max-height:200px;overflow-y:auto;padding:0.5rem"></div>
+  <div id="chat-messages"></div>
+  <div id="chat-input-row">
+    <textarea id="chat-input" rows="1" placeholder="Ask the agent anything or give it work to do\u2026"></textarea>
+    <button id="chat-send" onclick="sendAgentMessage()">Send</button>
+  </div>
+</div>
 
 </body>
 </html>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import socket
 import struct
 from http import HTTPStatus
@@ -204,30 +205,119 @@ class _HubHandler(BaseHTTPRequestHandler):
         from driftdriver.intelligence.db import PostgresConfig as _PgConfig
         return _PgConfig()
 
-    def _agent_chat_history_path(self) -> Path:
-        return self.snapshot_path.parent / "chat_history.jsonl"
+    def _agent_chat_session_dir(self) -> Path:
+        return self.snapshot_path.parent / "agent_chat"
 
     def _handle_get_sessions(self) -> None:
         import urllib.request as urlreq
-        freshell_base = "http://localhost:3550"
+        freshell_local = "http://localhost:3550"
+        freshell_base = os.environ.get("FRESHELL_BASE_URL", freshell_local)
+        token = os.environ.get("FRESHELL_AUTH_TOKEN", "")
+
+        def _freshell_get(path: str) -> dict:
+            req = urlreq.Request(f"{freshell_local}{path}")
+            if token:
+                req.add_header("X-Auth-Token", token)
+            with urlreq.urlopen(req, timeout=2) as resp:
+                return json.loads(resp.read())
+
         try:
-            with urlreq.urlopen(f"{freshell_base}/api/sessions", timeout=2) as resp:
-                data = json.loads(resp.read())
-                sessions = data if isinstance(data, list) else data.get("sessions", [])
+            tabs = (_freshell_get("/api/tabs").get("data") or {}).get("tabs") or []
         except Exception:
-            sessions = []
+            tabs = []
+
+        # Build a map of pane_id → tab for joining
+        pane_to_tab: dict = {}
+        for tab in tabs:
+            active_pane = tab.get("activePaneId")
+            if active_pane:
+                pane_to_tab[active_pane] = tab
+
+        try:
+            panes = (_freshell_get("/api/panes").get("data") or {}).get("panes") or []
+        except Exception:
+            panes = []
+
+        # Only include real terminal panes (not picker/browser)
+        sessions = []
+        for p in panes:
+            kind = p.get("kind", "")
+            if kind != "terminal":
+                continue
+            pane_id = p.get("id", "")
+            tab = pane_to_tab.get(pane_id, {})
+            tab_id = tab.get("id", "")
+            title = tab.get("title") or pane_id
+            token_qs = f"?token={token}" if token else ""
+            tab_qs = f"&tab={tab_id}" if tab_id else ""
+            sessions.append({
+                "session_id": pane_id,
+                "tab_id": tab_id,
+                "repo": title,
+                "url": f"{freshell_base}/{token_qs}{tab_qs}",
+                "started_at": p.get("createdAt") or p.get("started_at"),
+            })
+
         self._send_json({"sessions": sessions, "freshell_url": freshell_base})
 
+    def _handle_post_session_select(self) -> None:
+        """Tell Freshell to focus a specific tab (broadcasts via WebSocket to connected clients)."""
+        import urllib.request as urlreq
+        body = self._read_body()
+        try:
+            tab_id = json.loads(body).get("tab_id", "")
+        except Exception:
+            tab_id = ""
+        if not tab_id:
+            self._send_json({"error": "tab_id required"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        freshell_local = "http://localhost:3550"
+        token = os.environ.get("FRESHELL_AUTH_TOKEN", "")
+        try:
+            req = urlreq.Request(
+                f"{freshell_local}/api/tabs/{tab_id}/select",
+                data=b"{}",
+                method="POST",
+            )
+            req.add_header("Content-Type", "application/json")
+            if token:
+                req.add_header("X-Auth-Token", token)
+            with urlreq.urlopen(req, timeout=2) as resp:
+                result = json.loads(resp.read())
+            self._send_json({"ok": True, "tab_id": tab_id, "response": result})
+        except Exception as exc:
+            self._send_json({"ok": False, "error": str(exc)})
+
     def _handle_get_agent_chat_history(self) -> None:
-        from driftdriver.ecosystem_hub.chat_history import ChatHistory
-        h = ChatHistory(self._agent_chat_history_path())
-        self._send_json({"history": h.load(limit=100)})
+        from driftdriver.ecosystem_hub.chat_history import ChatSessionManager
+        mgr = ChatSessionManager(self._agent_chat_session_dir())
+        self._send_json({"history": mgr.active().load(limit=100)})
 
     def _handle_clear_agent_chat_history(self) -> None:
-        from driftdriver.ecosystem_hub.chat_history import ChatHistory
-        h = ChatHistory(self._agent_chat_history_path())
-        h.clear()
+        from driftdriver.ecosystem_hub.chat_history import ChatSessionManager
+        mgr = ChatSessionManager(self._agent_chat_session_dir())
+        mgr.active().clear()
         self._send_json({"ok": True})
+
+    def _handle_get_chat_sessions(self) -> None:
+        from driftdriver.ecosystem_hub.chat_history import ChatSessionManager
+        mgr = ChatSessionManager(self._agent_chat_session_dir())
+        self._send_json({"sessions": mgr.list_sessions()})
+
+    def _handle_post_new_chat_session(self) -> None:
+        from driftdriver.ecosystem_hub.chat_history import ChatSessionManager
+        mgr = ChatSessionManager(self._agent_chat_session_dir())
+        mgr.new_session()
+        self._send_json({"ok": True})
+
+    def _handle_get_chat_session(self, session_id: str) -> None:
+        from driftdriver.ecosystem_hub.chat_history import ChatSessionManager
+        mgr = ChatSessionManager(self._agent_chat_session_dir())
+        h = mgr.get_session(session_id)
+        if h is None:
+            self._send_json({"error": "session_not_found", "id": session_id}, status=HTTPStatus.NOT_FOUND)
+            return
+        self._send_json({"history": h.load(limit=100)})
 
     def _handle_post_agent_chat(self) -> None:
         body = self._read_body()
@@ -243,20 +333,27 @@ class _HubHandler(BaseHTTPRequestHandler):
             return
 
         from driftdriver.ecosystem_hub.chat_agent import EcosystemAgent
-        from driftdriver.ecosystem_hub.chat_history import ChatHistory
+        from driftdriver.ecosystem_hub.chat_history import ChatSessionManager
 
-        history_path = self._agent_chat_history_path()
-        history = ChatHistory(history_path)
+        mgr = ChatSessionManager(self._agent_chat_session_dir())
+        history = mgr.active()
         agent = EcosystemAgent(
             snapshot_path=self.snapshot_path,
-            history_path=history_path,
+            history_path=None,
+            session_dir=self._agent_chat_session_dir(),
         )
         history_messages = history.to_anthropic_messages(limit=20)
 
-        # SSE streaming response
+        # SSE streaming response.
+        # Force HTTP/1.0: browsers buffer HTTP/1.1 responses without Content-Length
+        # or Transfer-Encoding: chunked.  HTTP/1.0 reads until connection close so
+        # each flushed write is delivered to the client immediately.
+        self.protocol_version = "HTTP/1.0"
+        self.close_connection = True
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
@@ -737,6 +834,10 @@ class _HubHandler(BaseHTTPRequestHandler):
             self._handle_clear_agent_chat_history()
             return
 
+        if route == "/api/agent/chat/new":
+            self._handle_post_new_chat_session()
+            return
+
         self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_GET(self) -> None:  # noqa: N802
@@ -991,8 +1092,33 @@ class _HubHandler(BaseHTTPRequestHandler):
             self._handle_get_sessions()
             return
 
+        if route == "/api/sessions/select":
+            self._handle_post_session_select()
+            return
+
+        if route == "/api/services/manifest":
+            from driftdriver.ecosystem_hub.services_manifest import build_services_manifest
+            try:
+                self._send_json(build_services_manifest(snapshot))
+            except Exception as exc:
+                logging.getLogger(__name__).debug("services manifest failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
         if route == "/api/agent/chat/history":
             self._handle_get_agent_chat_history()
+            return
+
+        if route == "/api/agent/chat/sessions":
+            self._handle_get_chat_sessions()
+            return
+
+        if route.startswith("/api/agent/chat/session/"):
+            session_id = route[len("/api/agent/chat/session/"):]
+            if session_id:
+                self._handle_get_chat_session(session_id)
+            else:
+                self._send_json({"error": "missing_session_id"}, status=HTTPStatus.BAD_REQUEST)
             return
 
         if not route.startswith("/api/") and not route.startswith("/ws"):
