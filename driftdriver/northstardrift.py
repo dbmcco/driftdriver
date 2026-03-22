@@ -715,6 +715,70 @@ def compute_alignment_score(task: dict[str, Any], alignment_config: dict[str, An
     return score
 
 
+def _score_alignment_with_llm(
+    statement: str,
+    tasks: list[dict[str, Any]],
+    model: str = "haiku",
+    timeout: int = 30,
+) -> tuple[float, list[str]]:
+    """Score alignment using a Haiku LLM call.
+
+    Returns (score 0-100, findings list).
+    Raises RuntimeError on failure so the caller can fall back to keyword scoring.
+
+    Security note: ``--dangerously-skip-permissions`` is intentional here.
+    This subprocess call is read-only intelligence work — it sends a prompt
+    containing only the North Star statement and task titles (no credentials,
+    no filesystem paths, no write-capable tools).  The flag suppresses the
+    interactive permission gate in non-terminal contexts (e.g. daemon mode).
+    Risk accepted: the prompt is bounded by ``tasks[:20]`` titles + the repo
+    north star text; neither source contains secrets.  The fallback to keyword
+    scoring on any failure further limits blast radius.
+    """
+    if not tasks:
+        return 50.0, []
+
+    task_summary = "\n".join(
+        f"- {str(t.get('title') or t.get('id') or 'unknown')}"
+        for t in tasks[:20]
+    )
+
+    prompt = (
+        f"You are evaluating how well a set of active tasks aligns with a project's North Star goal.\n\n"
+        f"North Star:\n{statement}\n\n"
+        f"Active Tasks:\n{task_summary}\n\n"
+        f"Evaluate alignment and respond with JSON only:\n"
+        f'{{"score": <integer 0-100 where 100 is perfect alignment>, '
+        f'"findings": [<specific misalignment observations as strings, empty list if well aligned>]}}'
+    )
+
+    result = subprocess.run(
+        ["claude", "--model", model, "--print", "--dangerously-skip-permissions"],
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"LLM alignment call failed (exit {result.returncode}): {result.stderr[:200]}")
+
+    raw = result.stdout.strip()
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.lstrip("`").removeprefix("json").strip().rstrip("`").strip()
+    # Find first { to last } in case of surrounding text
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1:
+        raw = raw[start : end + 1]
+
+    parsed = json.loads(raw)
+    score = float(parsed.get("score", 50))
+    findings = [str(f) for f in (parsed.get("findings") or [])]
+    return max(0.0, min(100.0, score)), findings
+
+
 def compute_northstardrift(
     snapshot: dict[str, Any],
     *,
@@ -1158,24 +1222,51 @@ def compute_northstardrift(
             if isinstance(repo, dict):
                 all_tasks.extend(repo.get("in_progress") or [])
                 all_tasks.extend(repo.get("ready") or [])
+
+        # Try LLM scoring first; fall back to keyword matching on any failure.
+        llm_model = str(alignment_config.get("alignment_model") or "haiku")
+        alignment_findings: list[str] = []
+        llm_used = False
+        try:
+            statement = str(alignment_config.get("statement") or "")
+            raw_score, alignment_findings = _score_alignment_with_llm(
+                statement, all_tasks, model=llm_model
+            )
+            # LLM returns 0-100; normalize to 0-1 for backwards-compat output.
+            overall_alignment = raw_score / 100.0
+            llm_used = True
+        except Exception:
+            # Keyword fallback
+            task_scores_kw: list[dict[str, Any]] = []
+            for t in all_tasks:
+                ts_kw = compute_alignment_score(t, alignment_config)
+                task_scores_kw.append({"task_id": str(t.get("id") or ""), "score": ts_kw})
+            overall_alignment = (
+                sum(ts["score"] for ts in task_scores_kw) / len(task_scores_kw)
+                if task_scores_kw
+                else 0.5
+            )
+
         task_scores: list[dict[str, Any]] = []
-        for t in all_tasks:
-            ts = compute_alignment_score(t, alignment_config)
-            task_scores.append({"task_id": str(t.get("id") or ""), "score": ts})
-        if task_scores:
-            overall_alignment = sum(ts["score"] for ts in task_scores) / len(task_scores)
-        else:
-            overall_alignment = 0.5
+        if not llm_used:
+            for t in all_tasks:
+                ts_val = compute_alignment_score(t, alignment_config)
+                task_scores.append({"task_id": str(t.get("id") or ""), "score": ts_val})
+
         alignment_section: dict[str, Any] = {
             "overall_alignment": round(overall_alignment, 4),
             "configured": True,
             "task_scores": task_scores,
+            "findings": alignment_findings,
+            "llm_used": llm_used,
         }
     else:
         alignment_section = {
             "overall_alignment": 0.5,
             "configured": False,
             "task_scores": [],
+            "findings": [],
+            "llm_used": False,
         }
 
     return {

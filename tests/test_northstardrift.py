@@ -553,6 +553,65 @@ class AlignmentIntegrationTests(unittest.TestCase):
         self.assertEqual(len(alignment_findings), 0)
 
 
+    def test_llm_path_returns_score_and_findings(self) -> None:
+        """LLM scoring path returns numeric score 0-100 and findings list."""
+        from unittest.mock import MagicMock, patch
+
+        from driftdriver.northstardrift import _score_alignment_with_llm
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"score": 72, "findings": ["Tasks focus on infra but north star is about UX"]}'
+
+        with patch("driftdriver.northstardrift.subprocess.run", return_value=mock_result):
+            score, findings = _score_alignment_with_llm(
+                "Build the best UX for users",
+                [{"id": "t1", "title": "Migrate database schema"}],
+            )
+
+        self.assertIsInstance(score, float)
+        self.assertGreaterEqual(score, 0)
+        self.assertLessEqual(score, 100)
+        self.assertEqual(score, 72.0)
+        self.assertIsInstance(findings, list)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("UX", findings[0])
+
+    def test_llm_failure_falls_back_to_keyword(self) -> None:
+        """When LLM call fails, alignment falls back to keyword scoring."""
+        from unittest.mock import patch
+
+        alignment_config = {
+            "statement": "Understand relationships with perfect memory",
+            "keywords": ["relationships", "memory"],
+            "anti_patterns": ["pipeline"],
+        }
+        snapshot = _snapshot(
+            {
+                **_repo("test-repo"),
+                "in_progress": [{"id": "t1", "title": "Add relationship memory context"}],
+                "ready": [],
+            }
+        )
+
+        with patch(
+            "driftdriver.northstardrift._score_alignment_with_llm",
+            side_effect=RuntimeError("LLM unavailable"),
+        ):
+            northstar = compute_northstardrift(snapshot, alignment_config=alignment_config)
+
+        # Fallback should still produce a valid alignment section
+        self.assertIn("alignment", northstar)
+        self.assertTrue(northstar["alignment"]["configured"])
+        alignment = northstar["alignment"]["overall_alignment"]
+        self.assertIsInstance(alignment, float)
+        self.assertGreaterEqual(alignment, 0.0)
+        self.assertLessEqual(alignment, 1.0)
+        # Keyword path was used — task title matches keywords, so score > 0.5
+        self.assertGreater(alignment, 0.5)
+        # LLM was NOT used
+        self.assertFalse(northstar["alignment"]["llm_used"])
+
     def test_agency_eval_score_improves_self_improvement(self) -> None:
         """High agency eval score should not decrease self_improvement vs no score."""
         base_snapshot = _snapshot(_repo("driftdriver", in_progress=1))
