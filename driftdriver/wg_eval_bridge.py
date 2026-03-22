@@ -1,9 +1,10 @@
 # ABOUTME: Drift-to-Evaluation Bridge — translates Speedrift drift lane findings
-# ABOUTME: into WG evaluation JSON files for consumption by the evolver.
+# ABOUTME: into WG evaluation records via the wg evaluate --submit CLI.
 
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -162,19 +163,27 @@ def build_evaluation(
 
 
 def write_evaluation(repo_path: Path, evaluation: dict) -> Path:
-    """Write an evaluation dict as atomic JSON to the evaluations directory."""
-    evals_dir = repo_path / ".workgraph" / "agency" / "evaluations"
-    evals_dir.mkdir(parents=True, exist_ok=True)
+    """Submit an evaluation dict to the wg evaluate --submit CLI.
 
-    eval_id = evaluation["id"]
-    target = evals_dir / f"{eval_id}.json"
-
-    # Atomic write: write to temp then rename.
-    tmp = target.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(evaluation, indent=2))
-    tmp.rename(target)
-
-    return target
+    Uses `wg evaluate <eval-id> --submit` with the evaluation JSON piped to
+    stdin.  This avoids direct .workgraph/agency/evaluations/ file writes,
+    keeping the bridge compatible with future wg storage backends.
+    """
+    eval_json = json.dumps(evaluation)
+    result = subprocess.run(
+        ["wg", "evaluate", evaluation.get("id", "unknown"), "--submit"],
+        input=eval_json,
+        capture_output=True,
+        text=True,
+        cwd=str(repo_path),
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"wg evaluate --submit failed (exit {result.returncode}): {result.stderr.strip()}"
+        )
+    # Return the expected path (matches wg's save_evaluation naming)
+    return repo_path / ".workgraph" / "agency" / "evaluations" / f"{evaluation['id']}.json"
 
 
 def bridge_findings_to_evaluations(
