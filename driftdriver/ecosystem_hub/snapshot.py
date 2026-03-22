@@ -970,6 +970,10 @@ def collect_ecosystem_snapshot(
         "op_health_inputs": governance.get("op_health_inputs", {}),
         "agency_eval_inputs": _agency_eval_inputs,
         "upstream_tracker": _upstream_tracker,
+        "upstream_eval": {
+            r["repo"]: r.get("llm_eval")
+            for r in _upstream_tracker.get("pass1_results", [])
+        },
         "creation_pipeline": _creation_pipeline,
         "convergence": _build_convergence_summary(repos),
     }

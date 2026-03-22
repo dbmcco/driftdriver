@@ -213,3 +213,44 @@ def test_build_snapshot_entry_with_pass2_finding(tmp_path: Path) -> None:
     entry = build_snapshot_entry(repos, state_dir=tmp_path)
     assert len(entry["pass2_findings"]) == 1
     assert entry["pass2_findings"][0]["category"] == "unpushed-work"
+
+
+# --- Server integration: _run_upstream_pass1 ---
+
+def test_run_upstream_pass1_skips_missing_config(tmp_path: Path) -> None:
+    """_run_upstream_pass1 does nothing if upstream-config.toml is absent."""
+    from driftdriver.ecosystem_hub.server import _run_upstream_pass1
+    # Should complete silently with no state file written
+    _run_upstream_pass1(tmp_path)
+    assert not (tmp_path / ".driftdriver" / "upstream-tracker-last.json").exists()
+
+
+def test_run_upstream_pass1_skips_empty_config(tmp_path: Path) -> None:
+    """_run_upstream_pass1 does nothing if external_repos list is empty."""
+    from driftdriver.ecosystem_hub.server import _run_upstream_pass1
+    dd_dir = tmp_path / ".driftdriver"
+    dd_dir.mkdir()
+    (dd_dir / "upstream-config.toml").write_text("[global]\n", encoding="utf-8")
+    _run_upstream_pass1(tmp_path)
+    assert not (dd_dir / "upstream-tracker-last.json").exists()
+
+
+# --- Snapshot: upstream_eval field ---
+
+def test_build_snapshot_entry_upstream_eval_key_from_pass1_results(tmp_path: Path) -> None:
+    """upstream_eval dict is derived from pass1_results."""
+    import json
+    from driftdriver.upstream_tracker import build_snapshot_entry
+
+    state_file = tmp_path / "upstream-tracker-last.json"
+    state_file.write_text(json.dumps({
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "results": [
+            {"repo": "danshapiro/freshell", "llm_eval": "minor UI changes, low risk"},
+            {"repo": "graphwork/workgraph", "llm_eval": None},
+        ],
+    }), encoding="utf-8")
+
+    entry = build_snapshot_entry([], state_dir=tmp_path)
+    assert entry["pass1_results"][0]["repo"] == "danshapiro/freshell"
+    assert entry["pass1_results"][0]["llm_eval"] == "minor UI changes, low risk"

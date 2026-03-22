@@ -102,6 +102,39 @@ def _clear_stale_graph_locks(workspace_root: Path, *, max_depth: int = 3) -> int
     return cleared
 
 
+def _run_upstream_pass1(project_dir: Path) -> None:
+    """Run upstream pass1 tracker for the project_dir repo.
+
+    Reads .driftdriver/upstream-config.toml, evaluates tracked external repos
+    for new commits, and writes .driftdriver/upstream-tracker-last.json so the
+    next snapshot tick surfaces upstream_eval in the hub snapshot.
+    Errors are caught by caller — this function may raise.
+    """
+    import sys
+    config_path = project_dir / ".driftdriver" / "upstream-config.toml"
+    if not config_path.exists():
+        return
+
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    if not config.get("external_repos"):
+        return
+
+    from driftdriver.upstream_tracker import run_pass1
+
+    pins_path = project_dir / ".driftdriver" / "upstream-pins.toml"
+    results = run_pass1(config, pins_path)
+    if results:
+        _log.info("upstream pass1: %d repo(s) with new commits", len(results))
+
+
 def _port_is_available(host: str, port: int) -> bool:
     """Check whether *port* can be bound. Returns False if already in use."""
     try:
@@ -335,6 +368,14 @@ def run_service_foreground(
             # Sweep stale graph.lock files each tick — crashed wg processes
             # leave empty lock files that hang all subsequent wg commands.
             _clear_stale_graph_locks(workspace_root)
+
+            # Run pass1 upstream tracker: detect upstream changes and write state
+            # file for snapshot to read. Errors are logged, never block the tick.
+            try:
+                _run_upstream_pass1(project_dir)
+            except Exception:
+                _log.debug("upstream pass1 failed", exc_info=True)
+
             try:
                 snapshot = write_snapshot_once(
                     project_dir=project_dir,
