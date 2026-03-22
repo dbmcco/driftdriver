@@ -3,6 +3,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -467,3 +468,88 @@ class TestBridgeFunction:
             report = bridge_findings_to_evaluations(tmp_path, lane_results)
         assert report.evaluations_written == 3
         assert len(report.evaluation_ids) == 3
+
+
+# ---------------------------------------------------------------------------
+# ContractTests — live wg evaluate --submit CLI (skipped if wg absent)
+# ---------------------------------------------------------------------------
+WG_AVAILABLE = shutil.which("wg") is not None
+
+
+@pytest.mark.skipif(not WG_AVAILABLE, reason="wg CLI not in PATH")
+class TestWgEvaluateSubmitContract:
+    """Integration tests that exercise the real wg evaluate --submit CLI."""
+
+    def _init_wg(self, tmp_path: Path) -> None:
+        """Run wg init in tmp_path so .workgraph/agency/ structure exists."""
+        subprocess.run(["wg", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+
+    def _build_eval(self, eval_id: str) -> dict:
+        return {
+            "id": eval_id,
+            "task_id": "contract-task",
+            "role_id": "role-contract",
+            "score": 0.75,
+            "dimensions": {"correctness": 0.75},
+            "notes": "contract test evaluation",
+            "evaluator": "speedrift:coredrift",
+            "timestamp": "2026-03-15T00:00:00+00:00",
+        }
+
+    def test_submit_exits_zero(self, tmp_path):
+        self._init_wg(tmp_path)
+        ev = self._build_eval("eval-contract-001")
+        result = subprocess.run(
+            ["wg", "evaluate", ev["id"], "--submit"],
+            input=json.dumps(ev),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+        assert result.returncode == 0, f"wg evaluate --submit failed: {result.stderr}"
+
+    def test_submit_writes_file(self, tmp_path):
+        self._init_wg(tmp_path)
+        ev = self._build_eval("eval-contract-002")
+        subprocess.run(
+            ["wg", "evaluate", ev["id"], "--submit"],
+            input=json.dumps(ev),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            check=True,
+        )
+        eval_path = (
+            tmp_path / ".workgraph" / "agency" / "evaluations" / f"{ev['id']}.json"
+        )
+        assert eval_path.exists(), f"Evaluation file not written: {eval_path}"
+
+    def test_submit_stdout_mentions_eval_id(self, tmp_path):
+        self._init_wg(tmp_path)
+        ev = self._build_eval("eval-contract-003")
+        result = subprocess.run(
+            ["wg", "evaluate", ev["id"], "--submit"],
+            input=json.dumps(ev),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            check=True,
+        )
+        assert ev["id"] in result.stdout, (
+            f"Expected eval id in stdout, got: {result.stdout!r}"
+        )
+
+    def test_submit_json_flag_returns_id_and_path(self, tmp_path):
+        self._init_wg(tmp_path)
+        ev = self._build_eval("eval-contract-004")
+        result = subprocess.run(
+            ["wg", "--json", "evaluate", ev["id"], "--submit"],
+            input=json.dumps(ev),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            check=True,
+        )
+        data = json.loads(result.stdout)
+        assert data["id"] == ev["id"]
+        assert "path" in data
