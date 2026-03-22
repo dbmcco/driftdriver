@@ -24,7 +24,7 @@ from driftdriver.policy import load_drift_policy
 from driftdriver.qadrift import run_program_quality_scan
 from driftdriver.secdrift import run_secdrift_scan
 from driftdriver.directives import DirectiveLog
-from driftdriver.workgraph import load_workgraph
+from driftdriver.ecosystem_hub.collector import load_tasks_via_wg_cli as _load_tasks_via_wg_cli
 
 from .discovery import (
     _age_days,
@@ -178,7 +178,7 @@ def _derive_repo_activity_state(snap: RepoSnapshot) -> tuple[str, list[str]]:
         reason = ", ".join(snap.errors[:2])
         return "error", [f"errors present ({reason})"]
     if not snap.workgraph_exists:
-        return "untracked", ["no .workgraph/graph.jsonl detected"]
+        return "untracked", ["no .workgraph/ directory or wg CLI unavailable"]
 
     # Presence-based activity detection: if any actor has a live heartbeat,
     # the repo is active regardless of wg service state.
@@ -460,7 +460,9 @@ def collect_repo_snapshot(
                 pass
 
     wg_dir = repo_path / ".workgraph"
-    if not (wg_dir / "graph.jsonl").exists():
+    _wg_tasks = _load_tasks_via_wg_cli(repo_path)
+    if not wg_dir.exists() or not _wg_tasks:
+        snap.wg_available = False
         snap = _finalize_repo_snapshot(snap)
         return _attach_sec_qa_signals(
             snap,
@@ -470,8 +472,9 @@ def collect_repo_snapshot(
         )
 
     snap.workgraph_exists = True
+    snap.wg_available = True
     snap.reporting = True
-    snap.heartbeat_age_seconds = _path_age_seconds(wg_dir / "graph.jsonl")
+    snap.heartbeat_age_seconds = _path_age_seconds(wg_dir)
 
     # Read presence heartbeat records for activity detection.
     try:
@@ -541,7 +544,12 @@ def collect_repo_snapshot(
             running = bool(status.get("running")) or state == "running"
             snap.service_running = running
 
-    wg = load_workgraph(wg_dir)
+    # _wg_tasks already fetched via wg list --json above; wrap in a namespace
+    # object so the rest of this function can access .tasks without changes.
+    class _WG:
+        tasks = _wg_tasks
+
+    wg = _WG()
     policy_order: list[str] = []
     try:
         policy_order = list(load_drift_policy(wg_dir).order)

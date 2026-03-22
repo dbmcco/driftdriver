@@ -32,6 +32,7 @@ class RepoSnapshot:
     ahead: int = 0
     behind: int = 0
     workgraph_exists: bool = False
+    wg_available: bool = False
     reporting: bool = False
     heartbeat_age_seconds: int | None = None
     service_running: bool = False
