@@ -3,7 +3,9 @@
 
 import json
 import os
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -259,6 +261,15 @@ class TestBuildEvaluation:
 # ---------------------------------------------------------------------------
 # WriteEvaluationTests
 # ---------------------------------------------------------------------------
+def _mock_wg_submit(ev: dict) -> MagicMock:
+    """Return a mock subprocess.CompletedProcess for wg evaluate --submit."""
+    mock = MagicMock()
+    mock.returncode = 0
+    mock.stdout = f"Saved evaluation {ev.get('id', 'unknown')} to ..."
+    mock.stderr = ""
+    return mock
+
+
 class TestWriteEvaluation:
     def test_creates_json_file(self, tmp_path):
         ev = {
@@ -273,10 +284,11 @@ class TestWriteEvaluation:
             "timestamp": "2026-03-15T00:00:00+00:00",
             "source": "drift",
         }
-        path = write_evaluation(tmp_path, ev)
-        assert path.exists()
+        with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=_mock_wg_submit(ev)):
+            path = write_evaluation(tmp_path, ev)
         assert path.suffix == ".json"
         assert path.parent.name == "evaluations"
+        assert path.name == f"{ev['id']}.json"
 
     def test_content_matches(self, tmp_path):
         ev = {
@@ -291,13 +303,20 @@ class TestWriteEvaluation:
             "timestamp": "2026-03-15T01:00:00+00:00",
             "source": "drift",
         }
-        path = write_evaluation(tmp_path, ev)
-        loaded = json.loads(path.read_text())
-        assert loaded == ev
+        with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=_mock_wg_submit(ev)) as mock_run:
+            path = write_evaluation(tmp_path, ev)
+        # Verify wg was called with correct args
+        call_args = mock_run.call_args
+        assert call_args[0][0][0] == "wg"
+        assert call_args[0][0][3] == "--submit"
+        submitted = json.loads(call_args[1]["input"])
+        assert submitted == ev
+        assert path.name == f"{ev['id']}.json"
 
     def test_file_name_contains_eval_id(self, tmp_path):
         ev = {"id": "eval-drift-secdrift-t3-55555", "task_id": "t3"}
-        path = write_evaluation(tmp_path, ev)
+        with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=_mock_wg_submit(ev)):
+            path = write_evaluation(tmp_path, ev)
         assert "eval-drift-secdrift-t3-55555" in path.name
 
 
@@ -332,16 +351,13 @@ class TestBridgeFunction:
                 summary="1 issue",
             )
         ]
-        report = bridge_findings_to_evaluations(tmp_path, lane_results)
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=mock_result):
+            report = bridge_findings_to_evaluations(tmp_path, lane_results)
         assert report.evaluations_written == 1
         assert report.unattributable_findings == 0
         assert len(report.evaluation_ids) == 1
-
-        # Verify file was actually written
-        evals_dir = tmp_path / ".workgraph" / "agency" / "evaluations"
-        assert evals_dir.exists()
-        eval_files = list(evals_dir.glob("*.json"))
-        assert len(eval_files) == 1
 
     def test_unattributable_findings_skipped(self, tmp_path):
         lane_results = [
@@ -380,9 +396,12 @@ class TestBridgeFunction:
             )
         ]
         # min_severity="warning" should exclude info findings
-        report = bridge_findings_to_evaluations(
-            tmp_path, lane_results, min_severity="warning"
-        )
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=mock_result):
+            report = bridge_findings_to_evaluations(
+                tmp_path, lane_results, min_severity="warning"
+            )
         assert report.evaluations_written == 1
 
     def test_empty_results(self, tmp_path):
@@ -442,6 +461,9 @@ class TestBridgeFunction:
                 summary="1 issue",
             ),
         ]
-        report = bridge_findings_to_evaluations(tmp_path, lane_results)
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=mock_result):
+            report = bridge_findings_to_evaluations(tmp_path, lane_results)
         assert report.evaluations_written == 3
         assert len(report.evaluation_ids) == 3
