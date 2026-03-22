@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -189,15 +190,37 @@ def _read_north_star(repo_path: Path) -> str:
 
 
 def _call_llm(prompt: str, model: str = "sonnet") -> str:
-    """Call an LLM via `claude --print` and return the response text."""
+    """Call claude CLI in non-interactive mode and return the response text."""
+    cmd = [
+        "claude",
+        "-p",
+        "--model", model,
+        "--output-format", "json",
+        "--no-session-persistence",
+        "--dangerously-skip-permissions",
+    ]
+    # Strip env vars that trigger interactive session hooks
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CLAUDE_SESSION_ID", "CLAUDE_CONVERSATION_ID")}
     try:
         result = subprocess.run(
-            ["claude", "--print", "--model", model, "-p", "-"],
+            cmd,
             input=prompt,
             capture_output=True,
             text=True,
             timeout=300,
+            env=env,
         )
+        if result.returncode != 0:
+            print(f"warning: claude CLI exit {result.returncode}: {result.stderr[:200]}", file=sys.stderr)
+            return ""
+        # --output-format json wraps response in {"result": "...", ...}
+        try:
+            cli_output = json.loads(result.stdout)
+            if isinstance(cli_output, dict):
+                return cli_output.get("result", result.stdout).strip()
+        except json.JSONDecodeError:
+            pass
         return result.stdout.strip()
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         print(f"warning: LLM call failed: {e}", file=sys.stderr)
@@ -300,10 +323,10 @@ def plan_from_spec(
     # Write tasks via wg add with quality-gate structuring
     added_count = 0
     for task in output.tasks:
-        cmd = ["wg", "add", task.title, "--immediate"]
+        cmd = ["wg", "add", task.title, "--id", task.id]
         if task.after:
             for dep in task.after:
-                cmd.extend(["--after", dep])
+                cmd.extend(["--blocked-by", dep])
 
         # Build description with quality gate context
         desc_parts = []
@@ -338,7 +361,8 @@ def plan_from_spec(
 
         # Tag quality gates and checkpoints
         if task.task_type in ("quality-gate", "northstar-checkpoint"):
-            cmd.extend(["--tag", f"quality,{task.pattern or task.task_type}"])
+            cmd.extend(["--tag", "quality"])
+            cmd.extend(["--tag", task.pattern or task.task_type])
 
         try:
             result = subprocess.run(
