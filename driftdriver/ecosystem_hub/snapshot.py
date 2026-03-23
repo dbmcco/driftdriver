@@ -984,8 +984,48 @@ def collect_ecosystem_snapshot(
         },
         "creation_pipeline": _creation_pipeline,
         "convergence": _build_convergence_summary(repos),
+        "planforge_sessions": _build_planforge_summary(repos),
     }
     return snapshot
+
+
+def _build_planforge_summary(repos: list[RepoSnapshot]) -> dict[str, Any]:
+    """Scan enrolled repos for planforge sessions. Returns recent/active session metadata."""
+    import os
+    sessions: list[dict[str, Any]] = []
+    for repo in repos:
+        pf_root = Path(repo.path) / ".workgraph" / "planforge"
+        if not pf_root.exists():
+            continue
+        for session_dir in sorted(pf_root.iterdir(), reverse=True)[:5]:
+            if not session_dir.is_dir():
+                continue
+            discovery_file = session_dir / "discovery.json"
+            scoring_file = session_dir / "p2-scoring.json"
+            entry: dict[str, Any] = {
+                "repo": repo.name,
+                "session_id": session_dir.name,
+                "has_discovery": discovery_file.exists(),
+                "has_scoring": scoring_file.exists(),
+                "phase": "complete" if scoring_file.exists() else ("phase2" if (session_dir / "p2-ideation.json").exists() else ("phase1" if discovery_file.exists() else "started")),
+                "mtime": int(session_dir.stat().st_mtime),
+            }
+            if scoring_file.exists():
+                try:
+                    scoring = json.loads(scoring_file.read_text(encoding="utf-8"))
+                    entry["winner"] = scoring.get("winner")
+                    entry["rationale"] = scoring.get("rationale")
+                except Exception:
+                    pass
+            if discovery_file.exists():
+                try:
+                    disc = json.loads(discovery_file.read_text(encoding="utf-8"))
+                    entry["problem"] = disc.get("problem")
+                except Exception:
+                    pass
+            sessions.append(entry)
+    sessions.sort(key=lambda s: s["mtime"], reverse=True)
+    return {"sessions": sessions[:20], "total": len(sessions)}
 
 
 def _build_convergence_summary(repos: list[RepoSnapshot]) -> dict[str, Any]:

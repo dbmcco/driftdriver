@@ -883,6 +883,12 @@ class _HubHandler(BaseHTTPRequestHandler):
         if route == "/api/creation-pipeline":
             self._send_json(snapshot.get("creation_pipeline") or [])
             return
+        if route == "/api/planforge":
+            self._send_json(
+                snapshot.get("planforge_sessions")
+                or {"sessions": [], "total": 0}
+            )
+            return
         if route == "/api/convergence":
             self._send_json(
                 snapshot.get("convergence")

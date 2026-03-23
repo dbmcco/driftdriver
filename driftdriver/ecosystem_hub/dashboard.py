@@ -1308,6 +1308,7 @@ def render_dashboard_html() -> str:
       <button class="hub-tab" data-tab="intelligence">Intelligence</button>
       <button class="hub-tab" data-tab="conformance">Conformance</button>
       <button class="hub-tab" data-tab="convergence">Convergence</button>
+      <button class="hub-tab" data-tab="planforge">PlanForge</button>
       <button class="hub-tab" data-tab="factory">Factory</button>
       <button class="hub-tab" data-tab="sessions">Sessions</button>
       <button class="hub-tab" data-tab="services">Services</button>
@@ -1648,6 +1649,22 @@ def render_dashboard_html() -> str:
       </div><!-- end convergence-panel -->
     </div><!-- end tab-convergence -->
 
+    <!-- PlanForge Tab -->
+    <div class="hub-tab-content" id="tab-planforge">
+      <div class="card">
+        <h2>PlanForge Sessions</h2>
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem">Multi-agent planning sessions. Each session runs discovery → Phase 1 debate (problem) → Phase 2 debate (solution) → spec + task graph.</p>
+        <div id="planforge-empty" style="color:var(--muted)">No planning sessions found across enrolled repos.</div>
+        <table class="conf-table" id="planforge-table" style="display:none">
+          <thead>
+            <tr><th>Repo</th><th>Session</th><th>Phase</th><th>Problem</th><th>Winner</th><th>When</th></tr>
+          </thead>
+          <tbody id="planforge-rows"></tbody>
+        </table>
+      </div>
+    </div><!-- end tab-planforge -->
+
+
     <!-- Factory Tab -->
     <div class="hub-tab-content" id="tab-factory">
       <div id="factory-panel">
@@ -1661,7 +1678,7 @@ def render_dashboard_html() -> str:
           <div id="upstream-pass1-empty" style="display:none; color:var(--muted); padding:0.25rem 0;">No evaluations recorded yet.</div>
           <table class="conf-table" id="upstream-pass1-table" style="display:none;">
             <thead>
-              <tr><th>Repo</th><th>Branch</th><th>Category</th><th>Relevance</th><th>Action</th><th>Risk</th><th>When</th></tr>
+              <tr><th>Repo</th><th>Branch</th><th>Category</th><th>Relevance</th><th>Action</th><th>Risk</th><th>Impact</th><th>Rec</th><th>When</th></tr>
             </thead>
             <tbody id="upstream-pass1-rows"></tbody>
           </table>
@@ -2469,6 +2486,12 @@ def render_dashboard_html() -> str:
         html += '<div style="margin-bottom:0.55rem">';
         if (driftTier) html += '<span class="detail-tier-badge ' + tierCls + '">' + esc(driftTier.toUpperCase()) + '</span>';
         if (driftScore != null) html += '<span style="font-family:var(--mono);font-size:0.88rem">Score: ' + esc(String(Number(driftScore).toFixed(2))) + '</span>';
+        var alignment = northstar.alignment || {};
+        if (alignment.llm_used === true) {
+          html += '<span title="Alignment scored by LLM" style="margin-left:0.5rem;font-size:0.75rem;color:var(--muted);border:1px solid var(--muted);border-radius:3px;padding:0 4px">llm</span>';
+        } else if (alignment.score != null) {
+          html += '<span title="Alignment scored by keyword fallback" style="margin-left:0.5rem;font-size:0.75rem;color:var(--muted);border:1px dashed var(--muted);border-radius:3px;padding:0 4px">kw</span>';
+        }
         html += '</div>';
       } else {
         html += '<div style="color:var(--muted);margin-bottom:0.5rem">No drift data.</div>';
@@ -4041,6 +4064,7 @@ def render_dashboard_html() -> str:
         if (target === 'intelligence') loadIntelligenceData();
         if (target === 'conformance') loadConformancePanel();
         if (target === 'convergence') loadConvergencePanel();
+        if (target === 'planforge') loadPlanforgePanel();
         if (target === 'factory') loadFactoryPanel();
         if (target === 'sessions') refreshSessions();
         if (target === 'services') refreshServicesManifest();
@@ -4299,6 +4323,45 @@ def render_dashboard_html() -> str:
       }
     }
 
+    // --- PlanForge panel ---
+    var planforgeLoaded = false;
+    async function loadPlanforgePanel() {
+      if (planforgeLoaded) return;
+      try {
+        var resp = await fetch('/api/planforge');
+        var pf = await resp.json();
+        var sessions = pf.sessions || [];
+        var emptyEl = el('planforge-empty');
+        var tableEl = el('planforge-table');
+        var rowsEl = el('planforge-rows');
+        if (!sessions.length) {
+          if (emptyEl) emptyEl.style.display = '';
+          if (tableEl) tableEl.style.display = 'none';
+        } else {
+          if (emptyEl) emptyEl.style.display = 'none';
+          if (tableEl) tableEl.style.display = '';
+          if (rowsEl) {
+            rowsEl.innerHTML = '';
+            sessions.forEach(function(s) {
+              var phaseColor = s.phase === 'complete' ? '#2f6e39' : s.phase === 'phase2' ? '#934e1c' : 'var(--muted)';
+              var when = s.mtime ? new Date(s.mtime * 1000).toISOString().substring(0, 10) : '—';
+              var tr = document.createElement('tr');
+              tr.innerHTML = '<td><code>' + esc(s.repo || '') + '</code></td>'
+                + '<td><code style="font-size:0.75rem">' + esc(s.session_id || '') + '</code></td>'
+                + '<td><span style="color:' + phaseColor + '">' + esc(s.phase || '') + '</span></td>'
+                + '<td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(s.problem || '') + '">' + esc((s.problem || '—').substring(0, 80)) + '</td>'
+                + '<td>' + esc(s.winner || '—') + '</td>'
+                + '<td><small>' + esc(when) + '</small></td>';
+              rowsEl.appendChild(tr);
+            });
+          }
+          planforgeLoaded = true;
+        }
+      } catch (e) {
+        console.error('planforge panel error', e);
+      }
+    }
+
     // --- Factory panel ---
     var factoryLoaded = false;
     async function loadFactoryPanel() {
@@ -4330,12 +4393,18 @@ def render_dashboard_html() -> str:
           pass1Results.forEach(function(r) {
             var actionClass = r.action === 'alert' ? 'severity-high' : 'severity-low';
             var tr = document.createElement('tr');
+            var llm = r.llm_eval || {};
+            var impactClass = llm.impact === 'high' ? 'severity-high' : llm.impact === 'moderate' ? 'severity-medium' : '';
+            var impactCell = llm.impact ? '<span class="' + impactClass + '">' + esc(llm.impact) + '</span>' : '<span style="color:var(--muted)">—</span>';
+            var recCell = llm.recommended_action ? esc(llm.recommended_action) : '<span style="color:var(--muted)">—</span>';
             tr.innerHTML = '<td><code>' + esc(r.repo || '') + '</code></td>'
               + '<td><code>' + esc(r.branch || '') + '</code></td>'
               + '<td>' + esc(r.category || '') + '</td>'
               + '<td>' + (r.relevance_score != null ? r.relevance_score.toFixed(2) : '-') + '</td>'
               + '<td class="' + actionClass + '">' + esc(r.action || '') + '</td>'
               + '<td>' + (r.risk_score != null ? r.risk_score.toFixed(2) : '-') + '</td>'
+              + '<td>' + impactCell + '</td>'
+              + '<td>' + recCell + '</td>'
               + '<td><small>' + esc((r.timestamp || '').substring(0, 10)) + '</small></td>';
             p1rows.appendChild(tr);
           });
