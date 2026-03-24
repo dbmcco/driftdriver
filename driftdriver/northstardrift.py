@@ -715,6 +715,19 @@ def compute_alignment_score(task: dict[str, Any], alignment_config: dict[str, An
     return score
 
 
+_alignment_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+def _alignment_cache_key(statement: str, tasks: list[dict[str, Any]]) -> str:
+    """Stable hash of statement + task titles. Cache miss only when task set changes."""
+    import hashlib
+    titles = "|".join(
+        str(t.get("title") or t.get("id") or "")
+        for t in tasks[:20]
+    )
+    return hashlib.sha256(f"{statement}\n{titles}".encode()).hexdigest()[:16]
+
+
 def _score_alignment_with_llm(
     statement: str,
     tasks: list[dict[str, Any]],
@@ -737,6 +750,10 @@ def _score_alignment_with_llm(
     """
     if not tasks:
         return 50.0, []
+
+    cache_key = _alignment_cache_key(statement, tasks)
+    if cache_key in _alignment_cache:
+        return _alignment_cache[cache_key]
 
     task_summary = "\n".join(
         f"- {str(t.get('title') or t.get('id') or 'unknown')}"
@@ -776,7 +793,9 @@ def _score_alignment_with_llm(
     parsed = json.loads(raw)
     score = float(parsed.get("score", 50))
     findings = [str(f) for f in (parsed.get("findings") or [])]
-    return max(0.0, min(100.0, score)), findings
+    result_tuple = max(0.0, min(100.0, score)), findings
+    _alignment_cache[cache_key] = result_tuple
+    return result_tuple
 
 
 def compute_northstardrift(

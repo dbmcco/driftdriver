@@ -577,6 +577,31 @@ class AlignmentIntegrationTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("UX", findings[0])
 
+    def test_llm_alignment_cache_prevents_redundant_calls(self) -> None:
+        """Second call with identical statement+tasks returns cached result without subprocess."""
+        import driftdriver.northstardrift as ns_mod
+        from unittest.mock import MagicMock, patch
+
+        tasks = [{"id": "t1", "title": "Build user onboarding flow"}]
+        statement = "Deliver delightful user experiences"
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = '{"score": 85, "findings": []}'
+
+        # Clear module-level cache to isolate this test
+        ns_mod._alignment_cache.clear()
+
+        with patch("driftdriver.northstardrift.subprocess.run", return_value=mock_result) as mock_run:
+            score1, findings1 = ns_mod._score_alignment_with_llm(statement, tasks)
+            score2, findings2 = ns_mod._score_alignment_with_llm(statement, tasks)
+
+        # subprocess called exactly once despite two invocations
+        mock_run.assert_called_once()
+        self.assertEqual(score1, score2)
+        self.assertEqual(findings1, findings2)
+        self.assertEqual(score1, 85.0)
+
     def test_llm_failure_falls_back_to_keyword(self) -> None:
         """When LLM call fails, alignment falls back to keyword scoring."""
         from unittest.mock import patch
