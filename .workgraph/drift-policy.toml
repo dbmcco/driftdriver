@@ -8,6 +8,11 @@ max_auto_actions_per_hour = 2
 require_new_evidence = true
 max_auto_depth = 2
 
+[factory_brain]
+enabled = false
+# Disabled 2026-03-25 — was firing Tier 2 (Sonnet) every 10 min with full 1.7MB snapshot (~$160/day).
+# Re-enable after auditing what value it actually provides and trimming the prompt context.
+
 [factory]
 enabled = true
 cycle_seconds = 90

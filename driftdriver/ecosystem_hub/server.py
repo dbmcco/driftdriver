@@ -314,20 +314,37 @@ def run_service_foreground(
     directive_log = DirectiveLog(project_dir / ".workgraph" / "service" / "directives")
 
     # Factory brain — model-mediated decisions (optional, safe to fail)
+    # Gated by [factory_brain] enabled = true in drift-policy.toml.
     _factory_brain = None
+    _brain_policy: dict = {}
     try:
-        from driftdriver.factory_brain.hub_integration import FactoryBrain
+        import tomllib as _tomllib  # type: ignore[import]
+    except ImportError:
+        try:
+            import tomli as _tomllib  # type: ignore[no-redef]
+        except ImportError:
+            _tomllib = None  # type: ignore[assignment]
+    if _tomllib is not None and policy_toml_path.exists():
+        try:
+            _brain_policy = _tomllib.loads(policy_toml_path.read_text(encoding="utf-8")).get("factory_brain", {})
+        except Exception:
+            pass
+    if bool(_brain_policy.get("enabled", False)):
+        try:
+            from driftdriver.factory_brain.hub_integration import FactoryBrain
 
-        brain_data_dir = Path.home() / ".config" / "workgraph" / "factory-brain"
-        brain_data_dir.mkdir(parents=True, exist_ok=True)
-        _factory_brain = FactoryBrain(
-            hub_data_dir=brain_data_dir,
-            workspace_roots=[workspace_root],
-            dry_run=False,
-        )
-        _log.info("Factory brain initialized (roster: %s)", _factory_brain.roster_file)
-    except Exception:
-        _log.debug("Factory brain not available — skipping", exc_info=True)
+            brain_data_dir = Path.home() / ".config" / "workgraph" / "factory-brain"
+            brain_data_dir.mkdir(parents=True, exist_ok=True)
+            _factory_brain = FactoryBrain(
+                hub_data_dir=brain_data_dir,
+                workspace_roots=[workspace_root],
+                dry_run=False,
+            )
+            _log.info("Factory brain initialized (roster: %s)", _factory_brain.roster_file)
+        except Exception:
+            _log.debug("Factory brain not available — skipping", exc_info=True)
+    else:
+        _log.info("Factory brain disabled via drift-policy.toml [factory_brain] enabled = false")
 
     # Auto-restart: track source file timestamps at startup.
     # If any driftdriver source changes, the hub restarts itself.
