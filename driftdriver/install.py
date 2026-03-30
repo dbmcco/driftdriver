@@ -844,6 +844,14 @@ def install_claude_executor_support(wg_dir: Path) -> tuple[bool, bool]:
     wrote_runner = _write_text_if_changed(runner_dst, _template_text("executors", "claude-run.sh"))
     _make_executable(runner_dst)
 
+    # Agency integration helpers (used by claude-run.sh for optional enrichment)
+    assign_dst = executors_dir / "agency-assign-workgraph"
+    _write_text_if_changed(assign_dst, _template_text("executors", "agency-assign-workgraph"))
+    _make_executable(assign_dst)
+
+    wrap_dst = executors_dir / "agency-speedrift-wrap.py"
+    _write_text_if_changed(wrap_dst, _template_text("executors", "agency-speedrift-wrap.py"))
+
     bin_dir = wg_dir / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     timeout_dst = bin_dir / "timeout"

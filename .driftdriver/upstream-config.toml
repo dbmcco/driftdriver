@@ -12,3 +12,9 @@ name = "graphwork/workgraph"
 local_path = "/Users/braydon/projects/experiments/workgraph"
 branches = ["main"]
 notes = "Task graph spine for speedrift. We have a fork at dbmcco/workgraph."
+
+[[external_repos]]
+name = "agentbureau/agency"
+local_path = "/Users/braydon/projects/experiments/agency"
+branches = ["main"]
+notes = "Agent composition layer for speedrift execution. Provides agent lifecycle, capability routing, and multi-agent coordination."

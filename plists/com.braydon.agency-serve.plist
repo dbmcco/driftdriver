@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.braydon.agency-serve</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/braydon/.local/bin/agency</string>
+		<string>serve</string>
+		<string>--port</string>
+		<string>8000</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/braydon/.agency</string>
+	<key>KeepAlive</key>
+	<true/>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/braydon/Library/Logs/agency-serve.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/braydon/Library/Logs/agency-serve.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/Users/braydon/.cargo/bin:/Users/braydon/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+</dict>
+</plist>

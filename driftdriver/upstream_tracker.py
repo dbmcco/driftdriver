@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from driftdriver.llm_meter import extract_usage_from_api_response, record_spend
+from driftdriver.signal_gate import should_fire as _sg_should_fire, record_fire as _sg_record_fire
 
 # --- Change classifier ---
 
@@ -132,16 +133,52 @@ def _default_llm_caller(model: str, prompt: str) -> dict[str, Any]:
     return {}
 
 
+def _save_gated_result(gate_dir: Path, gate_name: str, result: Any) -> None:
+    """Persist a gated LLM result alongside the signal-gate state file."""
+    gate_dir.mkdir(parents=True, exist_ok=True)
+    path = gate_dir / f"{gate_name}.result.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(result, default=str) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_gated_result(gate_dir: Path, gate_name: str) -> Any | None:
+    """Load a persisted gated LLM result.  Returns None on miss or error."""
+    path = gate_dir / f"{gate_name}.result.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def triage_relevance(
     changed_files: list[str],
     commit_subjects: list[str],
     category: str,
     *,
     llm_caller: Callable[[str, str], dict[str, Any]] | None = None,
+    gate_dir: Path | None = None,
 ) -> float:
-    """Return relevance score 0-1. internals-only always returns 0 (no LLM call)."""
+    """Return relevance score 0-1. internals-only always returns 0 (no LLM call).
+
+    When *gate_dir* is provided, uses signal-gate disk persistence to skip
+    the LLM call when the input (files, subjects, category) hasn't changed.
+    """
     if category == "internals-only":
         return 0.0
+
+    # Signal gate check
+    gate_input = (sorted(changed_files), sorted(commit_subjects), category)
+    gate_name = "upstream-triage"
+    effective_gate_dir = gate_dir if gate_dir is not None else Path(".workgraph/.signal-gates")
+
+    if not _sg_should_fire(gate_name, gate_input, gate_dir=effective_gate_dir):
+        cached = _load_gated_result(effective_gate_dir, gate_name)
+        if cached is not None:
+            return float(cached)
+
     caller = llm_caller or _default_llm_caller
     files_summary = ", ".join(changed_files[:10])
     subjects_summary = "; ".join(commit_subjects[:5])
@@ -156,9 +193,13 @@ def triage_relevance(
     try:
         result = caller(_HAIKU_MODEL, prompt)
         score = float(result.get("relevance_score", 0.0))
-        return max(0.0, min(1.0, score))
+        score = max(0.0, min(1.0, score))
     except Exception:
         return 0.0
+
+    _sg_record_fire(gate_name, gate_input, gate_dir=effective_gate_dir)
+    _save_gated_result(effective_gate_dir, gate_name, score)
+    return score
 
 
 def deep_eval_change(
@@ -168,8 +209,23 @@ def deep_eval_change(
     context: str,
     *,
     llm_caller: Callable[[str, str], dict[str, Any]] | None = None,
+    gate_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Sonnet deep eval — impact, risk_score (0-1), recommended_action."""
+    """Sonnet deep eval — impact, risk_score (0-1), recommended_action.
+
+    When *gate_dir* is provided, uses signal-gate disk persistence to skip
+    the LLM call when the input hasn't changed since the last successful call.
+    """
+    # Signal gate check
+    gate_input = (sorted(changed_files), sorted(commit_subjects), category, context)
+    gate_name = "upstream-deepeval"
+    effective_gate_dir = gate_dir if gate_dir is not None else Path(".workgraph/.signal-gates")
+
+    if not _sg_should_fire(gate_name, gate_input, gate_dir=effective_gate_dir):
+        cached = _load_gated_result(effective_gate_dir, gate_name)
+        if cached is not None and isinstance(cached, dict):
+            return cached
+
     caller = llm_caller or _default_llm_caller
     files_summary = ", ".join(changed_files[:20])
     subjects_summary = "; ".join(commit_subjects[:10])
@@ -190,7 +246,6 @@ def deep_eval_change(
         result["risk_score"] = max(0.0, min(1.0, risk))
         if result.get("recommended_action") not in ("adopt", "watch", "ignore"):
             result["recommended_action"] = "watch"
-        return result
     except Exception:
         return {
             "impact": "unknown",
@@ -199,6 +254,10 @@ def deep_eval_change(
             "risk_score": 0.5,
             "recommended_action": "watch",
         }
+
+    _sg_record_fire(gate_name, gate_input, gate_dir=effective_gate_dir)
+    _save_gated_result(effective_gate_dir, gate_name, result)
+    return result
 
 
 # --- Pass 1: External repos ---

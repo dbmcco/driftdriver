@@ -99,6 +99,51 @@ if [[ -z "${PROMPT//[[:space:]]/}" ]]; then
   exit 1
 fi
 
+# ── Agency enrichment (graceful fallback) ──
+# If Agency is reachable, compose an agent identity for this task.
+# If not, the original speedrift prompt is used unchanged.
+EXECUTORS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EVENTS_FILE="$PWD/.workgraph/service/runtime/events.jsonl"
+
+_agency_emit() {
+  local kind="$1" detail="$2"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")"
+  mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || true
+  echo "{\"kind\":\"$kind\",\"ts\":\"$ts\",\"task\":\"${WG_TASK_ID:-}\",\"detail\":\"$detail\"}" \
+    >> "$EVENTS_FILE" 2>/dev/null || true
+}
+
+if [[ -n "${WG_TASK_ID:-}" && "${WG_SKIP_AGENCY:-}" != "1" ]]; then
+  ASSIGN_SCRIPT="$EXECUTORS_DIR/agency-assign-workgraph"
+  WRAP_SCRIPT="$EXECUTORS_DIR/agency-speedrift-wrap.py"
+
+  if [[ -x "$ASSIGN_SCRIPT" && -f "$WRAP_SCRIPT" ]]; then
+    COMPOSED=""
+    COMPOSED=$("$ASSIGN_SCRIPT" "$WG_TASK_ID" "" 2>/dev/null) || true
+
+    if [[ -n "$COMPOSED" ]]; then
+      # Write original prompt to a temp file for the wrap script
+      ORIG_PROMPT_TMP="$(mktemp)"
+      trap 'rm -f "$ORIG_PROMPT_TMP"' EXIT
+      printf '%s' "$PROMPT" > "$ORIG_PROMPT_TMP"
+
+      ENRICHED=$(printf '%s' "$COMPOSED" | python3 "$WRAP_SCRIPT" "$ORIG_PROMPT_TMP" 2>/dev/null) || true
+      rm -f "$ORIG_PROMPT_TMP"
+      trap - EXIT
+
+      if [[ -n "$ENRICHED" ]]; then
+        PROMPT="$ENRICHED"
+        _agency_emit "agency.enrichment.applied" "task=${WG_TASK_ID}"
+      else
+        _agency_emit "agency.enrichment.skipped" "reason=wrap_failed"
+      fi
+    else
+      _agency_emit "agency.enrichment.skipped" "reason=agency_unavailable"
+    fi
+  fi
+fi
+
 MANUAL_OWNER_ID=""
 if MANUAL_OWNER_ID="$(detect_manual_owner_assist 2>/dev/null)"; then
   export WG_MANUAL_OWNER_ASSIST=1
