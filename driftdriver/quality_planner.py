@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from driftdriver.signal_gate import is_gate_enabled, should_fire, record_fire
+from driftdriver.drift_task_guard import record_finding_ledger
+
+_log = logging.getLogger(__name__)
 
 
 BUILTIN_PATTERNS: dict[str, dict[str, str]] = {
@@ -317,8 +323,32 @@ def plan_from_spec(
         print(f"[planner dry-run] Patterns available: {', '.join(repertoire.keys())}")
         return PlannerOutput()
 
+    # Signal gate — skip LLM when prompt content is unchanged.
+    _gate_agent = "quality_planner"
+    _policy_path = repo_path / ".workgraph" / "drift-policy.toml"
+    _gate_dir = repo_path / ".workgraph" / ".signal-gates"
+    _gate_active = is_gate_enabled(_gate_agent, _policy_path)
+
+    if _gate_active and not should_fire(_gate_agent, prompt, gate_dir=_gate_dir):
+        _log.info("[quality_planner] signal gate suppressed LLM call (content unchanged)")
+        wg_dir = repo_path / ".workgraph"
+        record_finding_ledger(
+            wg_dir,
+            repo=str(repo_path),
+            lane=_gate_agent,
+            finding_type="signal_gate_suppressed",
+            task_id=f"gate-{_gate_agent}",
+            result="suppressed",
+            message="LLM call skipped — prompt content unchanged",
+        )
+        return PlannerOutput()
+
     raw = _call_llm(prompt, model=model)
     output = _parse_plan_output(raw)
+
+    # Record successful fire so next identical call is gated.
+    if _gate_active:
+        record_fire(_gate_agent, prompt, gate_dir=_gate_dir)
 
     # Write tasks via wg add with quality-gate structuring
     added_count = 0

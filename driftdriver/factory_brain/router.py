@@ -177,6 +177,8 @@ def run_brain_tick(
     dry_run: bool = False,
     signal_gate_enabled: bool = False,
     pending_signals_path: Path | None = None,
+    gate_dir: Path | None = None,
+    gate_dry_run: bool = False,
 ) -> list[dict]:
     """Main tick function — aggregate events, route by tier, handle escalation."""
     all_results: list[dict] = []
@@ -238,6 +240,9 @@ def run_brain_tick(
             recent_directives=state.recent_directives,
             log_dir=log_dir,
             dry_run=dry_run,
+            gate_enabled=signal_gate_enabled,
+            gate_dir=gate_dir,
+            gate_dry_run=gate_dry_run,
         )
         result = process_brain_response(
             response,
@@ -285,6 +290,9 @@ def run_brain_tick(
                 recent_directives=state.recent_directives,
                 log_dir=log_dir,
                 dry_run=dry_run,
+                gate_enabled=signal_gate_enabled,
+                gate_dir=gate_dir,
+                gate_dry_run=gate_dry_run,
             )
             result = process_brain_response(
                 response,
@@ -381,6 +389,9 @@ def run_brain_tick(
             tier1_reasoning=tier1_reasoning,
             log_dir=log_dir,
             dry_run=dry_run,
+            gate_enabled=signal_gate_enabled,
+            gate_dir=gate_dir,
+            gate_dry_run=gate_dry_run,
         )
         result = process_brain_response(
             response,
@@ -422,6 +433,9 @@ def run_brain_tick(
             tier1_reasoning="\n".join(tier1_reasoning_parts) if tier1_reasoning_parts else None,
             log_dir=log_dir,
             dry_run=dry_run,
+            gate_enabled=signal_gate_enabled,
+            gate_dir=gate_dir,
+            gate_dry_run=gate_dry_run,
         )
         result = process_brain_response(
             response,

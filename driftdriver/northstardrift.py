@@ -12,6 +12,7 @@ import re
 from driftdriver.drift_task_guard import guarded_add_drift_task, record_finding_ledger
 from driftdriver.governancedrift import score_operational_health
 from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
+from driftdriver.signal_gate import should_fire as _sg_should_fire, record_fire as _sg_record_fire
 
 
 AXIS_NAMES = (
@@ -731,6 +732,26 @@ def _alignment_cache_key(statement: str, tasks: list[dict[str, Any]]) -> str:
     return hashlib.sha256(f"{statement}\n{titles}".encode()).hexdigest()[:16]
 
 
+def _save_gated_result(gate_dir: Path, gate_name: str, result: Any) -> None:
+    """Persist a gated LLM result alongside the signal-gate state file."""
+    gate_dir.mkdir(parents=True, exist_ok=True)
+    path = gate_dir / f"{gate_name}.result.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(result, default=str) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_gated_result(gate_dir: Path, gate_name: str) -> Any | None:
+    """Load a persisted gated LLM result.  Returns None on miss or error."""
+    path = gate_dir / f"{gate_name}.result.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def _snapshot_gate_hash(snapshot: dict[str, Any]) -> str:
     """Compute a stable hash of repos + task titles + scores for the signal gate.
 
@@ -812,11 +833,16 @@ def _score_alignment_with_llm(
     tasks: list[dict[str, Any]],
     model: str = "haiku",
     timeout: int = 30,
+    gate_dir: Path | None = None,
 ) -> tuple[float, list[str]]:
     """Score alignment using a Haiku LLM call.
 
     Returns (score 0-100, findings list).
     Raises RuntimeError on failure so the caller can fall back to keyword scoring.
+
+    When *gate_dir* is provided, uses signal-gate disk persistence to skip
+    the LLM call when (statement, task_titles) haven't changed since the
+    last successful call.  This replaces the old process-local _alignment_cache.
 
     Security note: ``--dangerously-skip-permissions`` is intentional here.
     This subprocess call is read-only intelligence work — it sends a prompt
@@ -830,9 +856,19 @@ def _score_alignment_with_llm(
     if not tasks:
         return 50.0, []
 
-    cache_key = _alignment_cache_key(statement, tasks)
-    if cache_key in _alignment_cache:
-        return _alignment_cache[cache_key]
+    # Build signal-gate input key from statement + task titles
+    task_titles = tuple(
+        str(t.get("title") or t.get("id") or "") for t in tasks[:20]
+    )
+    gate_input = (statement, task_titles)
+    gate_name = "northstardrift-alignment"
+
+    # Check signal gate (disk-persisted) — replaces in-memory _alignment_cache
+    effective_gate_dir = gate_dir if gate_dir is not None else Path(".workgraph/.signal-gates")
+    if not _sg_should_fire(gate_name, gate_input, gate_dir=effective_gate_dir):
+        cached = _load_gated_result(effective_gate_dir, gate_name)
+        if cached is not None and isinstance(cached, dict):
+            return float(cached.get("score", 50.0)), list(cached.get("findings", []))
 
     task_summary = "\n".join(
         f"- {str(t.get('title') or t.get('id') or 'unknown')}"
@@ -888,6 +924,16 @@ def _score_alignment_with_llm(
     score = float(parsed.get("score", 50))
     findings = [str(f) for f in (parsed.get("findings") or [])]
     result_tuple = max(0.0, min(100.0, score)), findings
+
+    # Record fire and persist result to disk
+    _sg_record_fire(gate_name, gate_input, gate_dir=effective_gate_dir)
+    _save_gated_result(effective_gate_dir, gate_name, {
+        "score": result_tuple[0],
+        "findings": result_tuple[1],
+    })
+
+    # Keep in-memory cache for backward compat with callers that seed it
+    cache_key = _alignment_cache_key(statement, tasks)
     _alignment_cache[cache_key] = result_tuple
     return result_tuple
 
@@ -1383,8 +1429,10 @@ def compute_northstardrift(
             raw_score = 50.0
             try:
                 statement = str(alignment_config.get("statement") or "")
+                _llm_gate_dir = gate_state_path.parent if gate_state_path is not None else None
                 raw_score, alignment_findings = _score_alignment_with_llm(
-                    statement, all_tasks, model=llm_model
+                    statement, all_tasks, model=llm_model,
+                    gate_dir=_llm_gate_dir,
                 )
                 # LLM returns 0-100; normalize to 0-1 for backwards-compat output.
                 overall_alignment = raw_score / 100.0

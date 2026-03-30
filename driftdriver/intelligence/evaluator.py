@@ -20,6 +20,7 @@ from urllib.request import Request, urlopen
 from driftdriver.intelligence.db import PostgresConfig, ensure_database_and_apply_migrations
 from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
 from driftdriver.intelligence.models import Signal
+from driftdriver.signal_gate import is_gate_enabled, record_fire, should_fire
 from driftdriver.intelligence.store import (
     append_signal_action_log,
     list_acted_signals,
@@ -848,11 +849,16 @@ def evaluate_pending_signals(
     *,
     model_invoker: ModelInvoker | None = None,
     task_creator: TaskCreator | None = None,
+    gate_dir: Path | None = None,
 ) -> dict[str, Any]:
     active_postgres = postgres_config or PostgresConfig()
     active_model_invoker = model_invoker or default_model_invoker
     active_task_creator = task_creator or default_task_creator
     ensure_database_and_apply_migrations(active_postgres)
+
+    # Signal gate setup — resolve gate dir and policy.
+    _gate_policy = Path(".workgraph/drift-policy.toml")
+    _gate_dir = gate_dir or Path(".workgraph/.signal-gates")
 
     evaluator_config = _load_evaluator_config(active_postgres)
     now = _utc_now()
@@ -896,6 +902,14 @@ def evaluate_pending_signals(
                 veto_patterns=veto_patterns,
                 source_metadata=source_metadata,
             )
+
+            # Signal gate — skip batch if prompt content unchanged.
+            _gate_agent = f"evaluator_{signal_type}"
+            _gate_enabled = is_gate_enabled(_gate_agent, _gate_policy)
+            if _gate_enabled and not should_fire(_gate_agent, user_prompt, gate_dir=_gate_dir):
+                LOG.info("[evaluator] signal gate suppressed batch for %s (content unchanged)", signal_type)
+                continue
+
             try:
                 raw = active_model_invoker(model, _system_prompt(), user_prompt, DECISION_SCHEMA)
                 envelopes = _coerce_decisions(raw, model=model)
@@ -905,6 +919,10 @@ def evaluate_pending_signals(
                 LOG.warning("ecosystem evaluator batch failed for %s: %s", signal_type, exc)
                 errors.append(error)
                 continue
+
+            # Record successful fire so next identical batch is gated.
+            if _gate_enabled:
+                record_fire(_gate_agent, user_prompt, gate_dir=_gate_dir)
 
             for signal, envelope in mapped:
                 try:

@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from driftdriver.directives import Action, Directive, DirectiveLog
+from driftdriver.drift_task_guard import record_finding_ledger
 from driftdriver.executor_shim import ExecutorShim
+from driftdriver.signal_gate import is_gate_enabled, record_fire, should_fire
+
+_log = logging.getLogger(__name__)
 
 
 def _call_llm(goal: str, context: str) -> list[dict[str, Any]]:
@@ -46,7 +51,32 @@ def decompose_goal(
 
     Returns dict with goal, task_count.
     """
+    # Signal gate — skip LLM when goal+context content is unchanged.
+    _gate_agent = "decompose"
+    _policy_path = wg_dir / "drift-policy.toml"
+    _gate_dir = wg_dir / ".signal-gates"
+    _gate_input = {"goal": goal, "context": context}
+    _gate_active = is_gate_enabled(_gate_agent, _policy_path)
+
+    if _gate_active and not should_fire(_gate_agent, _gate_input, gate_dir=_gate_dir):
+        _log.info("[decompose] signal gate suppressed LLM call (content unchanged)")
+        record_finding_ledger(
+            wg_dir,
+            repo=repo,
+            lane=_gate_agent,
+            finding_type="signal_gate_suppressed",
+            task_id=f"gate-{_gate_agent}",
+            result="suppressed",
+            message="LLM call skipped — goal+context unchanged",
+        )
+        return {"goal": goal, "task_count": 0}
+
     tasks = _call_llm(goal, context)
+
+    # Record successful fire so next identical call is gated.
+    if _gate_active:
+        record_fire(_gate_agent, _gate_input, gate_dir=_gate_dir)
+
     shim = ExecutorShim(wg_dir=wg_dir, log=directive_log)
 
     for task in tasks:

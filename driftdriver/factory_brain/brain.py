@@ -18,6 +18,7 @@ from driftdriver.factory_brain.prompts import (
     build_user_prompt,
 )
 from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
+from driftdriver.signal_gate import record_fire, should_fire
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +245,59 @@ def _try_invoke(full_prompt: str, tier: int) -> tuple[dict, str]:
     raise last_error or RuntimeError("No CLI available")
 
 
+def _build_gate_input(
+    tier: int,
+    trigger_event: dict | None,
+    snapshot: dict | None,
+    heuristic_recommendation: str | None,
+    escalation_reason: str | None,
+) -> dict:
+    """Build a stable input dict for signal-gate content hashing.
+
+    Excludes timestamps and volatile fields (recent_events, recent_directives)
+    so the gate fires only when the semantic trigger content changes.
+    """
+    return {
+        "tier": tier,
+        "trigger_kind": trigger_event.get("kind") if trigger_event else None,
+        "trigger_repo": trigger_event.get("repo") if trigger_event else None,
+        "trigger_payload": trigger_event.get("payload") if trigger_event else None,
+        "snapshot": snapshot,
+        "heuristic": heuristic_recommendation,
+        "escalation": escalation_reason,
+    }
+
+
+def _suppressed_response(tier: int) -> BrainResponse:
+    """Return a noop BrainResponse for gate-suppressed calls."""
+    return BrainResponse(
+        reasoning=f"Signal gate suppressed: tier {tier} content unchanged since last fire.",
+        directives=[Directive(action="noop", params={"reason": "signal_gate_suppressed"})],
+        telegram=None,
+        escalate=False,
+    )
+
+
+def _write_gate_shadow_log(
+    log_dir: Path,
+    tier: int,
+    gate_would_fire: bool,
+    gate_input: dict,
+) -> None:
+    """Write a shadow log entry for dry-run gate validation."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / "brain-gate-shadow.jsonl"
+    record = {
+        "tier": tier,
+        "gate_would_fire": gate_would_fire,
+        "gate_agent": f"factory-brain-t{tier}",
+        "gate_input_keys": sorted(k for k, v in gate_input.items() if v is not None),
+        "timestamp": time.time(),
+    }
+    with path.open("a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
 def invoke_brain(
     *,
     tier: int,
@@ -258,8 +312,31 @@ def invoke_brain(
     tier2_reasoning: str | None = None,
     log_dir: Path | None = None,
     dry_run: bool = False,
+    gate_enabled: bool = False,
+    gate_dir: Path | None = None,
+    gate_dry_run: bool = False,
 ) -> BrainResponse:
     """Invoke the brain at the given tier via CLI (auto-selects claude or codex)."""
+    gate_agent = f"factory-brain-t{tier}"
+    gate_input = _build_gate_input(
+        tier, trigger_event, snapshot, heuristic_recommendation, escalation_reason,
+    )
+
+    # Signal gate check
+    if gate_enabled:
+        would_fire = should_fire(gate_agent, gate_input, gate_dir=gate_dir)
+
+        if gate_dry_run:
+            # Shadow mode: log decision but always proceed
+            if log_dir is not None:
+                _write_gate_shadow_log(log_dir, tier, would_fire, gate_input)
+            logger.info(
+                "Signal gate dry-run: tier %d would_fire=%s", tier, would_fire,
+            )
+        elif not would_fire:
+            logger.info("Signal gate suppressed: tier %d content unchanged", tier)
+            return _suppressed_response(tier)
+
     system_prompt = build_system_prompt(tier)
     user_prompt = build_user_prompt(
         trigger_event=trigger_event,
@@ -283,6 +360,10 @@ def invoke_brain(
         return _noop_response("No CLI (claude/codex) found in PATH.")
     except Exception as exc:
         return _noop_response(f"All CLIs failed: {exc}")
+
+    # Record fire after successful LLM call
+    if gate_enabled:
+        record_fire(gate_agent, gate_input, gate_dir=gate_dir)
 
     # Resolve model ID for logging
     if cli_used == "codex":
