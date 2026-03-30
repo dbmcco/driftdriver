@@ -7,8 +7,11 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
-from driftdriver.drift_task_guard import guarded_add_drift_task
+import re
+
+from driftdriver.drift_task_guard import guarded_add_drift_task, record_finding_ledger
 from driftdriver.governancedrift import score_operational_health
+from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
 
 
 AXIS_NAMES = (
@@ -728,6 +731,82 @@ def _alignment_cache_key(statement: str, tasks: list[dict[str, Any]]) -> str:
     return hashlib.sha256(f"{statement}\n{titles}".encode()).hexdigest()[:16]
 
 
+def _snapshot_gate_hash(snapshot: dict[str, Any]) -> str:
+    """Compute a stable hash of repos + task titles + scores for the signal gate.
+
+    Only fields that would change northstardrift output are included so that
+    cosmetic snapshot differences (e.g. generated_at timestamp) don't bust the gate.
+    """
+    repos = snapshot.get("repos") if isinstance(snapshot.get("repos"), list) else []
+    parts: list[str] = []
+    for repo in repos:
+        if not isinstance(repo, dict):
+            continue
+        parts.append(str(repo.get("name") or ""))
+        for task in (repo.get("in_progress") or []):
+            parts.append(str(task.get("title") or task.get("id") or ""))
+        for task in (repo.get("ready") or []):
+            parts.append(str(task.get("title") or task.get("id") or ""))
+        quality = repo.get("quality") if isinstance(repo.get("quality"), dict) else {}
+        security = repo.get("security") if isinstance(repo.get("security"), dict) else {}
+        parts.extend([
+            str(repo.get("stalled") or ""),
+            str(repo.get("service_running") or ""),
+            str(repo.get("blocked_open") or ""),
+            str(len(repo.get("stale_open") or [])),
+            str(len(repo.get("stale_in_progress") or [])),
+            str(repo.get("behind") or ""),
+            str(quality.get("quality_score") or ""),
+            str(quality.get("critical") or ""),
+            str(quality.get("high") or ""),
+            str(security.get("critical") or ""),
+            str(security.get("high") or ""),
+        ])
+    return sha1("|".join(parts).encode()).hexdigest()[:16]
+
+
+def _load_gate_state(gate_path: Path) -> dict[str, Any]:
+    """Load northstar signal gate state from disk. Returns {} on any error."""
+    if not gate_path.exists():
+        return {}
+    try:
+        data = json.loads(gate_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_gate_state(gate_path: Path, state: dict[str, Any]) -> None:
+    """Atomically save northstar signal gate state to disk."""
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = gate_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(gate_path)
+
+
+def _check_canary_alert(gate_state: dict[str, Any], *, alert_hours: int = 4) -> None:
+    """Alert via wg notify if no evidence has been detected in alert_hours.
+
+    A gate that never sees evidence is indistinguishable from a broken gate.
+    """
+    last_evidence = gate_state.get("last_evidence_at")
+    if not last_evidence:
+        return
+    dt = _parse_iso(last_evidence)
+    if dt is None:
+        return
+    now = datetime.now(timezone.utc)
+    if (now - dt).total_seconds() > alert_hours * 3600:
+        try:
+            subprocess.run(
+                ["wg", "notify", f"northstar-gate: no evidence detected in {alert_hours}h — gate may be stuck or input is truly static"],
+                capture_output=True,
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+
 def _score_alignment_with_llm(
     statement: str,
     tasks: list[dict[str, Any]],
@@ -770,7 +849,8 @@ def _score_alignment_with_llm(
     )
 
     result = subprocess.run(
-        ["claude", "--model", model, "--print", "--dangerously-skip-permissions"],
+        ["claude", "--model", model, "--print", "--output-format", "json",
+         "--dangerously-skip-permissions"],
         input=prompt,
         capture_output=True,
         text=True,
@@ -780,7 +860,21 @@ def _score_alignment_with_llm(
     if result.returncode != 0:
         raise RuntimeError(f"LLM alignment call failed (exit {result.returncode}): {result.stderr[:200]}")
 
-    raw = result.stdout.strip()
+    cli_output = json.loads(result.stdout)
+
+    # Record LLM spend
+    usage = extract_usage_from_claude_json(cli_output)
+    if usage:
+        record_spend(
+            agent="northstar",
+            model=model,
+            input_tokens=usage[0],
+            output_tokens=usage[1],
+        )
+
+    # Extract the text result from CLI JSON envelope
+    raw = (cli_output.get("result", "") if isinstance(cli_output, dict)
+           else result.stdout).strip()
     # Strip markdown fences if present
     if raw.startswith("```"):
         raw = raw.lstrip("`").removeprefix("json").strip().rstrip("`").strip()
@@ -804,6 +898,8 @@ def compute_northstardrift(
     previous: dict[str, Any] | None = None,
     config: dict[str, Any] | None = None,
     alignment_config: dict[str, Any] | None = None,
+    signal_gate_enabled: bool = False,
+    gate_state_path: Path | None = None,
 ) -> dict[str, Any]:
     cfg = default_northstardrift_cfg()
     if isinstance(config, dict):
@@ -1242,35 +1338,88 @@ def compute_northstardrift(
                 all_tasks.extend(repo.get("in_progress") or [])
                 all_tasks.extend(repo.get("ready") or [])
 
-        # Try LLM scoring first; fall back to keyword matching on any failure.
-        llm_model = str(alignment_config.get("alignment_model") or "haiku")
-        alignment_findings: list[str] = []
-        llm_used = False
-        try:
-            statement = str(alignment_config.get("statement") or "")
-            raw_score, alignment_findings = _score_alignment_with_llm(
-                statement, all_tasks, model=llm_model
-            )
-            # LLM returns 0-100; normalize to 0-1 for backwards-compat output.
-            overall_alignment = raw_score / 100.0
-            llm_used = True
-        except Exception:
-            # Keyword fallback
-            task_scores_kw: list[dict[str, Any]] = []
-            for t in all_tasks:
-                ts_kw = compute_alignment_score(t, alignment_config)
-                task_scores_kw.append({"task_id": str(t.get("id") or ""), "score": ts_kw})
-            overall_alignment = (
-                sum(ts["score"] for ts in task_scores_kw) / len(task_scores_kw)
-                if task_scores_kw
-                else 0.5
-            )
+        # -- Signal gate ------------------------------------------------------
+        # When enabled, check a disk-persisted snapshot hash before calling
+        # _score_alignment_with_llm.  If the hash matches the last-run hash,
+        # the input has not changed and we can skip the LLM call entirely.
+        _gate_state: dict[str, Any] = {}
+        _snapshot_hash = ""
+        _gate_hit = False
+        _gate_raw_score = 50.0
+        _gate_findings: list[str] = []
 
-        task_scores: list[dict[str, Any]] = []
-        if not llm_used:
-            for t in all_tasks:
-                ts_val = compute_alignment_score(t, alignment_config)
-                task_scores.append({"task_id": str(t.get("id") or ""), "score": ts_val})
+        if signal_gate_enabled and gate_state_path is not None:
+            _gate_state = _load_gate_state(gate_state_path)
+            _snapshot_hash = _snapshot_gate_hash(snapshot)
+            _stored_hash = str(_gate_state.get("snapshot_hash") or "")
+
+            # Seed in-process alignment cache from disk so LLM results survive
+            # process restarts (item 1 of the task spec).
+            for _k, _v in (_gate_state.get("alignment_cache") or {}).items():
+                if _k not in _alignment_cache and isinstance(_v, (list, tuple)) and len(_v) == 2:
+                    _alignment_cache[_k] = (float(_v[0]), list(_v[1]))
+
+            if _snapshot_hash and _snapshot_hash == _stored_hash:
+                print("northstar-gate: no change, skipping", flush=True)
+                _check_canary_alert(_gate_state)
+                _gate_state["last_checked_at"] = datetime.now(timezone.utc).isoformat()
+                _save_gate_state(gate_state_path, _gate_state)
+                _gate_hit = True
+                _gate_raw_score = float(_gate_state.get("last_alignment_score") or 50.0)
+                _gate_findings = list(_gate_state.get("last_alignment_findings") or [])
+            else:
+                print("northstar-gate: evidence detected", flush=True)
+
+        if _gate_hit:
+            overall_alignment = _gate_raw_score / 100.0
+            alignment_findings: list[str] = _gate_findings
+            llm_used = False
+            task_scores: list[dict[str, Any]] = []
+        else:
+            # Try LLM scoring first; fall back to keyword matching on any failure.
+            llm_model = str(alignment_config.get("alignment_model") or "haiku")
+            alignment_findings = []
+            llm_used = False
+            raw_score = 50.0
+            try:
+                statement = str(alignment_config.get("statement") or "")
+                raw_score, alignment_findings = _score_alignment_with_llm(
+                    statement, all_tasks, model=llm_model
+                )
+                # LLM returns 0-100; normalize to 0-1 for backwards-compat output.
+                overall_alignment = raw_score / 100.0
+                llm_used = True
+            except Exception:
+                # Keyword fallback
+                task_scores_kw: list[dict[str, Any]] = []
+                for t in all_tasks:
+                    ts_kw = compute_alignment_score(t, alignment_config)
+                    task_scores_kw.append({"task_id": str(t.get("id") or ""), "score": ts_kw})
+                overall_alignment = (
+                    sum(ts["score"] for ts in task_scores_kw) / len(task_scores_kw)
+                    if task_scores_kw
+                    else 0.5
+                )
+                raw_score = overall_alignment * 100.0
+
+            task_scores = []
+            if not llm_used:
+                for t in all_tasks:
+                    ts_val = compute_alignment_score(t, alignment_config)
+                    task_scores.append({"task_id": str(t.get("id") or ""), "score": ts_val})
+
+            # Persist gate state after LLM/keyword run so next process can check.
+            if signal_gate_enabled and gate_state_path is not None and _snapshot_hash:
+                _now = datetime.now(timezone.utc).isoformat()
+                _gate_state.update({
+                    "snapshot_hash": _snapshot_hash,
+                    "last_evidence_at": _now,
+                    "last_checked_at": _now,
+                    "last_alignment_score": raw_score,
+                    "last_alignment_findings": alignment_findings,
+                    "alignment_cache": {k: list(v) for k, v in _alignment_cache.items()},
+                })
+                _save_gate_state(gate_state_path, _gate_state)
 
         alignment_section: dict[str, Any] = {
             "overall_alignment": round(overall_alignment, 4),
@@ -1482,15 +1631,15 @@ def emit_northstar_review_tasks(
                 status = "skipped-dirty-workgraph" if dirty_mode == "workgraph-only" else "skipped-dirty"
                 out["tasks"].append({"repo": repo_name, "task_id": "", "status": status})
                 continue
-        fingerprint = str(row.get("fingerprint") or "").strip()
-        if not fingerprint:
-            out["skipped"] = int(out["skipped"]) + 1
-            continue
-        task_id = f"northstardrift-{fingerprint[:14]}"
-        title = f"northstardrift: {str(row.get('severity') or 'medium')} {str(row.get('category') or 'repo-attention')}"
+        category = str(row.get("category") or "repo-attention").strip()
+        category_slug = re.sub(r"[^a-z0-9]+", "-", category.lower()).strip("-") or "repo-attention"
+        # Stable task ID: content-independent so dedup works across cycles.
+        task_id = f"drift:{repo_name}:northstar:{category_slug}"
+        title = f"northstardrift: {str(row.get('severity') or 'medium')} {category}"
         prompt = str(row.get("model_prompt") or "")
         codex_prompt = str(row.get("codex_prompt") or "")
         approval = "yes" if bool(row.get("human_approval_required")) else "no"
+        verify_cmd = f"wg analyze --repo {repo_name} | grep northstar_score"
         desc = (
             "North-star effectiveness review task.\n\n"
             f"Finding: {row.get('title')}\n"
@@ -1499,6 +1648,7 @@ def emit_northstar_review_tasks(
             f"Recommendation: {row.get('recommendation')}\n"
             f"North-star score: {row.get('score')}\n\n"
             f"Human approval required: {approval}\n\n"
+            f"Verify: {verify_cmd}\n\n"
             f"Suggested Claude prompt:\n{prompt}\n\n"
             f"Suggested Codex prompt:\n{codex_prompt}\n"
         )
@@ -1511,6 +1661,16 @@ def emit_northstar_review_tasks(
             lane_tag="northstardrift",
             extra_tags=["review"],
             cwd=repo_path,
+        )
+        record_finding_ledger(
+            wg_dir,
+            repo=repo_name,
+            lane="northstardrift",
+            finding_type=category_slug,
+            task_id=task_id,
+            result=result,
+            severity=str(row.get("severity") or "medium"),
+            message=str(row.get("title") or ""),
         )
         if result == "created":
             out["created"] = int(out["created"]) + 1
@@ -1670,6 +1830,29 @@ def _load_alignment_config(project_dir: Path) -> dict[str, Any] | None:
     return alignment
 
 
+def _load_signal_gate_enabled(project_dir: Path) -> bool:
+    """Read [northstardrift] signal_gate_enabled from drift-policy.toml."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        return False
+
+    policy_path = project_dir / ".workgraph" / "drift-policy.toml"
+    if not policy_path.exists():
+        return False
+
+    try:
+        data = tomllib.loads(policy_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    ns_cfg = data.get("northstardrift")
+    if not isinstance(ns_cfg, dict):
+        return False
+
+    return bool(ns_cfg.get("signal_gate_enabled", False))
+
+
 def run_as_lane(project_dir: Path) -> "LaneResult":
     """Run northstardrift and return results in the standard lane contract format.
 
@@ -1684,7 +1867,18 @@ def run_as_lane(project_dir: Path) -> "LaneResult":
     try:
         snapshot = _minimal_northstar_snapshot(project_dir)
         alignment_config = _load_alignment_config(project_dir)
-        report = compute_northstardrift(snapshot, alignment_config=alignment_config)
+        signal_gate_enabled = _load_signal_gate_enabled(project_dir)
+        gate_state_path = (
+            project_dir / ".workgraph" / "northstar-gate-state.json"
+            if signal_gate_enabled
+            else None
+        )
+        report = compute_northstardrift(
+            snapshot,
+            alignment_config=alignment_config,
+            signal_gate_enabled=signal_gate_enabled,
+            gate_state_path=gate_state_path,
+        )
     except Exception as exc:
         return LaneResult(
             lane="northstardrift",

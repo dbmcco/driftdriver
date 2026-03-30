@@ -60,7 +60,7 @@ class ExecutorShim:
 
         match directive.action:
             case Action.CREATE_TASK:
-                cmd = wg + ["add", p["title"], "--id", p["task_id"], "--immediate"]
+                cmd = wg + ["add", p["title"], "--id", p["task_id"]]
                 if p.get("description"):
                     cmd += ["-d", p["description"]]
                 for tag in p.get("tags", []):
@@ -111,7 +111,6 @@ class ExecutorShim:
                     "add", f"validate: {p['parent_task_id']}",
                     "--id", f"validate-{p['parent_task_id']}",
                     "--after", p["parent_task_id"],
-                    "--immediate",
                     "-t", "validation",
                     "-d", p.get("criteria", "Verify task deliverables"),
                 ]

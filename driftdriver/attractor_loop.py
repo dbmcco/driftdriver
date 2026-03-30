@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
+import re
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 from driftdriver.attractor_planner import (
     ConvergencePlan,
@@ -23,7 +29,9 @@ from driftdriver.attractors import (
     load_attractors_from_dir,
     resolve_attractor,
 )
+from driftdriver.actor import Actor
 from driftdriver.bundles import Bundle, load_bundles_from_dir
+from driftdriver.drift_task_guard import guarded_add_drift_task, record_finding_ledger
 from driftdriver.lane_contract import LaneResult
 
 
@@ -62,6 +70,96 @@ class AttractorRun:
     status: str = "pending"  # pending, converged, plateau, escalated, budget_exhausted, max_passes, timeout
     remaining_findings: list[dict[str, Any]] = field(default_factory=list)
     escalations: list[EscalationRecord] = field(default_factory=list)
+
+
+_GATE_STATE_FILE = ".workgraph/attractor-gate-state.json"
+
+
+def compute_gate_hash(lane_results: dict[str, Any]) -> str:
+    """Compute a stable SHA-256 hash of drift findings for gate comparison."""
+    serializable = []
+    for lane_id in sorted(lane_results):
+        result = lane_results[lane_id]
+        for f in sorted(result.findings, key=lambda x: (x.file, x.line, x.severity, x.message)):
+            serializable.append({
+                "lane": lane_id,
+                "severity": f.severity,
+                "message": f.message,
+                "file": f.file,
+                "line": f.line,
+            })
+    return hashlib.sha256(json.dumps(serializable, sort_keys=True).encode()).hexdigest()
+
+
+def load_gate_state(repo_path: Path) -> dict[str, str]:
+    """Load persisted gate state from .workgraph/attractor-gate-state.json."""
+    gate_file = repo_path / _GATE_STATE_FILE
+    if gate_file.exists():
+        return json.loads(gate_file.read_text(encoding="utf-8"))
+    return {}
+
+
+def save_gate_state(repo_path: Path, state: dict[str, str]) -> None:
+    """Persist gate state to .workgraph/attractor-gate-state.json."""
+    gate_file = repo_path / _GATE_STATE_FILE
+    gate_file.parent.mkdir(parents=True, exist_ok=True)
+    gate_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _write_gate_log(
+    wg_dir: Path,
+    *,
+    agent: str,
+    skipped: bool,
+    reason: str = "",
+    gate_key: str = "",
+    fired: bool | None = None,
+) -> None:
+    """Append a gate decision entry to gate-log.jsonl for factory_report visibility."""
+    entry: dict[str, Any] = {
+        "ts": time.time(),
+        "agent": agent,
+        "skipped": skipped,
+        "fired": not skipped if fired is None else fired,
+        "gate_key": gate_key,
+    }
+    if reason:
+        entry["reason"] = reason
+    gate_log = wg_dir / "gate-log.jsonl"
+    try:
+        gate_log.parent.mkdir(parents=True, exist_ok=True)
+        with open(gate_log, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
+def _check_attractor_canary(
+    gate_state: dict[str, Any],
+    *,
+    alert_hours: int = 4,
+) -> None:
+    """Alert via wg notify if no evidence has been detected in alert_hours.
+
+    A gate that never sees evidence is indistinguishable from a broken gate.
+    """
+    last_evidence = gate_state.get("last_evidence_at")
+    if not last_evidence:
+        return
+    try:
+        dt = datetime.fromisoformat(str(last_evidence))
+    except (ValueError, TypeError):
+        return
+    now = datetime.now(timezone.utc)
+    if (now - dt).total_seconds() > alert_hours * 3600:
+        try:
+            subprocess.run(
+                ["wg", "notify", f"attractor-gate: no evidence detected in {alert_hours}h — gate may be stuck or findings are truly static"],
+                capture_output=True,
+                timeout=5,
+            )
+        except Exception:
+            pass
 
 
 def check_convergence(passes: list[PassResult], breakers: CircuitBreakers) -> str:
@@ -157,12 +255,36 @@ def run_attractor_loop(
     breakers: CircuitBreakers | None = None,
     diagnose_fn: Any,
     execute_fn: Any,
+    signal_gate_enabled: bool = False,
 ) -> AttractorRun:
     """Run the full attractor loop for a single repo until convergence or circuit breaker."""
     if breakers is None:
         breakers = CircuitBreakers()
 
     run = AttractorRun(repo=repo, attractor=attractor.id)
+
+    # Pre-call signal gate: skip loop if findings unchanged since last run.
+    gate_key = f"{repo}::{attractor.id}"
+    wg_dir = repo_path / ".workgraph"
+    if signal_gate_enabled:
+        current_findings = diagnose_fn(repo_path)
+        current_hash = compute_gate_hash(current_findings)
+        gate_state = load_gate_state(repo_path)
+        stored = gate_state.get(gate_key)
+        # Support both old format (plain hash string) and new format (dict).
+        stored_hash = stored["hash"] if isinstance(stored, dict) else stored
+        if stored_hash == current_hash:
+            log.info("[attractor-gate] %s — no new findings, skipping LLM pass (hash=%s)", gate_key, current_hash[:12])
+            _write_gate_log(wg_dir, agent="attractor", skipped=True, reason="no_signal", gate_key=gate_key)
+            if isinstance(stored, dict):
+                _check_attractor_canary(stored)
+                stored["last_checked_at"] = datetime.now(timezone.utc).isoformat()
+                save_gate_state(repo_path, gate_state)
+            run.status = "signal_gated"
+            return run
+        log.info("[attractor-gate] %s — findings changed, proceeding (hash=%s)", gate_key, current_hash[:12])
+        _write_gate_log(wg_dir, agent="attractor", skipped=False, reason="evidence_changed", gate_key=gate_key)
+
     tasks_emitted = 0
 
     for pass_number in range(breakers.max_passes):
@@ -207,6 +329,63 @@ def run_attractor_loop(
         if last_pass.plan:
             for esc in last_pass.plan.escalations:
                 run.remaining_findings.extend(esc.remaining_findings)
+
+    # Wire remaining escalations to drift tasks (report → workgraph).
+    if wg_dir.exists() and run.escalations:
+        actor = Actor(id="daemon-attractor-loop", actor_class="daemon", name="attractor-loop", repo=repo)
+        seen_task_ids: set[str] = set()
+        for esc in run.escalations:
+            reason_slug = re.sub(r"[^a-z0-9]+", "-", esc.reason.lower()).strip("-") or "unmatched"
+            task_id = f"drift:{repo}:attractor:{reason_slug}"
+            if task_id in seen_task_ids:
+                continue
+            seen_task_ids.add(task_id)
+            title = f"attractor: {esc.reason.replace('_', ' ')} in {repo}"
+            verify_cmd = f"wg analyze --repo {repo} | grep attractor_status"
+            findings_summary = "; ".join(
+                f.get("message", "")[:80] for f in esc.remaining_findings[:3]
+            )
+            desc = (
+                f"Attractor loop could not resolve findings in {repo}.\n\n"
+                f"Attractor: {esc.attractor}\n"
+                f"Reason: {esc.reason}\n"
+                f"Suggested action: {esc.suggested_action}\n"
+                f"Sample findings: {findings_summary}\n\n"
+                f"Verify: {verify_cmd}\n"
+            )
+            result = guarded_add_drift_task(
+                wg_dir=wg_dir,
+                task_id=task_id,
+                title=title,
+                description=desc,
+                lane_tag="attractor",
+                actor=actor,
+                cwd=repo_path,
+            )
+            record_finding_ledger(
+                wg_dir,
+                repo=repo,
+                lane="attractor",
+                finding_type=reason_slug,
+                task_id=task_id,
+                result=result,
+                severity="warning",
+                message=esc.reason,
+            )
+
+    # Persist gate hash after a real run so next call can compare.
+    if signal_gate_enabled and run.passes:
+        final_findings = diagnose_fn(repo_path)
+        new_hash = compute_gate_hash(final_findings)
+        gate_state = load_gate_state(repo_path)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        gate_state[gate_key] = {
+            "hash": new_hash,
+            "last_evidence_at": now_iso,
+            "last_checked_at": now_iso,
+        }
+        save_gate_state(repo_path, gate_state)
+        log.info("[attractor-gate] %s — saved new hash after run (hash=%s)", gate_key, new_hash[:12])
 
     return run
 

@@ -11,6 +11,8 @@ from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from driftdriver.llm_meter import extract_usage_from_api_response, record_spend
+
 # --- Change classifier ---
 
 _SCHEMA_PATTERNS = {
@@ -105,6 +107,17 @@ def _default_llm_caller(model: str, prompt: str) -> dict[str, Any]:
             body = json.loads(resp.read().decode("utf-8"))
     except HTTPError as exc:
         raise RuntimeError(f"Anthropic API error {exc.code}") from exc
+
+    # Record LLM spend
+    usage = extract_usage_from_api_response(body)
+    if usage:
+        record_spend(
+            agent="upstream-tracker",
+            model=model,
+            input_tokens=usage[0],
+            output_tokens=usage[1],
+        )
+
     content = body.get("content", [])
     for block in content:
         if isinstance(block, dict) and block.get("type") == "text":

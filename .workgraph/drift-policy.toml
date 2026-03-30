@@ -10,8 +10,13 @@ max_auto_depth = 2
 
 [factory_brain]
 enabled = false
+signal_gate_enabled = true
+dry_run = true
 # Disabled 2026-03-25 — was firing Tier 2 (Sonnet) every 10 min with full 1.7MB snapshot (~$160/day).
-# Re-enable after auditing what value it actually provides and trimming the prompt context.
+# Re-enable after signal gate validation and dry-run log review (see .workgraph/brain-dryruns.jsonl).
+# Rollout: (1) run dry_run=true for 48h, (2) confirm cost meter within budget,
+# (3) confirm dispatch pipeline healthy, (4) dry-run log shows actionable findings,
+# then set dry_run=false and enabled=true to go live.
 
 [factory]
 enabled = true
@@ -61,6 +66,11 @@ emit_operator_prompts = true
 daily_rollup = true
 weekly_trends = true
 max_review_tasks_per_repo = 2
+signal_gate_enabled = false
+# signal_gate_enabled: when true, a disk-persisted snapshot hash is checked
+# before every LLM alignment call.  If the hash matches the last-run hash,
+# the LLM call is skipped and the cached result is reused.  Set to true
+# after validating 48h token-spend delta in .workgraph/gate-validation/northstardrift.json.
 
 [northstardrift.targets]
 overall = 82.0
@@ -106,5 +116,39 @@ type = "http"
 endpoint = "http://localhost:3533/api/agent/task"
 tag_match = "agent:caroline"
 
+[speedriftd]
+signal_gate_enabled = false
+# signal_gate_enabled: speedriftd makes no LLM calls (pure runtime coordination),
+# so this flag is unused.  Present for consistency with other daemon sections.
+
 [attractor]
 target = "onboarded"
+signal_gate_enabled = false
+# signal_gate_enabled: when true, attractor loop skips LLM pass if findings
+# hash is unchanged since last run (disk-persisted in .workgraph/attractor-gate-state.json).
+# Enable after verifying 48h before/after token spend via canary log.
+
+[watchdog]
+warn_per_hour_usd = 1.0
+kill_per_hour_usd = 5.0
+kill_per_5min_usd = 2.0
+
+[authority]
+# Registered drift agents with per-class budgets.
+# northstardrift wires as actor_class="lane".
+# attractor-loop and factory-brain wire as actor_class="daemon".
+global_ceiling = 50
+
+[authority.grants]
+lane   = ["read", "create"]
+daemon = ["read", "create", "dispatch"]
+
+[authority.budgets.lane]
+max_active_tasks        = 3
+max_creates_per_hour    = 10
+max_dispatches_per_hour = 0
+
+[authority.budgets.daemon]
+max_active_tasks        = 10
+max_creates_per_hour    = 20
+max_dispatches_per_hour = 10

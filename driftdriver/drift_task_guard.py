@@ -353,5 +353,43 @@ def guarded_add_drift_task(
     return "created"
 
 
+def record_finding_ledger(
+    wg_dir: Path,
+    *,
+    repo: str,
+    lane: str,
+    finding_type: str,
+    task_id: str,
+    result: str,
+    severity: str = "",
+    message: str = "",
+) -> None:
+    """Append a finding entry to .workgraph/finding-ledger.jsonl.
+
+    Called alongside guarded_add_drift_task so findings are persisted
+    even when wg add fails. The ledger is an audit trail of what
+    drift agents detected and what happened to each finding.
+    """
+    ledger_path = wg_dir / "finding-ledger.jsonl"
+    entry: dict[str, Any] = {
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "repo": repo,
+        "lane": lane,
+        "finding_type": finding_type,
+        "task_id": task_id,
+        "result": result,
+    }
+    if severity:
+        entry["severity"] = severity
+    if message:
+        entry["message"] = message[:200]
+    try:
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(ledger_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 # Backward-compatible alias — callers that imported this name still work.
 guarded_add_drift_task_with_authority = guarded_add_drift_task

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from driftdriver.northstardrift import (
@@ -561,7 +563,10 @@ class AlignmentIntegrationTests(unittest.TestCase):
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = '{"score": 72, "findings": ["Tasks focus on infra but north star is about UX"]}'
+        mock_result.stdout = json.dumps({
+            "result": '{"score": 72, "findings": ["Tasks focus on infra but north star is about UX"]}',
+            "usage": {"input_tokens": 100, "output_tokens": 50},
+        })
 
         with patch("driftdriver.northstardrift.subprocess.run", return_value=mock_result):
             score, findings = _score_alignment_with_llm(
@@ -587,7 +592,10 @@ class AlignmentIntegrationTests(unittest.TestCase):
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = '{"score": 85, "findings": []}'
+        mock_result.stdout = json.dumps({
+            "result": '{"score": 85, "findings": []}',
+            "usage": {"input_tokens": 80, "output_tokens": 30},
+        })
 
         # Clear module-level cache to isolate this test
         ns_mod._alignment_cache.clear()
@@ -655,6 +663,311 @@ class AlignmentIntegrationTests(unittest.TestCase):
         snapshot["agency_eval_inputs"] = {"eval_score": 0.0}
         northstar = compute_northstardrift(snapshot)
         self.assertIn("self_improvement", northstar["axes"])
+
+
+class SignalGateTests(unittest.TestCase):
+    """Tests for the disk-persisted content-hash signal gate."""
+
+    def _alignment_cfg(self) -> dict:
+        return {
+            "statement": "Deliver delightful user experiences",
+            "keywords": ["user", "experience"],
+            "anti_patterns": ["pipeline"],
+        }
+
+    def _mock_llm_result(self, score: int = 80) -> "MagicMock":
+        """Return a mock matching the Claude CLI --output-format json envelope."""
+        import json as _json
+        from unittest.mock import MagicMock
+        mock = MagicMock()
+        mock.returncode = 0
+        inner = _json.dumps({"score": score, "findings": []})
+        mock.stdout = _json.dumps({
+            "result": inner,
+            "usage": {"input_tokens": 10, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        })
+        return mock
+
+    def test_signal_gate_skips_llm_when_hash_matches(self) -> None:
+        """Gate: LLM not called when snapshot hash matches the disk state."""
+        import driftdriver.northstardrift as ns_mod
+        from unittest.mock import MagicMock, patch
+
+        snapshot = _snapshot(_repo("testrepo", in_progress=1))
+        alignment_cfg = self._alignment_cfg()
+
+        # Compute the hash that would be stored
+        expected_hash = ns_mod._snapshot_gate_hash(snapshot)
+
+        with tempfile.TemporaryDirectory() as td:
+            gate_path = Path(td) / "northstar-gate-state.json"
+            # Pre-seed gate state with matching hash and cached result.
+            # Use a recent last_evidence_at so the 4h canary alert does NOT fire.
+            recent_ts = datetime.now(timezone.utc).isoformat()
+            ns_mod._save_gate_state(gate_path, {
+                "snapshot_hash": expected_hash,
+                "last_alignment_score": 75.0,
+                "last_alignment_findings": [],
+                "last_evidence_at": recent_ts,
+                "last_checked_at": recent_ts,
+                "alignment_cache": {},
+            })
+            ns_mod._alignment_cache.clear()
+
+            with patch("driftdriver.northstardrift.subprocess.run") as mock_run:
+                result = ns_mod.compute_northstardrift(
+                    snapshot,
+                    alignment_config=alignment_cfg,
+                    signal_gate_enabled=True,
+                    gate_state_path=gate_path,
+                )
+
+        # LLM subprocess must NOT have been called (subprocess.run not called at all)
+        mock_run.assert_not_called()
+        # Result uses cached score (75.0 / 100 = 0.75)
+        self.assertAlmostEqual(result["alignment"]["overall_alignment"], 0.75)
+        self.assertFalse(result["alignment"]["llm_used"])
+
+    def test_signal_gate_calls_llm_when_hash_differs(self) -> None:
+        """Gate: LLM is called when snapshot hash differs from disk state."""
+        import driftdriver.northstardrift as ns_mod
+        from unittest.mock import patch
+
+        snapshot = _snapshot(_repo("testrepo", in_progress=1))
+        alignment_cfg = self._alignment_cfg()
+
+        with tempfile.TemporaryDirectory() as td:
+            gate_path = Path(td) / "northstar-gate-state.json"
+            # Store a different hash so the gate misses
+            ns_mod._save_gate_state(gate_path, {
+                "snapshot_hash": "differenthash",
+                "last_alignment_score": 50.0,
+                "last_alignment_findings": [],
+                "last_evidence_at": "2026-03-25T10:00:00+00:00",
+                "alignment_cache": {},
+            })
+            ns_mod._alignment_cache.clear()
+
+            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(88)) as mock_run:
+                result = ns_mod.compute_northstardrift(
+                    snapshot,
+                    alignment_config=alignment_cfg,
+                    signal_gate_enabled=True,
+                    gate_state_path=gate_path,
+                )
+
+        # LLM must have been called once
+        mock_run.assert_called_once()
+        self.assertAlmostEqual(result["alignment"]["overall_alignment"], 0.88)
+        self.assertTrue(result["alignment"]["llm_used"])
+
+    def test_signal_gate_persists_state_to_disk(self) -> None:
+        """Gate: after LLM call, snapshot hash and score are saved to gate state file."""
+        import driftdriver.northstardrift as ns_mod
+        from unittest.mock import patch
+
+        snapshot = _snapshot(_repo("testrepo", in_progress=1))
+        alignment_cfg = self._alignment_cfg()
+
+        with tempfile.TemporaryDirectory() as td:
+            gate_path = Path(td) / "northstar-gate-state.json"
+            ns_mod._alignment_cache.clear()
+
+            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(91)):
+                ns_mod.compute_northstardrift(
+                    snapshot,
+                    alignment_config=alignment_cfg,
+                    signal_gate_enabled=True,
+                    gate_state_path=gate_path,
+                )
+
+            self.assertTrue(gate_path.exists())
+            state = ns_mod._load_gate_state(gate_path)
+            expected_hash = ns_mod._snapshot_gate_hash(snapshot)
+            self.assertEqual(state["snapshot_hash"], expected_hash)
+            self.assertAlmostEqual(float(state["last_alignment_score"]), 91.0)
+            self.assertIn("alignment_cache", state)
+            self.assertIn("last_evidence_at", state)
+
+    def test_signal_gate_loads_disk_cache_into_memory(self) -> None:
+        """Gate: disk alignment cache is seeded into _alignment_cache on process start."""
+        import driftdriver.northstardrift as ns_mod
+        from unittest.mock import patch
+
+        snapshot = _snapshot(_repo("testrepo", in_progress=1))
+        alignment_cfg = self._alignment_cfg()
+
+        # Pre-seed a fake cache entry in the gate state file
+        fake_cache_key = "abc123def456"
+        fake_cache_val = [82.0, ["pre-cached finding"]]
+
+        with tempfile.TemporaryDirectory() as td:
+            gate_path = Path(td) / "northstar-gate-state.json"
+            ns_mod._save_gate_state(gate_path, {
+                "snapshot_hash": "nomatch",
+                "last_alignment_score": 82.0,
+                "last_alignment_findings": [],
+                "last_evidence_at": "2026-03-25T09:00:00+00:00",
+                "alignment_cache": {fake_cache_key: fake_cache_val},
+            })
+            ns_mod._alignment_cache.clear()
+
+            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(70)):
+                ns_mod.compute_northstardrift(
+                    snapshot,
+                    alignment_config=alignment_cfg,
+                    signal_gate_enabled=True,
+                    gate_state_path=gate_path,
+                )
+
+            # Disk cache entry should now be in-process cache
+            self.assertIn(fake_cache_key, ns_mod._alignment_cache)
+            self.assertEqual(ns_mod._alignment_cache[fake_cache_key][0], 82.0)
+
+    def test_signal_gate_disabled_always_calls_llm(self) -> None:
+        """Gate: when signal_gate_enabled=False, gate is bypassed and LLM is always called."""
+        import driftdriver.northstardrift as ns_mod
+        from unittest.mock import patch
+
+        snapshot = _snapshot(_repo("testrepo", in_progress=1))
+        alignment_cfg = self._alignment_cfg()
+
+        with tempfile.TemporaryDirectory() as td:
+            gate_path = Path(td) / "northstar-gate-state.json"
+            expected_hash = ns_mod._snapshot_gate_hash(snapshot)
+            # Even if hash matches, gate is disabled
+            ns_mod._save_gate_state(gate_path, {
+                "snapshot_hash": expected_hash,
+                "last_alignment_score": 60.0,
+                "last_alignment_findings": [],
+                "alignment_cache": {},
+            })
+            ns_mod._alignment_cache.clear()
+
+            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(95)) as mock_run:
+                result = ns_mod.compute_northstardrift(
+                    snapshot,
+                    alignment_config=alignment_cfg,
+                    signal_gate_enabled=False,
+                    gate_state_path=gate_path,
+                )
+
+        mock_run.assert_called_once()
+        self.assertTrue(result["alignment"]["llm_used"])
+
+    def test_signal_gate_canary_logs_no_change(self) -> None:
+        """Gate: 'northstar-gate: no change, skipping' is printed to stdout on hash match."""
+        import driftdriver.northstardrift as ns_mod
+        from io import StringIO
+        from unittest.mock import patch
+
+        snapshot = _snapshot(_repo("testrepo", in_progress=1))
+        alignment_cfg = self._alignment_cfg()
+        expected_hash = ns_mod._snapshot_gate_hash(snapshot)
+
+        with tempfile.TemporaryDirectory() as td:
+            gate_path = Path(td) / "northstar-gate-state.json"
+            recent_ts = datetime.now(timezone.utc).isoformat()
+            ns_mod._save_gate_state(gate_path, {
+                "snapshot_hash": expected_hash,
+                "last_alignment_score": 78.0,
+                "last_alignment_findings": [],
+                "last_evidence_at": recent_ts,
+                "alignment_cache": {},
+            })
+            ns_mod._alignment_cache.clear()
+
+            with patch("driftdriver.northstardrift.subprocess.run"):
+                with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
+                    ns_mod.compute_northstardrift(
+                        snapshot,
+                        alignment_config=alignment_cfg,
+                        signal_gate_enabled=True,
+                        gate_state_path=gate_path,
+                    )
+                    output = mock_stdout.getvalue()
+
+        self.assertIn("northstar-gate: no change, skipping", output)
+
+    def test_signal_gate_canary_logs_evidence(self) -> None:
+        """Gate: 'northstar-gate: evidence detected' is printed to stdout on hash mismatch."""
+        import driftdriver.northstardrift as ns_mod
+        from io import StringIO
+        from unittest.mock import patch
+
+        snapshot = _snapshot(_repo("testrepo", in_progress=1))
+        alignment_cfg = self._alignment_cfg()
+
+        with tempfile.TemporaryDirectory() as td:
+            gate_path = Path(td) / "northstar-gate-state.json"
+            ns_mod._save_gate_state(gate_path, {
+                "snapshot_hash": "stale_different_hash",
+                "last_alignment_score": 50.0,
+                "last_alignment_findings": [],
+                "last_evidence_at": "2026-03-25T10:00:00+00:00",
+                "alignment_cache": {},
+            })
+            ns_mod._alignment_cache.clear()
+
+            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(80)):
+                with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
+                    ns_mod.compute_northstardrift(
+                        snapshot,
+                        alignment_config=alignment_cfg,
+                        signal_gate_enabled=True,
+                        gate_state_path=gate_path,
+                    )
+                    output = mock_stdout.getvalue()
+
+        self.assertIn("northstar-gate: evidence detected", output)
+
+    def test_signal_gate_hash_is_stable_for_same_snapshot(self) -> None:
+        """Gate: _snapshot_gate_hash returns the same value for identical snapshots."""
+        import driftdriver.northstardrift as ns_mod
+
+        snapshot = _snapshot(
+            _repo("alpha", in_progress=2, ready=1, quality_score=88),
+            _repo("beta", stalled=True, blocked_open=3),
+        )
+        h1 = ns_mod._snapshot_gate_hash(snapshot)
+        h2 = ns_mod._snapshot_gate_hash(snapshot)
+        self.assertEqual(h1, h2)
+
+    def test_signal_gate_hash_differs_for_different_snapshots(self) -> None:
+        """Gate: _snapshot_gate_hash returns different values when tasks change."""
+        import driftdriver.northstardrift as ns_mod
+
+        snap_a = _snapshot(_repo("alpha", in_progress=1, ready=0))
+        snap_b = _snapshot(_repo("alpha", in_progress=0, ready=2))
+        self.assertNotEqual(
+            ns_mod._snapshot_gate_hash(snap_a),
+            ns_mod._snapshot_gate_hash(snap_b),
+        )
+
+    def test_signal_gate_no_gate_state_file_calls_llm(self) -> None:
+        """Gate: when no gate state file exists, LLM is called and file is created."""
+        import driftdriver.northstardrift as ns_mod
+        from unittest.mock import patch
+
+        snapshot = _snapshot(_repo("testrepo", in_progress=1))
+        alignment_cfg = self._alignment_cfg()
+
+        with tempfile.TemporaryDirectory() as td:
+            gate_path = Path(td) / "northstar-gate-state.json"
+            self.assertFalse(gate_path.exists())
+            ns_mod._alignment_cache.clear()
+
+            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(77)) as mock_run:
+                ns_mod.compute_northstardrift(
+                    snapshot,
+                    alignment_config=alignment_cfg,
+                    signal_gate_enabled=True,
+                    gate_state_path=gate_path,
+                )
+
+            mock_run.assert_called_once()
+            self.assertTrue(gate_path.exists())
 
 
 if __name__ == "__main__":

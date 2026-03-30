@@ -17,6 +17,7 @@ from driftdriver.factory_brain.prompts import (
     build_system_prompt,
     build_user_prompt,
 )
+from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,16 @@ def _invoke_claude(full_prompt: str, tier: int, timeout: int = 120) -> dict:
 
     cli_output = json.loads(result.stdout)
 
+    # Record LLM spend if usage data is present
+    usage = extract_usage_from_claude_json(cli_output)
+    if usage:
+        record_spend(
+            agent="factory-brain",
+            model=model_alias,
+            input_tokens=usage[0],
+            output_tokens=usage[1],
+        )
+
     # --json-schema puts structured data in "structured_output"
     data = cli_output.get("structured_output") if isinstance(cli_output, dict) else None
     if data is not None:
@@ -170,7 +181,18 @@ def _invoke_codex(full_prompt: str, tier: int, timeout: int = 120) -> dict:
 
         # Read structured output from the -o file
         output_content = Path(output_path).read_text().strip()
-        return json.loads(output_content)
+        data = json.loads(output_content)
+
+        # Codex doesn't reliably expose token counts — record call with zero tokens
+        # so at minimum we track invocation frequency per agent
+        record_spend(
+            agent="factory-brain",
+            model=model,
+            input_tokens=0,
+            output_tokens=0,
+        )
+
+        return data
 
     finally:
         for p in (schema_path, output_path):
@@ -235,6 +257,7 @@ def invoke_brain(
     tier1_reasoning: str | None = None,
     tier2_reasoning: str | None = None,
     log_dir: Path | None = None,
+    dry_run: bool = False,
 ) -> BrainResponse:
     """Invoke the brain at the given tier via CLI (auto-selects claude or codex)."""
     system_prompt = build_system_prompt(tier)
@@ -282,9 +305,37 @@ def invoke_brain(
     )
 
     if log_dir is not None:
-        _write_brain_log(log_dir, invocation)
+        if dry_run:
+            _write_dryrun_log(log_dir, invocation)
+        else:
+            _write_brain_log(log_dir, invocation)
 
     return brain_response
+
+
+def _write_dryrun_log(log_dir: Path, invocation: BrainInvocation) -> None:
+    """Write a dry-run brain invocation to brain-dryruns.jsonl.
+
+    In dry-run mode the brain analyses the situation but directives are not
+    executed. This log captures what the brain *would have done* for later
+    signal-quality validation before live mode is re-enabled.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = log_dir / "brain-dryruns.jsonl"
+    record = {
+        "dry_run": True,
+        "tier": invocation.tier,
+        "model": invocation.model,
+        "cli": invocation.cli,
+        "trigger": invocation.trigger,
+        "reasoning": invocation.reasoning,
+        "directives": invocation.directives,
+        "telegram": invocation.telegram,
+        "escalate": invocation.escalate,
+        "timestamp": invocation.timestamp,
+    }
+    with jsonl_path.open("a") as f:
+        f.write(json.dumps(record) + "\n")
 
 
 def _write_brain_log(log_dir: Path, invocation: BrainInvocation) -> None:

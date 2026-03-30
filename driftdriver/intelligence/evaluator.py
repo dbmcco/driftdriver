@@ -18,6 +18,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from driftdriver.intelligence.db import PostgresConfig, ensure_database_and_apply_migrations
+from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
 from driftdriver.intelligence.models import Signal
 from driftdriver.intelligence.store import (
     append_signal_action_log,
@@ -265,6 +266,17 @@ def _invoke_claude_cli(model: str, system_prompt: str, user_prompt: str, schema:
         raise RuntimeError(f"claude cli exit {result.returncode}: {result.stderr[:300]}")
     # --output-format json + --json-schema: structured output lands in outer["structured_output"]
     outer = json.loads(result.stdout)
+
+    # Record LLM spend
+    usage = extract_usage_from_claude_json(outer)
+    if usage:
+        record_spend(
+            agent="evaluator",
+            model=model,
+            input_tokens=usage[0],
+            output_tokens=usage[1],
+        )
+
     if outer.get("is_error"):
         raise RuntimeError(f"claude cli error: {outer.get('result', '')[:300]}")
     structured = outer.get("structured_output")

@@ -13,6 +13,7 @@ from driftdriver.factory_brain.router import (
     HEARTBEAT_REL_PATH,
     BrainState,
     check_heartbeats,
+    is_signal_claimed,
     process_brain_response,
     repos_with_active_sessions,
     route_event,
@@ -439,3 +440,276 @@ def test_continue_repo_not_suppressed_in_dispatching(tmp_path: Path, monkeypatch
 
     # Tier 1 event processing should NOT be suppressed for continue repos
     assert len(tier1_calls) >= 1
+
+
+# --- Signal gate tests ---
+
+
+def test_gate_is_signal_claimed_missing_file(tmp_path: Path) -> None:
+    """is_signal_claimed returns False when file does not exist."""
+    signals_path = tmp_path / "pending-signals.json"
+    assert is_signal_claimed("heartbeat.stale:some-repo", signals_path) is False
+
+
+def test_gate_is_signal_claimed_no_path() -> None:
+    """is_signal_claimed returns False when signals_path is None."""
+    assert is_signal_claimed("heartbeat.stale:some-repo", None) is False
+
+
+def test_gate_is_signal_claimed_present(tmp_path: Path) -> None:
+    """is_signal_claimed returns True when the key exists in the file."""
+    signals_path = tmp_path / "pending-signals.json"
+    signals_path.write_text(json.dumps({
+        "heartbeat.stale:repo-a": {"claimed_at": "2026-03-25T12:00:00+00:00", "claimed_by": "other-agent"}
+    }))
+    assert is_signal_claimed("heartbeat.stale:repo-a", signals_path) is True
+
+
+def test_gate_is_signal_claimed_absent_key(tmp_path: Path) -> None:
+    """is_signal_claimed returns False when key is not in file."""
+    signals_path = tmp_path / "pending-signals.json"
+    signals_path.write_text(json.dumps({
+        "heartbeat.stale:repo-a": {"claimed_at": "2026-03-25T12:00:00+00:00", "claimed_by": "other-agent"}
+    }))
+    assert is_signal_claimed("heartbeat.stale:repo-b", signals_path) is False
+
+
+def test_gate_tier2_blocked_with_no_signal(tmp_path: Path, monkeypatch: object) -> None:
+    """Signal gate enabled: no tier2 events and fresh heartbeat → tier2 NOT called."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "fresh-repo"
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    hb_file.write_text(datetime.now(timezone.utc).isoformat())
+
+    tier2_calls: list[dict] = []
+
+    def mock_invoke_brain(**kwargs):
+        if kwargs.get("tier") == 2:
+            tier2_calls.append(kwargs)
+        return BrainResponse(reasoning="ok", directives=[], escalate=False)
+
+    monkeypatch.setattr(router_mod, "invoke_brain", mock_invoke_brain)
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        dry_run=True,
+        signal_gate_enabled=True,
+    )
+
+    assert len(tier2_calls) == 0
+
+
+def test_gate_tier2_fires_on_explicit_tier2_events(tmp_path: Path, monkeypatch: object) -> None:
+    """Signal gate enabled: tier2-routed event present → tier2 brain IS called."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "event-repo"
+    events_dir = repo / ".workgraph" / "service" / "runtime"
+    events_dir.mkdir(parents=True)
+    events_file = events_dir / "events.jsonl"
+    events_file.write_text(json.dumps({
+        "kind": "tasks.exhausted",
+        "repo": "event-repo",
+        "ts": datetime.now(timezone.utc).timestamp(),
+        "payload": {},
+    }) + "\n")
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    hb_file.write_text(datetime.now(timezone.utc).isoformat())
+
+    tier2_calls: list[dict] = []
+
+    def mock_invoke_brain(**kwargs):
+        if kwargs.get("tier") == 2:
+            tier2_calls.append(kwargs)
+        return BrainResponse(reasoning="ok", directives=[], escalate=False)
+
+    monkeypatch.setattr(router_mod, "invoke_brain", mock_invoke_brain)
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        dry_run=True,
+        signal_gate_enabled=True,
+    )
+
+    assert len(tier2_calls) == 1
+
+
+def test_gate_tier2_fires_on_newly_stale_heartbeat(tmp_path: Path, monkeypatch: object) -> None:
+    """Signal gate enabled: newly stale heartbeat → tier2 brain IS called."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "stale-repo"
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    old_ts = datetime.now(timezone.utc) - timedelta(seconds=200)
+    hb_file.write_text(old_ts.isoformat())
+
+    tier2_calls: list[dict] = []
+
+    def mock_invoke_brain(**kwargs):
+        if kwargs.get("tier") == 2:
+            tier2_calls.append(kwargs)
+        return BrainResponse(reasoning="ok", directives=[], escalate=False)
+
+    monkeypatch.setattr(router_mod, "invoke_brain", mock_invoke_brain)
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        dry_run=True,
+        signal_gate_enabled=True,
+    )
+
+    assert len(tier2_calls) == 1
+
+
+def test_gate_tier2_skips_already_known_stale(tmp_path: Path, monkeypatch: object) -> None:
+    """Signal gate: repo already in last_known_stale → tier2 NOT re-fired."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "stale-repo"
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    old_ts = datetime.now(timezone.utc) - timedelta(seconds=200)
+    hb_file.write_text(old_ts.isoformat())
+
+    tier2_calls: list[dict] = []
+
+    def mock_invoke_brain(**kwargs):
+        if kwargs.get("tier") == 2:
+            tier2_calls.append(kwargs)
+        return BrainResponse(reasoning="ok", directives=[], escalate=False)
+
+    monkeypatch.setattr(router_mod, "invoke_brain", mock_invoke_brain)
+
+    state = BrainState()
+    state.last_known_stale = {"stale-repo"}  # already known from prior tick
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        dry_run=True,
+        signal_gate_enabled=True,
+    )
+
+    assert len(tier2_calls) == 0
+
+
+def test_gate_dedup_via_pending_signals_json(tmp_path: Path, monkeypatch: object) -> None:
+    """Cross-agent dedup: signal already in pending-signals.json → tier2 skipped."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "stale-repo"
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    old_ts = datetime.now(timezone.utc) - timedelta(seconds=200)
+    hb_file.write_text(old_ts.isoformat())
+
+    signals_path = tmp_path / "pending-signals.json"
+    signals_path.write_text(json.dumps({
+        "heartbeat.stale:stale-repo": {"claimed_at": "2026-03-25T12:00:00+00:00", "claimed_by": "other-agent"}
+    }))
+
+    tier2_calls: list[dict] = []
+
+    def mock_invoke_brain(**kwargs):
+        if kwargs.get("tier") == 2:
+            tier2_calls.append(kwargs)
+        return BrainResponse(reasoning="ok", directives=[], escalate=False)
+
+    monkeypatch.setattr(router_mod, "invoke_brain", mock_invoke_brain)
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        dry_run=True,
+        signal_gate_enabled=True,
+        pending_signals_path=signals_path,
+    )
+
+    assert len(tier2_calls) == 0
+
+
+def test_gate_known_stale_updated_after_heartbeat_check(tmp_path: Path, monkeypatch: object) -> None:
+    """After a heartbeat tick with signal_gate_enabled, last_known_stale is updated."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "stale-repo"
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    old_ts = datetime.now(timezone.utc) - timedelta(seconds=200)
+    hb_file.write_text(old_ts.isoformat())
+
+    monkeypatch.setattr(router_mod, "invoke_brain",
+                        lambda **kw: BrainResponse(reasoning="ok", directives=[], escalate=False))
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        dry_run=True,
+        signal_gate_enabled=True,
+    )
+
+    assert "stale-repo" in state.last_known_stale
+
+
+def test_gate_dryrun_logs_to_brain_dryruns_jsonl(tmp_path: Path, monkeypatch: object) -> None:
+    """dry_run=True on invoke_brain writes analysis to brain-dryruns.jsonl."""
+    import driftdriver.factory_brain.brain as brain_mod
+    from driftdriver.factory_brain.brain import invoke_brain
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    def mock_try_invoke(prompt: str, tier: int) -> tuple:
+        return {
+            "reasoning": "dry-run analysis result",
+            "directives": [],
+            "telegram": None,
+            "escalate": False,
+        }, "mock-cli"
+
+    monkeypatch.setattr(brain_mod, "_try_invoke", mock_try_invoke)
+
+    invoke_brain(
+        tier=2,
+        trigger_event={"kind": "tasks.exhausted", "repo": "test-repo", "ts": 1.0, "payload": {}},
+        log_dir=log_dir,
+        dry_run=True,
+    )
+
+    dryrun_log = log_dir / "brain-dryruns.jsonl"
+    assert dryrun_log.exists(), "brain-dryruns.jsonl must be created in dry-run mode"
+    record = json.loads(dryrun_log.read_text().strip())
+    assert record["tier"] == 2
+    assert record["dry_run"] is True
+    assert record["reasoning"] == "dry-run analysis result"
+
+
+def test_gate_dryrun_does_not_write_regular_invocations_log(tmp_path: Path, monkeypatch: object) -> None:
+    """dry_run=True skips brain-invocations.jsonl so dry runs stay isolated."""
+    import driftdriver.factory_brain.brain as brain_mod
+    from driftdriver.factory_brain.brain import invoke_brain
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    monkeypatch.setattr(brain_mod, "_try_invoke",
+                        lambda prompt, tier: (
+                            {"reasoning": "test", "directives": [], "telegram": None, "escalate": False},
+                            "mock-cli",
+                        ))
+
+    invoke_brain(tier=1, log_dir=log_dir, dry_run=True)
+
+    assert not (log_dir / "brain-invocations.jsonl").exists(), \
+        "Regular invocations log must NOT be written during dry-run"

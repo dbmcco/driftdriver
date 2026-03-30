@@ -2,12 +2,15 @@
 # ABOUTME: triggers to appropriate tiers, handles escalation chains, executes directives.
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from driftdriver.actor import Actor
 from driftdriver.continuation_intent import read_intent
+from driftdriver.drift_task_guard import guarded_add_drift_task, record_finding_ledger
 from driftdriver.factory_brain.brain import invoke_brain
 from driftdriver.factory_brain.directives import BrainResponse, execute_directives
 from driftdriver.factory_brain.events import TIER_ROUTING, Event, aggregate_events
@@ -67,6 +70,7 @@ class BrainState:
     last_event_ts: str = ""
     recent_directives: list[dict] = field(default_factory=list)
     tier1_escalation_count: int = 0
+    last_known_stale: set[str] = field(default_factory=set)
 
 
 def route_event(event: Event) -> int:
@@ -105,6 +109,22 @@ def should_sweep(state: BrainState, *, interval_seconds: int = 600) -> bool:
         return True
     elapsed = (datetime.now(timezone.utc) - state.last_sweep).total_seconds()
     return elapsed >= interval_seconds
+
+
+def is_signal_claimed(signal_key: str, signals_path: Path | None) -> bool:
+    """Return True if another agent has already claimed this signal key.
+
+    Reads the shared .workgraph/pending-signals.json written by other agents
+    when they create a task for a given signal. Returns False when the file is
+    absent, unreadable, or the key is not present.
+    """
+    if signals_path is None:
+        return False
+    try:
+        data = json.loads(signals_path.read_text())
+        return signal_key in data
+    except (OSError, json.JSONDecodeError, TypeError):
+        return False
 
 
 def process_brain_response(
@@ -155,6 +175,8 @@ def run_brain_tick(
     heuristic_recommendation: str | None = None,
     log_dir: Path | None = None,
     dry_run: bool = False,
+    signal_gate_enabled: bool = False,
+    pending_signals_path: Path | None = None,
 ) -> list[dict]:
     """Main tick function — aggregate events, route by tier, handle escalation."""
     all_results: list[dict] = []
@@ -215,6 +237,7 @@ def run_brain_tick(
             heuristic_recommendation=heuristic_recommendation,
             recent_directives=state.recent_directives,
             log_dir=log_dir,
+            dry_run=dry_run,
         )
         result = process_brain_response(
             response,
@@ -237,6 +260,7 @@ def run_brain_tick(
 
     # 4. Heartbeat check (60s timer) — skip repos with active sessions
     now = datetime.now(timezone.utc)
+    stale_repos: list[Path] = []
     run_heartbeat = (
         state.last_heartbeat_check is None
         or (now - state.last_heartbeat_check).total_seconds() >= 60
@@ -260,6 +284,7 @@ def run_brain_tick(
                 snapshot=snapshot,
                 recent_directives=state.recent_directives,
                 log_dir=log_dir,
+                dry_run=dry_run,
             )
             result = process_brain_response(
                 response,
@@ -270,8 +295,60 @@ def run_brain_tick(
             )
             all_results.append(result)
 
+            # Wire heartbeat.stale finding to a drift task alongside the brain call.
+            wg_dir = repo_path / ".workgraph"
+            if wg_dir.exists():
+                _actor = Actor(
+                    id="daemon-factory-brain",
+                    actor_class="daemon",
+                    name="factory-brain",
+                    repo=repo_path.name,
+                )
+                hb_task_id = f"drift:{repo_path.name}:factory-brain:heartbeat-stale"
+                hb_verify = f"wg analyze --repo {repo_path.name} | grep heartbeat"
+                hb_desc = (
+                    f"Factory brain detected a stale heartbeat for {repo_path.name}.\n\n"
+                    f"The dispatch loop may have stalled. Check the service runtime and "
+                    f"restart the coordinator if needed.\n\n"
+                    f"Verify: {hb_verify}\n"
+                )
+                hb_result = guarded_add_drift_task(
+                    wg_dir=wg_dir,
+                    task_id=hb_task_id,
+                    title=f"factory-brain: heartbeat stale in {repo_path.name}",
+                    description=hb_desc,
+                    lane_tag="factory-brain",
+                    actor=_actor,
+                    cwd=repo_path,
+                )
+                record_finding_ledger(
+                    wg_dir,
+                    repo=repo_path.name,
+                    lane="factory-brain",
+                    finding_type="heartbeat-stale",
+                    task_id=hb_task_id,
+                    result=hb_result,
+                    severity="warning",
+                    message=f"heartbeat stale in {repo_path.name}",
+                )
+
     # 5. Process Tier 2
-    run_tier2 = bool(tier2_events) or should_sweep(state)
+    # When signal_gate_enabled: only sweep if there are explicit tier2 events OR
+    # a repo heartbeat newly went stale (not already known stale) AND no other
+    # agent already claimed that signal via pending-signals.json.
+    # When disabled: preserve legacy unconditional 600s timer behaviour.
+    if signal_gate_enabled:
+        newly_stale = [
+            r for r in stale_repos
+            if r.name not in session_repos
+            and r.name not in state.last_known_stale
+            and not is_signal_claimed(f"heartbeat.stale:{r.name}", pending_signals_path)
+        ]
+        run_tier2 = bool(tier2_events) or bool(newly_stale)
+        if run_heartbeat:
+            state.last_known_stale = {r.name for r in stale_repos}
+    else:
+        run_tier2 = bool(tier2_events) or should_sweep(state)
     if run_tier2:
         state.last_sweep = now
         recent_as_dicts = [
@@ -303,6 +380,7 @@ def run_brain_tick(
             roster=roster,
             tier1_reasoning=tier1_reasoning,
             log_dir=log_dir,
+            dry_run=dry_run,
         )
         result = process_brain_response(
             response,
@@ -343,6 +421,7 @@ def run_brain_tick(
             escalation_reason=escalation_reason,
             tier1_reasoning="\n".join(tier1_reasoning_parts) if tier1_reasoning_parts else None,
             log_dir=log_dir,
+            dry_run=dry_run,
         )
         result = process_brain_response(
             response,
