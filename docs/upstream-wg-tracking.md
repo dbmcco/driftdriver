@@ -1,88 +1,54 @@
 # Upstream Workgraph Branch Tracking
 
 Tracking Erik's active branches for impact on driftdriver when they merge to main.
-Local main is 457 commits behind origin/main as of 2026-03-12.
+**Last sync: 2026-03-30** — rebased `dbmcco/workgraph:sync-upstream-2026-03-25` onto
+`graphwork/workgraph:main` @ `0742071`. Fork is now 1 commit ahead (coordinator guards patch).
 
-## Critical Branches (Direct Driftdriver Impact)
+## Landed in Main (2026-03-25 → 2026-03-30)
 
-### `infra-fix-toctou` (31 commits)
+The following branches from the previous tracking doc have merged to upstream main:
 
-**What:** Replaces file-based graph.lock with flock-based `mutate_graph` — atomic
-read-modify-write cycle prevents TOCTOU races entirely.
+### `infra-fix-toctou` / `fix-toctou-race` — **LANDED**
+TOCTOU fix (`modify_graph`), self-healing coordinator, compactor, `wg retract`,
+`wg decompose`, `wg cascade-stop/hold/unhold`, atomic task addition, liveness detection.
+All features now in upstream main.
 
-**Driftdriver impact:**
-- Our `_clear_stale_graph_locks()` becomes unnecessary once this lands — zero-byte
-  lock files stop being created. Keep it as a safety net for transition period.
-- The `wg show` timeout early-return in `drift_task_guard.py` becomes less critical
-  but remains good defensive code.
-- `timeout=10.0` on dedup `wg show` calls should stay regardless.
+**Driftdriver follow-up (still pending):**
+- `_clear_stale_graph_locks()` — now a no-op, keep as safety net
+- stalledrift vs coordinator self-healing — evaluate overlap
+- Add `wg retract` / `wg cascade-stop` / `wg decompose` to factory brain directive vocabulary
+- Evaluate `wg compact` vs our drift-check context assembly
 
-**Monitor for:** Changes to graph.lock semantics. If flock replaces file-creation,
-our sweep function won't find anything to clean (which is fine).
+### `fix-auto-task-edges` — **LANDED**
+`wg service restart` and bidirectional auto-task edges are in upstream main.
+**Pending:** update factory brain to use `wg service restart` instead of kill+start.
 
-### `fix-toctou-race` (59 commits, superset branch)
+## What's In Current Upstream (0742071, 2026-03-30)
 
-**What:** Mega-branch merging TOCTOU fix + several features:
-- **Self-healing** — automatic failure diagnosis wired into coordinator tick loop
-  (`safety-self-healing`). Overlaps with our `stalledrift` lane.
-- **Compactor MVP** — `wg compact` generates `context.md` from graph state.
-  Overlaps with our context-generation in drift checks.
-- **`wg retract`** — provenance-based undo of task side effects. New capability
-  we should expose through factory actions.
-- **Liveness detection** — sleep-aware stuck agent handling. Overlaps with our
-  worker monitor (`worker_monitor.py`).
-- **Atomic task addition** — spawn-time dep re-check + dispatch grace period.
-  May change `wg add` timing behavior our factory relies on.
-- **`wg decompose`** — task self-decomposition. New capability.
-- **`wg cascade-stop/hold/unhold`** — subtree control. New safety operations
-  the factory brain could issue.
-- **Live dependency enforcement** — pauses in-progress tasks with unmet deps.
-  Could affect our stall detection logic.
+Notable features now available in upstream main vs our last sync point:
+- **User boards** (`.user-NAME`) — new primitive, auto-created, TUI integration
+- **`flip_enabled` defaults to true** — UX/coordinator behavior change
+- **Cycle-aware readiness** (back-edge detection) — may affect stall detection logic
+- **`user-board` tag in DAEMON_MANAGED_TAGS** — tasks tagged user-board skip agent spawn
+- **`design_experiment` signature change** — now takes `&source_id` param
+- **`save_graph` replaced with `modify_graph`** everywhere in coordinator
+- **Docs sync** — COMMANDS.md, SKILL.md, AGENCY.md, README all updated (March 28)
+- **Coordinator chat labels** — use actual task ID numbers, not indexes
+- Inspector/TUI polish (border drag snap fix, archived cycle suppression)
 
-**Monitor for:**
-- Self-healing overlap with stalledrift — may want to disable stalledrift when
-  wg coordinator handles it natively.
-- `wg add` interface changes from atomic task addition.
-- New commands to add to factory brain directive vocabulary.
+## Active Upstream Branches to Watch
 
-### `fix-auto-task-edges` (4 commits)
+### `research-agency-primitive` (docs only)
+Design doc for agency primitive sync model. Monitor for API changes when this lands.
 
-**What:**
-- `wg service restart` command (log caller identity on stop)
-- Fix bidirectional edges for auto-created system tasks
+### `mu-l-toasts` (new branch)
+UI toasts. No driftdriver impact expected.
 
-**Driftdriver impact:**
-- Factory brain currently kills + restarts daemons manually. `wg service restart`
-  gives us a clean single command for this.
-- Auto-task edge fix may change how dependency chains resolve in our factory cycles.
+## Action Items
 
-**Monitor for:** `wg service restart` availability — update factory brain to use it.
-
-## Lower Priority Branches
-
-### `fix-before-edges` (11 commits)
-Before-edge normalization into after-edges. Internal graph representation change.
-Shouldn't affect driftdriver unless we parse graph.jsonl directly (we don't — we use `wg` CLI).
-
-### `fix-output-section` (30 commits)
-TUI detail view improvements (collapse toggle, tail preview). No driftdriver impact.
-
-### `show-live-token` (10 commits)
-Live token count in TUI. No driftdriver impact.
-
-### `tui-disable-fade` / `tui-pink-lifecycle` (3 commits total)
-TUI visual polish. No driftdriver impact.
-
-## Action Items When Merging
-
-1. **Rebase local main** — we're 457 commits behind, rebase before next feature work
-2. **Test `_clear_stale_graph_locks()`** — verify it's a no-op when flock is in place
-3. **Evaluate stalledrift vs self-healing** — if wg coordinator handles failure
-   diagnosis natively, stalledrift may become redundant for enrolled repos
-4. **Add `wg service restart` to factory brain** — replace kill+start pattern
-5. **Add `wg retract` / `wg cascade-stop` to directive vocabulary** — new safety
-   operations the brain should be able to issue
-6. **Test `wg add` timing** — atomic task addition + grace period may affect factory
-   cycle timing assumptions
-7. **Evaluate compactor vs context generation** — `wg compact` may replace some of
-   our drift-check context assembly
+1. **Add `wg service restart` to factory brain** — replace kill+start pattern
+2. **Evaluate stalledrift vs self-healing** — coordinator now handles failure diagnosis natively
+3. **Add `wg retract` / `wg cascade-stop` / `wg decompose` to directive vocabulary**
+4. **Evaluate `wg compact` vs context generation** — may replace drift-check context assembly
+5. **User board tag** — if we ever create board-tagged tasks, they'll be daemon-managed
+6. **Test `_clear_stale_graph_locks()`** — verify no-op with flock-based writes
