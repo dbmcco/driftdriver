@@ -1094,6 +1094,33 @@ class _HubHandler(BaseHTTPRequestHandler):
             self._send_json(payload)
             return
 
+        if route == "/api/factory-daily":
+            from driftdriver.factory_report import list_factory_daily_reports
+            project_dir = self.snapshot_path.parent.parent
+            try:
+                reports = list_factory_daily_reports(project_dir)
+                self._send_json({"reports": reports})
+            except Exception as exc:
+                logging.getLogger(__name__).debug("factory-daily failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200], "reports": []})
+            return
+
+        if route.startswith("/api/factory-daily/"):
+            report_date = route[len("/api/factory-daily/"):].strip("/")
+            from driftdriver.factory_report import list_factory_daily_reports
+            import json as _json
+            project_dir = self.snapshot_path.parent.parent
+            wg_dir = project_dir / ".workgraph"
+            report_path = wg_dir / f"factory-daily-{report_date}.json"
+            if report_path.exists():
+                try:
+                    self._send_json(_json.loads(report_path.read_text(encoding="utf-8")))
+                except Exception as exc:
+                    self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            else:
+                self._send_json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+            return
+
         if route == "/api/sessions":
             self._handle_get_sessions()
             return

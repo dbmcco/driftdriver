@@ -1312,6 +1312,7 @@ def render_dashboard_html() -> str:
       <button class="hub-tab" data-tab="factory">Factory</button>
       <button class="hub-tab" data-tab="sessions">Sessions</button>
       <button class="hub-tab" data-tab="services">Services</button>
+      <button class="hub-tab" data-tab="daily-report">Daily Report</button>
     </nav>
 
     <!-- Operations Tab (existing content) -->
@@ -1731,6 +1732,25 @@ def render_dashboard_html() -> str:
         <div id="services-manifest-list"><p style="color:var(--muted);font-size:0.88rem">Loading\u2026</p></div>
       </section>
     </div><!-- end tab-services -->
+
+    <!-- Daily Report Tab -->
+    <div class="hub-tab-content" id="tab-daily-report">
+      <section class="card" style="margin:1rem 1.5rem;padding:1.25rem 1.5rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+          <h2 style="margin:0;font-size:1rem;font-weight:700;letter-spacing:0.04em">DAILY FACTORY REPORT</h2>
+          <button onclick="loadDailyReport(true)" style="font-size:0.8rem;padding:0.25rem 0.75rem;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">Refresh</button>
+        </div>
+        <p style="color:var(--muted);font-size:0.84rem;margin:0 0 1rem">Deterministic summary of what the dark factory did. No LLM generation.</p>
+        <div id="daily-report-index"><p style="color:var(--muted);font-size:0.88rem">Loading\u2026</p></div>
+        <div id="daily-report-detail" style="display:none;margin-top:1.25rem">
+          <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.75rem">
+            <button onclick="closeDailyReportDetail()" style="font-size:0.8rem;padding:0.2rem 0.6rem;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">\u2190 Back</button>
+            <h3 id="daily-report-detail-title" style="margin:0;font-size:0.95rem;font-weight:600"></h3>
+          </div>
+          <div id="daily-report-detail-body"></div>
+        </div>
+      </section>
+    </div><!-- end tab-daily-report -->
 
   </main>
   </div><!-- end view-hub -->
@@ -4068,6 +4088,7 @@ def render_dashboard_html() -> str:
         if (target === 'factory') loadFactoryPanel();
         if (target === 'sessions') refreshSessions();
         if (target === 'services') refreshServicesManifest();
+        if (target === 'daily-report') loadDailyReport();
       });
     });
 
@@ -5001,6 +5022,135 @@ def render_dashboard_html() -> str:
       if (typeof currentTab !== 'undefined' && currentTab === 'sessions') refreshSessions();
       if (typeof currentTab !== 'undefined' && currentTab === 'services') refreshServicesManifest();
     }, 30000);
+
+    // -----------------------------------------------------------------------
+    // Daily Report tab
+    // -----------------------------------------------------------------------
+    var dailyReportLoaded = false;
+
+    function loadDailyReport(force) {
+      if (dailyReportLoaded && !force) return;
+      dailyReportLoaded = true;
+      var container = el('daily-report-index');
+      if (!container) return;
+      container.innerHTML = '<p style="color:var(--muted);font-size:0.88rem">Loading\u2026</p>';
+      fetch('/api/factory-daily')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var reports = data.reports || [];
+          if (reports.length === 0) {
+            container.innerHTML = '<p style="color:var(--muted);font-size:0.88rem">'
+              + 'No daily reports yet. Run <code>driftdriver factory-report</code> to generate one.</p>';
+            return;
+          }
+          var rows = reports.map(function(r) {
+            var cost = typeof r.llm_cost_usd === 'number' ? '$' + r.llm_cost_usd.toFixed(4) : '—';
+            var gated = r.gated_total != null ? r.gated_total : '—';
+            return '<tr style="border-bottom:1px solid var(--line);cursor:pointer" onclick="openDailyReport(\'' + esc(r.report_date) + '\')">'
+              + '<td style="padding:0.5rem;font-weight:600;color:var(--accent)">' + esc(r.report_date || '—') + '</td>'
+              + '<td style="padding:0.5rem;text-align:right">' + (r.findings_total != null ? r.findings_total : '—') + '</td>'
+              + '<td style="padding:0.5rem;text-align:right">' + (r.completed_drift_tasks != null ? r.completed_drift_tasks : '—') + '</td>'
+              + '<td style="padding:0.5rem;text-align:right">' + cost + '</td>'
+              + '<td style="padding:0.5rem;text-align:right">' + gated + '</td>'
+              + '</tr>';
+          }).join('');
+          container.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.85rem">'
+            + '<thead><tr style="border-bottom:2px solid var(--line)">'
+            + '<th style="text-align:left;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Date</th>'
+            + '<th style="text-align:right;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Findings</th>'
+            + '<th style="text-align:right;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Tasks Done</th>'
+            + '<th style="text-align:right;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">LLM Spend</th>'
+            + '<th style="text-align:right;padding:0.4rem 0.5rem;color:var(--muted);font-weight:600">Gated</th>'
+            + '</tr></thead><tbody>' + rows + '</tbody></table>';
+        })
+        .catch(function() {
+          if (container) container.innerHTML = '<p style="color:var(--muted);font-size:0.88rem">Could not reach factory-daily API.</p>';
+        });
+    }
+
+    function openDailyReport(reportDate) {
+      fetch('/api/factory-daily/' + reportDate)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          el('daily-report-index').style.display = 'none';
+          el('daily-report-detail').style.display = '';
+          el('daily-report-detail-title').textContent = 'Report: ' + (data.report_date || reportDate);
+          var spend = data.llm_spend || {};
+          var gated = data.gated_calls || {};
+          var findings = (data.findings || {}).summary || {};
+          var tasks = data.completed_drift_tasks || [];
+          var byAgentSpend = spend.by_agent || {};
+          var byAgentGated = gated.by_agent || {};
+
+          var agentRows = Object.keys(byAgentSpend).sort().map(function(agent) {
+            var a = byAgentSpend[agent];
+            var g = byAgentGated[agent] || 0;
+            return '<tr style="border-bottom:1px solid var(--line)">'
+              + '<td style="padding:0.4rem 0.5rem;font-family:var(--mono);font-size:0.8rem">' + esc(agent) + '</td>'
+              + '<td style="padding:0.4rem 0.5rem;text-align:right">$' + (a.total_cost_usd || 0).toFixed(4) + '</td>'
+              + '<td style="padding:0.4rem 0.5rem;text-align:right">' + (a.call_count || 0) + '</td>'
+              + '<td style="padding:0.4rem 0.5rem;text-align:right">' + g + '</td>'
+              + '</tr>';
+          }).join('');
+
+          var taskRows = tasks.map(function(t) {
+            return '<tr style="border-bottom:1px solid var(--line)">'
+              + '<td style="padding:0.4rem 0.5rem;font-family:var(--mono);font-size:0.8rem">' + esc(t.id || '') + '</td>'
+              + '<td style="padding:0.4rem 0.5rem;font-size:0.82rem">' + esc(t.title || '') + '</td>'
+              + '</tr>';
+          }).join('');
+
+          var byLane = findings.by_lane || {};
+          var laneRows = Object.keys(byLane).sort().map(function(l) {
+            return '<tr><td style="padding:0.3rem 0.5rem;font-family:var(--mono);font-size:0.8rem">' + esc(l) + '</td>'
+              + '<td style="padding:0.3rem 0.5rem;text-align:right">' + byLane[l] + '</td></tr>';
+          }).join('');
+
+          el('daily-report-detail-body').innerHTML =
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1.25rem">'
+            + _drMetric('Findings', findings.total || 0)
+            + _drMetric('Tasks Created', findings.task_created || 0)
+            + _drMetric('Drift Tasks Done', tasks.length)
+            + _drMetric('LLM Spend', '$' + (spend.total_cost_usd || 0).toFixed(4))
+            + '</div>'
+            + (laneRows ? '<h4 style="margin:0 0 0.4rem;font-size:0.82rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Findings by Lane</h4>'
+              + '<table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:1.25rem">'
+              + '<thead><tr style="border-bottom:2px solid var(--line)">'
+              + '<th style="text-align:left;padding:0.3rem 0.5rem;color:var(--muted)">Lane</th>'
+              + '<th style="text-align:right;padding:0.3rem 0.5rem;color:var(--muted)">Count</th>'
+              + '</tr></thead><tbody>' + laneRows + '</tbody></table>' : '')
+            + (agentRows ? '<h4 style="margin:0 0 0.4rem;font-size:0.82rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">LLM Spend by Agent</h4>'
+              + '<table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:1.25rem">'
+              + '<thead><tr style="border-bottom:2px solid var(--line)">'
+              + '<th style="text-align:left;padding:0.3rem 0.5rem;color:var(--muted)">Agent</th>'
+              + '<th style="text-align:right;padding:0.3rem 0.5rem;color:var(--muted)">Cost</th>'
+              + '<th style="text-align:right;padding:0.3rem 0.5rem;color:var(--muted)">Calls</th>'
+              + '<th style="text-align:right;padding:0.3rem 0.5rem;color:var(--muted)">Gated</th>'
+              + '</tr></thead><tbody>' + agentRows + '</tbody></table>' : '')
+            + (taskRows ? '<h4 style="margin:0 0 0.4rem;font-size:0.82rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Completed Drift Tasks</h4>'
+              + '<table style="width:100%;border-collapse:collapse;font-size:0.82rem">'
+              + '<thead><tr style="border-bottom:2px solid var(--line)">'
+              + '<th style="text-align:left;padding:0.3rem 0.5rem;color:var(--muted)">Task ID</th>'
+              + '<th style="text-align:left;padding:0.3rem 0.5rem;color:var(--muted)">Title</th>'
+              + '</tr></thead><tbody>' + taskRows + '</tbody></table>'
+              : '<p style="color:var(--muted);font-size:0.85rem">No completed drift: tasks in this window.</p>');
+        })
+        .catch(function() {
+          el('daily-report-detail-body').innerHTML = '<p style="color:var(--muted)">Failed to load report.</p>';
+        });
+    }
+
+    function _drMetric(label, value) {
+      return '<div style="background:var(--accent-soft);border-radius:8px;padding:0.6rem 0.85rem">'
+        + '<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.2rem">' + esc(String(label)) + '</div>'
+        + '<div style="font-size:1.15rem;font-weight:700;font-family:var(--mono);color:var(--accent)">' + esc(String(value)) + '</div>'
+        + '</div>';
+    }
+
+    function closeDailyReportDetail() {
+      el('daily-report-detail').style.display = 'none';
+      el('daily-report-index').style.display = '';
+    }
 
     // -----------------------------------------------------------------------
     // Services manifest

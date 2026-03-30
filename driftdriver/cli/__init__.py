@@ -516,6 +516,42 @@ def cmd_intent_read(args: argparse.Namespace) -> int:
     return handle_intent_read(args)
 
 
+def cmd_reaper(args: argparse.Namespace) -> int:
+    """Zombie process reaper: run or check status."""
+    from driftdriver.reaper import reap_zombies, read_reaper_status
+
+    project_dir = Path(args.dir) if args.dir else Path.cwd()
+    wg_dir = find_workgraph_dir(project_dir) or (project_dir / ".workgraph")
+    action = args.action
+    use_json = getattr(args, "json", False)
+
+    if action == "run":
+        max_age_hours = float(os.environ.get("MAX_AGE_HOURS", "4"))
+        min_age_seconds = int(max_age_hours * 3600)
+        dry_run = getattr(args, "dry_run", False)
+        result = reap_zombies(wg_dir=wg_dir, min_age_seconds=min_age_seconds, dry_run=dry_run)
+        if use_json:
+            print(json.dumps({"killed": result.killed, "skipped": result.skipped, "kills": result.kills}))
+        else:
+            print(f"Reaper: killed={result.killed} skipped={result.skipped}")
+            for k in result.kills:
+                print(f"  KILLED pid={k['pid']} {k['reason']}")
+        return 0
+
+    if action == "status":
+        status = read_reaper_status(wg_dir)
+        if use_json:
+            print(json.dumps(status))
+        else:
+            last = status.get("last_run") or "never"
+            print(f"Last run:      {last}")
+            print(f"Total killed:  {status['total_killed']}")
+            print(f"Total skipped: {status['total_skipped']}")
+        return 0
+
+    return 1
+
+
 def cmd_brain_status(args: argparse.Namespace) -> int:
     from driftdriver.factory_brain.cli import handle_brain_status
     return handle_brain_status(args)
@@ -539,6 +575,119 @@ def cmd_brain_enroll(args: argparse.Namespace) -> int:
 def cmd_brain_unenroll(args: argparse.Namespace) -> int:
     from driftdriver.factory_brain.cli import handle_brain_unenroll
     return handle_brain_unenroll(args)
+
+
+def cmd_llm_spend(args: argparse.Namespace) -> int:
+    """Query LLM spend log."""
+    from driftdriver.llm_meter import query_spend
+
+    wg_dir = find_workgraph_dir(Path(args.dir) if getattr(args, "dir", None) else None)
+    log_path = wg_dir / "llm-spend.jsonl" if wg_dir else Path(".workgraph/llm-spend.jsonl")
+
+    tail_hours = float(getattr(args, "tail", "24h").rstrip("h"))
+    by_agent = getattr(args, "by_agent", False)
+    use_json = getattr(args, "json", False)
+
+    result = query_spend(log_path=log_path, tail_hours=tail_hours, by_agent=by_agent)
+
+    if use_json:
+        print(json.dumps(result, indent=2))
+        return 0
+
+    print(f"LLM Spend — last {tail_hours:.0f}h")
+    print(f"  Total cost:    ${result['total_cost_usd']:.4f}")
+    print(f"  Input tokens:  {result['total_input_tokens']:,}")
+    print(f"  Output tokens: {result['total_output_tokens']:,}")
+    print(f"  Calls:         {len(result['records'])}")
+
+    if by_agent and result.get("by_agent"):
+        print("\nBy Agent:")
+        for agent, data in sorted(result["by_agent"].items(), key=lambda x: x[1]["total_cost_usd"], reverse=True):
+            print(f"  {agent:20s}  ${data['total_cost_usd']:.4f}  ({data['call_count']} calls, "
+                  f"{data['total_input_tokens']:,}in/{data['total_output_tokens']:,}out)")
+
+    return 0
+
+
+def cmd_watchdog(args: argparse.Namespace) -> int:
+    """Run one spend watchdog check cycle."""
+    from driftdriver.spend_watchdog import run_watchdog
+
+    wg_dir = find_workgraph_dir(Path(args.dir) if getattr(args, "dir", None) else None)
+    if wg_dir is None:
+        wg_dir = Path(".workgraph")
+
+    log_path = wg_dir / "llm-spend.jsonl"
+    policy_path = wg_dir / "drift-policy.toml"
+    watchdog_log_path = wg_dir / "watchdog.log"
+
+    result = run_watchdog(
+        log_path=log_path,
+        policy_path=policy_path,
+        watchdog_log_path=watchdog_log_path,
+    )
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps({
+            "action": result.action.value,
+            "rate_1h": result.rate_1h,
+            "rate_5m": result.rate_5m,
+            "top_agent": result.top_agent,
+            "message": result.message,
+        }, indent=2))
+    else:
+        print(f"Watchdog: {result.action.value.upper()}")
+        if result.message:
+            print(f"  {result.message}")
+        print(f"  Rate (1h): ${result.rate_1h:.4f}")
+        print(f"  Rate (5m): ${result.rate_5m:.4f}")
+        if result.top_agent:
+            print(f"  Top agent: {result.top_agent}")
+
+    return 1 if result.action.value == "kill" else 0
+
+
+def cmd_factory_report(args: argparse.Namespace) -> int:
+    """Build and write the deterministic daily factory report."""
+    from driftdriver.factory_report import (
+        build_factory_report,
+        send_factory_report_notification,
+        write_factory_daily_report,
+    )
+
+    project_dir = Path(args.dir) if getattr(args, "dir", None) else Path.cwd()
+    tail_str = getattr(args, "last", "24h")
+    tail_hours = float(tail_str.rstrip("h"))
+    dry_run = getattr(args, "dry_run", False)
+    use_json = getattr(args, "json", False)
+
+    report = build_factory_report(project_dir, tail_hours=tail_hours)
+
+    if dry_run:
+        print(json.dumps(report, indent=2))
+        return 0
+
+    out_path = write_factory_daily_report(project_dir, report)
+
+    if use_json:
+        print(json.dumps({"written": str(out_path), "report": report}, indent=2))
+        return 0
+
+    findings = report.get("findings", {}).get("summary", {})
+    spend = report.get("llm_spend", {})
+    gated = report.get("gated_calls", {})
+    completed = report.get("completed_drift_tasks", [])
+
+    print(f"Factory Daily Report — {report['report_date']}")
+    print(f"  Written to:          {out_path}")
+    print(f"  Findings produced:   {findings.get('total', 0)}")
+    print(f"  Drift tasks done:    {len(completed)}")
+    print(f"  LLM spend:           ${spend.get('total_cost_usd', 0):.4f}")
+    print(f"  Gated calls skipped: {gated.get('total_skipped', 0)}")
+
+    send_factory_report_notification(report, out_path)
+    return 0
 
 
 def cmd_attractor(args: argparse.Namespace) -> int:
@@ -1523,6 +1672,24 @@ def _build_parser() -> argparse.ArgumentParser:
     brain_unenroll_p.add_argument("name", help="Repo name to unenroll")
     brain_unenroll_p.set_defaults(func=cmd_brain_unenroll)
 
+    # -- LLM spend commands --
+    llm_spend_p = sub.add_parser("llm-spend", help="Query LLM token spend log")
+    llm_spend_p.add_argument("--tail", default="24h", help="Time window (e.g. 24h, 1h, 72h)")
+    llm_spend_p.add_argument("--by-agent", action="store_true", help="Break down spend by agent")
+    llm_spend_p.add_argument("--json", action="store_true", help="JSON output")
+    llm_spend_p.set_defaults(func=cmd_llm_spend)
+
+    watchdog_p = sub.add_parser("watchdog", help="Run spend watchdog check (warn/kill on threshold breach)")
+    watchdog_p.add_argument("action", choices=["run"], help="Watchdog action")
+    watchdog_p.add_argument("--json", action="store_true", help="JSON output")
+    watchdog_p.set_defaults(func=cmd_watchdog)
+
+    factory_report_p = sub.add_parser("factory-report", help="Build deterministic daily factory report (no LLM)")
+    factory_report_p.add_argument("--last", default="24h", help="Time window (e.g. 24h, 48h, 72h)")
+    factory_report_p.add_argument("--dry-run", action="store_true", help="Print report JSON without writing or notifying")
+    factory_report_p.add_argument("--json", action="store_true", help="JSON output on write")
+    factory_report_p.set_defaults(func=cmd_factory_report)
+
     # -- Attractor commands --
     attractor_p = sub.add_parser("attractor", help="Manage attractor convergence targets")
     attractor_p.add_argument(
@@ -1533,6 +1700,17 @@ def _build_parser() -> argparse.ArgumentParser:
     attractor_p.add_argument("target", nargs="?", default="", help="Attractor target name (for 'set')")
     attractor_p.add_argument("--json", action="store_true", help="JSON output")
     attractor_p.set_defaults(func=cmd_attractor)
+
+    # -- Reaper commands --
+    reaper_p = sub.add_parser("reaper", help="Zombie process reaper for stale claude --print processes")
+    reaper_p.add_argument(
+        "action",
+        choices=["run", "status"],
+        help="run | status",
+    )
+    reaper_p.add_argument("--dry-run", action="store_true", help="List what would be killed without killing")
+    reaper_p.add_argument("--json", action="store_true", help="JSON output")
+    reaper_p.set_defaults(func=cmd_reaper)
 
     # -- Intent commands --
     intent_p = sub.add_parser("intent", help="Manage continuation intent (set/read)")
