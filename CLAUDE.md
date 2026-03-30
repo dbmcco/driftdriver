@@ -28,6 +28,14 @@ driftdriver attractor status --json
 driftdriver attractor run --json
 ```
 
+### Execution Layer (wg + Agency)
+- **Workgraph** is the task spine: dependencies, dispatch, readiness.
+- **Agency** (`agency serve`, port 8000) is the agent composition engine: *who* runs a task.
+  At dispatch time Agency composes an agent configuration; planforge/speedrift wrap it with
+  the protocol envelope (wg-contract, drift checks, executor guidance).
+- Agency is always-on launchd. If unreachable, dispatch continues with generic prompts.
+- Check: `curl -s http://localhost:8000/health`
+
 ### Runtime Authority
 - Workgraph is the task/dependency source of truth. `speedriftd` is the repo-local supervisor.
 - Sessions default to `observe`. Do not use `wg service start` as a generic kickoff.
