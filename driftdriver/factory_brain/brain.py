@@ -1,18 +1,16 @@
-# ABOUTME: Central brain module — assembles prompts, invokes model CLIs (claude or codex),
-# ABOUTME: with automatic fallback. Parses responses into directives for the factory supervisor.
+# ABOUTME: Central brain module — assembles prompts, invokes Claude CLI at tiered models,
+# ABOUTME: and parses responses into actionable directives for the factory supervisor.
 from __future__ import annotations
 
 import json
-import logging
-import os
 import subprocess
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from driftdriver.factory_brain.directives import BrainResponse, Directive, parse_brain_response
 from driftdriver.factory_brain.prompts import (
+    DIRECTIVE_TOOL,
     TIER_MODELS,
     build_system_prompt,
     build_user_prompt,
@@ -20,282 +18,64 @@ from driftdriver.factory_brain.prompts import (
 from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
 from driftdriver.signal_gate import record_fire, should_fire
 
-logger = logging.getLogger(__name__)
-
-# JSON schema dict for structured output (shared across CLIs)
-_DIRECTIVE_SCHEMA = {
-    "type": "object",
-    "required": ["reasoning", "directives", "escalate"],
-    "properties": {
-        "reasoning": {
-            "type": "string",
-            "description": "Your adversarial analysis of the situation.",
-        },
-        "directives": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["action"],
-                "properties": {
-                    "action": {"type": "string"},
-                    "params": {"type": "object"},
-                },
-            },
-        },
-        "telegram": {
-            "type": ["string", "null"],
-            "description": "Optional Telegram message to the operator.",
-        },
-        "escalate": {
-            "type": "boolean",
-            "description": "Whether to escalate to a higher tier.",
-        },
-    },
-}
-
-# Claude CLI model aliases per tier
-_CLAUDE_TIER_ALIASES: dict[int, str] = {
-    1: "haiku",
-    2: "sonnet",
-    3: "opus",
-}
-
-# Codex CLI model names per tier
-_CODEX_TIER_MODELS: dict[int, str] = {
-    1: "o4-mini",
-    2: "o3",
-    3: "o3",
-}
-
-# Env vars to clear for clean subprocess invocation (matches clauded alias)
-_STRIPPED_ENV_VARS = {"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"}
-
 
 @dataclass
 class BrainInvocation:
     tier: int
     model: str
-    cli: str
     trigger: dict | None
     reasoning: str
     directives: list[dict]
     telegram: str | None
     escalate: bool
     timestamp: float
-
-
-def _clean_env() -> dict[str, str]:
-    """Return env dict safe for spawning CLI subprocesses (matches clauded alias)."""
-    return {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV_VARS}
-
-
-def _invoke_claude(full_prompt: str, tier: int, timeout: int = 120) -> dict:
-    """Invoke claude CLI (clauded equivalent) and return parsed directive data."""
-    model_alias = _CLAUDE_TIER_ALIASES.get(tier, "sonnet")
-
-    cmd = [
-        "claude",
-        "-p",
-        "--model", model_alias,
-        "--output-format", "json",
-        "--json-schema", json.dumps(_DIRECTIVE_SCHEMA),
-        "--no-session-persistence",
-        "--dangerously-skip-permissions",
-        "--max-budget-usd", "0.50",
-    ]
-
-    result = subprocess.run(
-        cmd,
-        input=full_prompt,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=_clean_env(),
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(f"claude exit {result.returncode}: {result.stderr[:300]}")
-
-    cli_output = json.loads(result.stdout)
-
-    # Record LLM spend if usage data is present
-    usage = extract_usage_from_claude_json(cli_output)
-    if usage:
-        record_spend(
-            agent="factory-brain",
-            model=model_alias,
-            input_tokens=usage[0],
-            output_tokens=usage[1],
-        )
-
-    # --json-schema puts structured data in "structured_output"
-    data = cli_output.get("structured_output") if isinstance(cli_output, dict) else None
-    if data is not None:
-        return data
-
-    # Fallback: parse "result" field as JSON
-    raw = cli_output.get("result", "") if isinstance(cli_output, dict) else result.stdout
-    return json.loads(raw) if isinstance(raw, str) else raw
-
-
-def _invoke_codex(full_prompt: str, tier: int, timeout: int = 120) -> dict:
-    """Invoke codex CLI (codexd equivalent) and return parsed directive data."""
-    model = _CODEX_TIER_MODELS.get(tier, "o4-mini")
-
-    # Codex --output-schema requires a file path
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="brain-schema-", delete=False
-    ) as schema_file:
-        json.dump(_DIRECTIVE_SCHEMA, schema_file)
-        schema_path = schema_file.name
-
-    # Codex -o writes last message to a file
-    with tempfile.NamedTemporaryFile(
-        suffix=".json", prefix="brain-output-", delete=False
-    ) as output_file:
-        output_path = output_file.name
-
-    try:
-        cmd = [
-            "codex",
-            "exec",
-            "-m", model,
-            "--output-schema", schema_path,
-            "-o", output_path,
-            "--ephemeral",
-            "--skip-git-repo-check",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-",  # read prompt from stdin
-        ]
-
-        result = subprocess.run(
-            cmd,
-            input=full_prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=_clean_env(),
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(f"codex exit {result.returncode}: {result.stderr[:300]}")
-
-        # Read structured output from the -o file
-        output_content = Path(output_path).read_text().strip()
-        data = json.loads(output_content)
-
-        # Codex doesn't reliably expose token counts — record call with zero tokens
-        # so at minimum we track invocation frequency per agent
-        record_spend(
-            agent="factory-brain",
-            model=model,
-            input_tokens=0,
-            output_tokens=0,
-        )
-
-        return data
-
-    finally:
-        for p in (schema_path, output_path):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
+    input_tokens: int
+    output_tokens: int
+    dry_run: bool = False
 
 
 def _noop_response(reason: str) -> BrainResponse:
-    """Build a noop BrainResponse for error cases."""
+    """Build a fallback noop BrainResponse."""
     return BrainResponse(
         reasoning=reason,
-        directives=[Directive(action="noop", params={"reason": "cli error"})],
+        directives=[Directive(action="noop", params={"reason": reason})],
         telegram=None,
         escalate=False,
     )
 
 
-def _try_invoke(full_prompt: str, tier: int) -> tuple[dict, str]:
-    """Try claude first, fall back to codex. Returns (directive_data, cli_used).
+def _try_invoke(prompt: str, tier: int) -> tuple[dict, str, tuple[int, int]]:
+    """Call Claude CLI with prompt and tier. Returns (parsed_dict, model_used, (in_tokens, out_tokens)).
 
-    Preference order can be overridden via FACTORY_BRAIN_CLI=codex to try codex first.
+    This is the actual CLI boundary — monkeypatch this in tests to avoid real calls.
     """
-    preferred = os.environ.get("FACTORY_BRAIN_CLI", "claude").lower()
-    order = (
-        [("codex", _invoke_codex), ("claude", _invoke_claude)]
-        if preferred == "codex"
-        else [("claude", _invoke_claude), ("codex", _invoke_codex)]
+    model = TIER_MODELS.get(tier, TIER_MODELS[2])
+
+    result = subprocess.run(
+        [
+            "claude",
+            "--model", model,
+            "--output-format", "json",
+            "--max-turns", "1",
+            "-p", prompt,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
 
-    last_error = None
-    for cli_name, invoke_fn in order:
-        try:
-            data = invoke_fn(full_prompt, tier)
-            logger.info("Brain tier %d: %s succeeded", tier, cli_name)
-            return data, cli_name
-        except FileNotFoundError:
-            logger.info("Brain tier %d: %s not found, trying next", tier, cli_name)
-            last_error = FileNotFoundError(f"{cli_name} not found")
-        except subprocess.TimeoutExpired:
-            logger.warning("Brain tier %d: %s timed out, trying next", tier, cli_name)
-            last_error = subprocess.TimeoutExpired(cmd=cli_name, timeout=120)
-        except (RuntimeError, json.JSONDecodeError, TypeError, OSError) as exc:
-            logger.warning("Brain tier %d: %s failed (%s), trying next", tier, cli_name, exc)
-            last_error = exc
+    if result.returncode != 0:
+        return {
+            "reasoning": f"CLI exit {result.returncode}: {result.stderr.strip()[:200]}",
+            "directives": [{"action": "noop", "params": {"reason": f"CLI exit {result.returncode}"}}],
+            "telegram": None,
+            "escalate": False,
+        }, model, (0, 0)
 
-    # Both failed
-    raise last_error or RuntimeError("No CLI available")
-
-
-def _build_gate_input(
-    tier: int,
-    trigger_event: dict | None,
-    snapshot: dict | None,
-    heuristic_recommendation: str | None,
-    escalation_reason: str | None,
-) -> dict:
-    """Build a stable input dict for signal-gate content hashing.
-
-    Excludes timestamps and volatile fields (recent_events, recent_directives)
-    so the gate fires only when the semantic trigger content changes.
-    """
-    return {
-        "tier": tier,
-        "trigger_kind": trigger_event.get("kind") if trigger_event else None,
-        "trigger_repo": trigger_event.get("repo") if trigger_event else None,
-        "trigger_payload": trigger_event.get("payload") if trigger_event else None,
-        "snapshot": snapshot,
-        "heuristic": heuristic_recommendation,
-        "escalation": escalation_reason,
-    }
-
-
-def _suppressed_response(tier: int) -> BrainResponse:
-    """Return a noop BrainResponse for gate-suppressed calls."""
-    return BrainResponse(
-        reasoning=f"Signal gate suppressed: tier {tier} content unchanged since last fire.",
-        directives=[Directive(action="noop", params={"reason": "signal_gate_suppressed"})],
-        telegram=None,
-        escalate=False,
-    )
-
-
-def _write_gate_shadow_log(
-    log_dir: Path,
-    tier: int,
-    gate_would_fire: bool,
-    gate_input: dict,
-) -> None:
-    """Write a shadow log entry for dry-run gate validation."""
-    log_dir.mkdir(parents=True, exist_ok=True)
-    path = log_dir / "brain-gate-shadow.jsonl"
-    record = {
-        "tier": tier,
-        "gate_would_fire": gate_would_fire,
-        "gate_agent": f"factory-brain-t{tier}",
-        "gate_input_keys": sorted(k for k, v in gate_input.items() if v is not None),
-        "timestamp": time.time(),
-    }
-    with path.open("a") as f:
-        f.write(json.dumps(record) + "\n")
+    cli_output = json.loads(result.stdout)
+    structured = cli_output.get("structured_output", {})
+    usage = extract_usage_from_claude_json(cli_output) or (0, 0)
+    return structured, model, usage
 
 
 def invoke_brain(
@@ -312,31 +92,13 @@ def invoke_brain(
     tier2_reasoning: str | None = None,
     log_dir: Path | None = None,
     dry_run: bool = False,
+    spend_log_path: Path | None = None,
     gate_enabled: bool = False,
     gate_dir: Path | None = None,
     gate_dry_run: bool = False,
 ) -> BrainResponse:
-    """Invoke the brain at the given tier via CLI (auto-selects claude or codex)."""
-    gate_agent = f"factory-brain-t{tier}"
-    gate_input = _build_gate_input(
-        tier, trigger_event, snapshot, heuristic_recommendation, escalation_reason,
-    )
-
-    # Signal gate check
-    if gate_enabled:
-        would_fire = should_fire(gate_agent, gate_input, gate_dir=gate_dir)
-
-        if gate_dry_run:
-            # Shadow mode: log decision but always proceed
-            if log_dir is not None:
-                _write_gate_shadow_log(log_dir, tier, would_fire, gate_input)
-            logger.info(
-                "Signal gate dry-run: tier %d would_fire=%s", tier, would_fire,
-            )
-        elif not would_fire:
-            logger.info("Signal gate suppressed: tier %d content unchanged", tier)
-            return _suppressed_response(tier)
-
+    """Invoke the brain at the given tier, returning parsed directives."""
+    model = TIER_MODELS.get(tier, TIER_MODELS[2])
     system_prompt = build_system_prompt(tier)
     user_prompt = build_user_prompt(
         trigger_event=trigger_event,
@@ -350,39 +112,54 @@ def invoke_brain(
         tier2_reasoning=tier2_reasoning,
     )
 
-    full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+    full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
+    # Signal gate: check whether this input has been seen before
+    gate_agent = f"factory-brain-tier{tier}"
+    gate_input = {"trigger": trigger_event, "snapshot": snapshot, "tier": tier}
+
+    if gate_enabled and not gate_dry_run:
+        if not should_fire(gate_agent, gate_input, gate_dir=gate_dir):
+            return _noop_response("Signal gate suppressed — content unchanged")
+
+    if gate_enabled and gate_dry_run:
+        would_fire = should_fire(gate_agent, gate_input, gate_dir=gate_dir)
+        if log_dir is not None:
+            _write_gate_shadow_log(log_dir, gate_agent, would_fire, gate_input)
+
+    input_tokens = 0
+    output_tokens = 0
     try:
-        directive_data, cli_used = _try_invoke(full_prompt, tier)
+        result = _try_invoke(full_prompt, tier)
+        if len(result) == 3:
+            tool_input, model, usage = result
+            input_tokens, output_tokens = usage
+        else:
+            tool_input, model = result
+        brain_response = parse_brain_response(tool_input)
     except subprocess.TimeoutExpired:
-        return _noop_response("All CLIs timed out.")
-    except FileNotFoundError:
-        return _noop_response("No CLI (claude/codex) found in PATH.")
-    except Exception as exc:
-        return _noop_response(f"All CLIs failed: {exc}")
+        brain_response = _noop_response("CLI timed out")
+    except FileNotFoundError as exc:
+        brain_response = _noop_response(f"CLI not found: {exc}")
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        brain_response = _noop_response(f"Failed to parse CLI output: {exc}")
 
-    # Record fire after successful LLM call
+    # Record fire after successful LLM call (also in dry_run to track hashes)
     if gate_enabled:
         record_fire(gate_agent, gate_input, gate_dir=gate_dir)
 
-    # Resolve model ID for logging
-    if cli_used == "codex":
-        model_id = _CODEX_TIER_MODELS.get(tier, "o4-mini")
-    else:
-        model_id = TIER_MODELS.get(tier, TIER_MODELS[2])
-
-    brain_response = parse_brain_response(directive_data)
-
     invocation = BrainInvocation(
         tier=tier,
-        model=model_id,
-        cli=cli_used,
+        model=model,
         trigger=trigger_event,
         reasoning=brain_response.reasoning,
         directives=[{"action": d.action, "params": d.params} for d in brain_response.directives],
         telegram=brain_response.telegram,
         escalate=brain_response.escalate,
         timestamp=time.time(),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        dry_run=dry_run,
     )
 
     if log_dir is not None:
@@ -391,29 +168,51 @@ def invoke_brain(
         else:
             _write_brain_log(log_dir, invocation)
 
+    if input_tokens > 0 or output_tokens > 0:
+        record_spend(
+            agent="factory-brain",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            log_path=spend_log_path,
+        )
+
     return brain_response
 
 
-def _write_dryrun_log(log_dir: Path, invocation: BrainInvocation) -> None:
-    """Write a dry-run brain invocation to brain-dryruns.jsonl.
+def _write_gate_shadow_log(
+    log_dir: Path,
+    agent_name: str,
+    would_fire: bool,
+    gate_input: dict,
+) -> None:
+    """Write a shadow log entry for gate dry-run mode."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    shadow_path = log_dir / "brain-gate-shadow.jsonl"
+    entry = {
+        "agent": agent_name,
+        "gate_would_fire": would_fire,
+        "input_hash": json.dumps(gate_input, sort_keys=True, default=str)[:200],
+        "timestamp": time.time(),
+    }
+    with shadow_path.open("a") as f:
+        f.write(json.dumps(entry) + "\n")
 
-    In dry-run mode the brain analyses the situation but directives are not
-    executed. This log captures what the brain *would have done* for later
-    signal-quality validation before live mode is re-enabled.
-    """
+
+def _write_dryrun_log(log_dir: Path, invocation: BrainInvocation) -> None:
+    """Write brain invocation to brain-dryruns.jsonl for dry-run mode."""
     log_dir.mkdir(parents=True, exist_ok=True)
     jsonl_path = log_dir / "brain-dryruns.jsonl"
     record = {
-        "dry_run": True,
         "tier": invocation.tier,
         "model": invocation.model,
-        "cli": invocation.cli,
         "trigger": invocation.trigger,
         "reasoning": invocation.reasoning,
         "directives": invocation.directives,
         "telegram": invocation.telegram,
         "escalate": invocation.escalate,
         "timestamp": invocation.timestamp,
+        "dry_run": True,
     }
     with jsonl_path.open("a") as f:
         f.write(json.dumps(record) + "\n")
@@ -423,23 +222,22 @@ def _write_brain_log(log_dir: Path, invocation: BrainInvocation) -> None:
     """Write brain invocation to both JSONL and markdown logs."""
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Machine-readable JSONL
     jsonl_path = log_dir / "brain-invocations.jsonl"
     record = {
         "tier": invocation.tier,
         "model": invocation.model,
-        "cli": invocation.cli,
         "trigger": invocation.trigger,
         "reasoning": invocation.reasoning,
         "directives": invocation.directives,
         "telegram": invocation.telegram,
         "escalate": invocation.escalate,
         "timestamp": invocation.timestamp,
+        "input_tokens": invocation.input_tokens,
+        "output_tokens": invocation.output_tokens,
     }
     with jsonl_path.open("a") as f:
         f.write(json.dumps(record) + "\n")
 
-    # Human-readable markdown
     md_path = log_dir / "brain-log.md"
     directive_lines = []
     for d in invocation.directives:
@@ -449,8 +247,9 @@ def _write_brain_log(log_dir: Path, invocation: BrainInvocation) -> None:
 
     entry = (
         f"\n---\n"
-        f"### Tier {invocation.tier} — {invocation.model} (via {invocation.cli})\n"
-        f"**Time:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(invocation.timestamp))}\n\n"
+        f"### Tier {invocation.tier} — {invocation.model}\n"
+        f"**Time:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(invocation.timestamp))}\n"
+        f"**Tokens:** {invocation.input_tokens} in / {invocation.output_tokens} out\n\n"
         f"**Reasoning:**\n{invocation.reasoning}\n\n"
         f"**Directives:**\n{directives_section}\n"
     )

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,10 +98,6 @@ def _resolve_repo_dir(repo: str, repo_paths: dict[str, str]) -> Path | None:
     return Path(path_str)
 
 
-# ---------------------------------------------------------------------------
-# Handler functions
-# ---------------------------------------------------------------------------
-
 def _handle_noop(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
     reason = d.params.get("reason", "no reason given")
     logger.info("noop: %s", reason)
@@ -172,12 +167,11 @@ def _handle_stop_dispatch_loop(d: Directive, *, dry_run: bool, repo_paths: dict[
 def _handle_spawn_agent(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
     repo_dir = _resolve_repo_dir(d.params["repo"], repo_paths)
     task_id = d.params["task_id"]
-    executor = d.params.get("executor", os.environ.get("WG_EXECUTOR", "claude"))
     if repo_dir is None:
         return {"status": "error", "error": f"unknown repo: {d.params['repo']}"}
     if dry_run:
         return {"status": "dry_run", "action": "spawn_agent", "repo": d.params["repo"], "task_id": task_id}
-    code, output = _run_cmd(["wg", "spawn", "--executor", executor, task_id], timeout=60)
+    code, output = _run_cmd(["wg", "spawn", "--executor", "claude", task_id], timeout=60)
     return {"status": "ok" if code == 0 else "error", "exit_code": code, "output": output}
 
 
@@ -220,13 +214,11 @@ def _handle_enroll(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -
         return {"action": "enroll", "status": "error", "error": f"path not found: {repo_path_str}"}
     if not (repo_path / ".workgraph").exists():
         return {"action": "enroll", "status": "error", "error": f"no .workgraph in: {repo_path_str}"}
-    # Install dispatch-loop.sh if missing
     dispatch = repo_path / ".workgraph" / "executors" / "dispatch-loop.sh"
     if not dispatch.exists():
         template = Path(__file__).parent.parent / "templates" / "dispatch-loop.sh"
         if template.exists():
             import shutil
-
             dispatch.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(template), str(dispatch))
             dispatch.chmod(0o755)
@@ -238,7 +230,6 @@ def _handle_unenroll(d: Directive, *, dry_run: bool, repo_paths: dict[str, str])
     repo = d.params.get("repo", "")
     if dry_run:
         return {"status": "dry_run", "action": "unenroll", "repo": repo}
-    # Stop dispatch loop if running
     _run_cmd(["pkill", "-f", f"dispatch-loop.sh.*{repo}"])
     logger.info("Unenrolled: %s", repo)
     return {"action": "unenroll", "status": "ok", "repo": repo}
@@ -273,38 +264,46 @@ def _handle_escalate(d: Directive, *, dry_run: bool, repo_paths: dict[str, str])
 
 
 def _handle_create_decision(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
-    repo = d.params["repo"]
-    question = d.params["question"]
-    category = d.params["category"]
-    context = d.params.get("context", {})
+    repo = d.params.get("repo", "")
+    question = d.params.get("question", "")
+    category = d.params.get("category", "")
     repo_dir = _resolve_repo_dir(repo, repo_paths)
     if repo_dir is None:
         return {"status": "error", "error": f"unknown repo: {repo}"}
     if dry_run:
-        return {"status": "dry_run", "action": "create_decision", "repo": repo, "question": question}
-    from driftdriver.decision_queue import create_decision as dq_create
-
-    record = dq_create(repo_dir, repo=repo, question=question, category=category, context=context)
-    return {"status": "ok", "action": "create_decision", "decision_id": record.id, "repo": repo}
+        return {"status": "dry_run", "action": "create_decision", "repo": repo}
+    import time as _time
+    decision_id = f"dec-{int(_time.time() * 1000)}"
+    decisions_dir = repo_dir / ".workgraph" / "decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    decision_file = decisions_dir / f"{decision_id}.json"
+    decision_file.write_text(json.dumps({
+        "id": decision_id,
+        "question": question,
+        "category": category,
+        "status": "open",
+    }, indent=2) + "\n")
+    return {"status": "ok", "action": "create_decision", "decision_id": decision_id, "repo": repo}
 
 
 def _handle_enforce_compliance(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -> dict[str, Any]:
-    repo = d.params["repo"]
-    check_commits = d.params.get("check_recent_commits", 0)
+    repo = d.params.get("repo", "")
     repo_dir = _resolve_repo_dir(repo, repo_paths)
     if repo_dir is None:
         return {"status": "error", "error": f"unknown repo: {repo}"}
     if dry_run:
         return {"status": "dry_run", "action": "enforce_compliance", "repo": repo}
-    from driftdriver.protocol_compliance import check_compliance
-
-    report = check_compliance(repo_dir, check_recent_commits=check_commits)
+    violations: list[str] = []
+    if not (repo_dir / ".workgraph").is_dir():
+        violations.append("missing .workgraph directory")
+    if not (repo_dir / ".workgraph" / "drifts").is_dir():
+        violations.append("missing .workgraph/drifts directory")
     return {
         "status": "ok",
         "action": "enforce_compliance",
         "repo": repo,
-        "compliant": report.compliant,
-        "violations": report.violations,
+        "compliant": len(violations) == 0,
+        "violations": violations,
     }
 
 

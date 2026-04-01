@@ -676,7 +676,7 @@ def test_gate_dryrun_logs_to_brain_dryruns_jsonl(tmp_path: Path, monkeypatch: ob
             "directives": [],
             "telegram": None,
             "escalate": False,
-        }, "mock-cli"
+        }, "mock-cli", (0, 0)
 
     monkeypatch.setattr(brain_mod, "_try_invoke", mock_try_invoke)
 
@@ -707,9 +707,105 @@ def test_gate_dryrun_does_not_write_regular_invocations_log(tmp_path: Path, monk
                         lambda prompt, tier: (
                             {"reasoning": "test", "directives": [], "telegram": None, "escalate": False},
                             "mock-cli",
+                            (0, 0),
                         ))
 
     invoke_brain(tier=1, log_dir=log_dir, dry_run=True)
 
     assert not (log_dir / "brain-invocations.jsonl").exists(), \
         "Regular invocations log must NOT be written during dry-run"
+
+
+# --- Router dry_run passthrough to invoke_brain ---
+
+
+def test_router_passes_dry_run_to_invoke_brain(tmp_path: Path, monkeypatch: object) -> None:
+    """run_brain_tick with dry_run=True must pass dry_run=True to invoke_brain,
+    so that brain-dryruns.jsonl gets written instead of brain-invocations.jsonl."""
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "test-repo"
+    events_dir = repo / ".workgraph" / "service" / "runtime"
+    events_dir.mkdir(parents=True)
+    events_file = events_dir / "events.jsonl"
+    events_file.write_text(json.dumps({
+        "kind": "loop.crashed",
+        "repo": "test-repo",
+        "ts": datetime.now(timezone.utc).timestamp(),
+        "payload": {},
+    }) + "\n")
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    hb_file.write_text(datetime.now(timezone.utc).isoformat())
+
+    captured_dry_run: list[bool] = []
+
+    def mock_invoke_brain(**kwargs):
+        captured_dry_run.append(kwargs.get("dry_run", False))
+        return BrainResponse(reasoning="ok", directives=[], escalate=False)
+
+    monkeypatch.setattr(router_mod, "invoke_brain", mock_invoke_brain)
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        log_dir=log_dir,
+        dry_run=True,
+    )
+
+    assert len(captured_dry_run) > 0, "invoke_brain must be called at least once"
+    assert all(captured_dry_run), \
+        f"All invoke_brain calls must receive dry_run=True, got: {captured_dry_run}"
+
+
+def test_router_dryrun_writes_brain_dryruns_jsonl(tmp_path: Path, monkeypatch: object) -> None:
+    """End-to-end: run_brain_tick in dry_run mode writes to brain-dryruns.jsonl."""
+    import driftdriver.factory_brain.brain as brain_mod
+    import driftdriver.factory_brain.router as router_mod
+
+    repo = tmp_path / "test-repo"
+    events_dir = repo / ".workgraph" / "service" / "runtime"
+    events_dir.mkdir(parents=True)
+    events_file = events_dir / "events.jsonl"
+    events_file.write_text(json.dumps({
+        "kind": "loop.crashed",
+        "repo": "test-repo",
+        "ts": datetime.now(timezone.utc).timestamp(),
+        "payload": {},
+    }) + "\n")
+    hb_file = repo / HEARTBEAT_REL_PATH
+    hb_file.parent.mkdir(parents=True, exist_ok=True)
+    hb_file.write_text(datetime.now(timezone.utc).isoformat())
+
+    def mock_try_invoke(prompt: str, tier: int) -> tuple:
+        return {
+            "reasoning": "dry-run via router",
+            "directives": [{"action": "noop", "params": {"reason": "dry"}}],
+            "telegram": None,
+            "escalate": False,
+        }, "mock-model", (0, 0)
+
+    monkeypatch.setattr(brain_mod, "_try_invoke", mock_try_invoke)
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    state = BrainState()
+    run_brain_tick(
+        state=state,
+        roster_repos=[repo],
+        log_dir=log_dir,
+        dry_run=True,
+    )
+
+    dryrun_log = log_dir / "brain-dryruns.jsonl"
+    assert dryrun_log.exists(), "brain-dryruns.jsonl must exist after dry-run tick"
+    entries = [json.loads(l) for l in dryrun_log.read_text().strip().splitlines()]
+    assert len(entries) > 0
+    assert all(e["dry_run"] is True for e in entries)
+    assert not (log_dir / "brain-invocations.jsonl").exists(), \
+        "Regular log must NOT be written in dry-run mode"

@@ -81,7 +81,11 @@ class TestFullTickWithCrashEvent:
             "escalate": False,
         }
 
-        with patch("driftdriver.factory_brain.brain.subprocess.run", return_value=_mock_cli_result(directive_data)):
+        with (
+            patch("driftdriver.factory_brain.brain.subprocess.run", return_value=_mock_cli_result(directive_data)),
+            patch("driftdriver.factory_brain.router.guarded_add_drift_task", return_value="mocked"),
+            patch("driftdriver.factory_brain.router.record_finding_ledger"),
+        ):
             results = brain.tick(snapshot={"repos": 1})
 
         # Verify results returned
@@ -90,15 +94,15 @@ class TestFullTickWithCrashEvent:
         assert first["directives_executed"] == 2
         assert first["reasoning"] == "Dispatch loop crashed. Kill daemon and restart."
 
-        # Verify brain log files exist
-        assert (brain.log_dir / "brain-invocations.jsonl").exists()
-        assert (brain.log_dir / "brain-log.md").exists()
+        # Verify brain log files exist (dry_run=True writes to brain-dryruns.jsonl)
+        assert (brain.log_dir / "brain-dryruns.jsonl").exists()
 
         # Verify log content
-        jsonl_lines = (brain.log_dir / "brain-invocations.jsonl").read_text().strip().splitlines()
+        jsonl_lines = (brain.log_dir / "brain-dryruns.jsonl").read_text().strip().splitlines()
         assert len(jsonl_lines) >= 1
         record = json.loads(jsonl_lines[0])
         assert record["tier"] == 1
+        assert record["dry_run"] is True
         assert record["reasoning"] == "Dispatch loop crashed. Kill daemon and restart."
 
 
@@ -159,7 +163,11 @@ class TestFullTickWithEscalation:
             _mock_cli_result(tier2_data),
         ]
 
-        with patch("driftdriver.factory_brain.brain.subprocess.run", side_effect=mock_results):
+        with (
+            patch("driftdriver.factory_brain.brain.subprocess.run", side_effect=mock_results),
+            patch("driftdriver.factory_brain.router.guarded_add_drift_task", return_value="mocked"),
+            patch("driftdriver.factory_brain.router.record_finding_ledger"),
+        ):
             results = brain.tick(snapshot={"repos": 1})
 
         # Verify we got results from multiple tiers

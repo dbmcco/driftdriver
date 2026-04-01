@@ -1,5 +1,5 @@
 # ABOUTME: Factory brain event schema, writer, reader, and cross-repo aggregator.
-# ABOUTME: Events are JSONL records routed by tier (1=critical, 2=operational, 3=escalation).
+# ABOUTME: Events are JSONL records routed by tier (0=info, 1=critical, 2=operational, 3=escalation).
 from __future__ import annotations
 
 import json
@@ -11,9 +11,11 @@ EVENTS_FILENAME = "events.jsonl"
 EVENTS_REL_PATH = Path(".workgraph") / "service" / "runtime" / EVENTS_FILENAME
 
 TIER_ROUTING: dict[str, int] = {
-    # Tier 0 — informational (never routed to brain, audit trail only)
+    # Tier 0 — informational (never routed to brain)
     "session.started": 0,
     "session.ended": 0,
+    "task.claimed": 0,
+    "task.completed": 0,
     # Tier 1 — critical lifecycle events
     "loop.started": 1,
     "loop.exited": 1,
@@ -21,6 +23,7 @@ TIER_ROUTING: dict[str, int] = {
     "agent.spawned": 1,
     "agent.died": 1,
     "agent.completed": 1,
+    "task.failed": 1,
     "spawn.failed": 1,
     "daemon.killed": 1,
     "heartbeat.stale": 1,

@@ -264,3 +264,93 @@ def test_invoke_brain_cli_not_found_returns_noop():
 
     assert "found" in result.reasoning
     assert result.directives[0].action == "noop"
+
+
+# --- Token tracking tests ---
+
+
+def test_invoke_brain_records_token_usage(tmp_path: Path):
+    """invoke_brain extracts token usage from CLI output and records to llm_meter."""
+    directive_data = {
+        "reasoning": "Token test.",
+        "directives": [{"action": "noop", "params": {"reason": "test"}}],
+        "telegram": None,
+        "escalate": False,
+    }
+    cli_output = {
+        "type": "result",
+        "subtype": "success",
+        "result": "Done.",
+        "structured_output": directive_data,
+        "cost_usd": 0.003,
+        "is_error": False,
+        "duration_ms": 1200,
+        "num_turns": 1,
+        "session_id": "test-session",
+        "usage": {"input_tokens": 1500, "output_tokens": 300},
+    }
+
+    class FakeResult:
+        returncode = 0
+        stdout = json.dumps(cli_output)
+        stderr = ""
+
+    spend_log = tmp_path / "llm-spend.jsonl"
+
+    with patch("driftdriver.factory_brain.brain.subprocess.run", return_value=FakeResult()):
+        from driftdriver.factory_brain.brain import invoke_brain
+
+        invoke_brain(
+            tier=1,
+            trigger_event={"kind": "loop.started", "repo": "test"},
+            log_dir=tmp_path,
+            spend_log_path=spend_log,
+        )
+
+    # Check that the invocation log has token counts
+    jsonl_path = tmp_path / "brain-invocations.jsonl"
+    assert jsonl_path.exists()
+    record = json.loads(jsonl_path.read_text().strip())
+    assert record["input_tokens"] == 1500
+    assert record["output_tokens"] == 300
+
+    # Check that llm_meter recorded the spend
+    assert spend_log.exists()
+    spend_record = json.loads(spend_log.read_text().strip())
+    assert spend_record["input_tokens"] == 1500
+    assert spend_record["output_tokens"] == 300
+    assert spend_record["agent"] == "factory-brain"
+    assert spend_record["estimated_cost_usd"] > 0
+
+
+def test_invoke_brain_handles_missing_usage_field(tmp_path: Path):
+    """When CLI output has no usage field, tokens default to 0."""
+    directive_data = {
+        "reasoning": "No usage field.",
+        "directives": [{"action": "noop", "params": {"reason": "test"}}],
+        "telegram": None,
+        "escalate": False,
+    }
+    cli_output = {
+        "type": "result",
+        "structured_output": directive_data,
+    }
+
+    class FakeResult:
+        returncode = 0
+        stdout = json.dumps(cli_output)
+        stderr = ""
+
+    with patch("driftdriver.factory_brain.brain.subprocess.run", return_value=FakeResult()):
+        from driftdriver.factory_brain.brain import invoke_brain
+
+        invoke_brain(
+            tier=1,
+            trigger_event={"kind": "loop.started", "repo": "test"},
+            log_dir=tmp_path,
+        )
+
+    jsonl_path = tmp_path / "brain-invocations.jsonl"
+    record = json.loads(jsonl_path.read_text().strip())
+    assert record["input_tokens"] == 0
+    assert record["output_tokens"] == 0

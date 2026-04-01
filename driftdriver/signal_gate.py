@@ -14,6 +14,66 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_GATE_DIR = ".workgraph/.signal-gates"
 
+VOLATILE_FIELDS: frozenset[str] = frozenset({
+    "ts", "timestamp", "checked_at", "agent_count", "task_count", "cycle_id"
+})
+
+
+def strip_volatile(data: Any) -> Any:
+    """Return *data* with all VOLATILE_FIELDS keys removed (shallow, dict only)."""
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if k not in VOLATILE_FIELDS}
+    return data
+
+
+class SignalGate:
+    """File-backed signal gate that suppresses LLM calls when only volatile fields change.
+
+    Volatile fields (ts, timestamp, checked_at, agent_count, task_count, cycle_id) are
+    stripped before hashing so that routine timestamp churn doesn't cause repeated fires.
+    State is persisted to *state_path* so suppression survives across process restarts.
+    """
+
+    def __init__(self, state_path: str | Path) -> None:
+        self._state_path = Path(state_path)
+
+    def should_fire(self, input_data: Any) -> bool:
+        """Return True when structural content changed since last fire; False to suppress.
+
+        Automatically records the new hash when returning True.
+        """
+        structural = strip_volatile(input_data)
+        current_hash = compute_content_hash(structural)
+        stored_hash = self._load_hash()
+
+        if stored_hash is None or current_hash != stored_hash:
+            self._save_hash(current_hash)
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _load_hash(self) -> str | None:
+        if not self._state_path.exists():
+            return None
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            return data.get("content_hash") if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _save_hash(self, content_hash: str) -> None:
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        state = {
+            "content_hash": content_hash,
+            "last_fire_at": datetime.now(timezone.utc).isoformat(),
+        }
+        tmp = self._state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(self._state_path)
+
 
 def compute_content_hash(input_data: Any) -> str:
     """Compute a stable SHA-256 hex digest of arbitrary input data.
@@ -41,16 +101,22 @@ def should_fire(
     current_hash = compute_content_hash(input_data)
     state = _load_state(gate_dir, agent_name)
 
+    # Derive canary log path from gate_dir so tests stay isolated
+    canary_log = gate_dir.parent / "signal-gate-canary.jsonl"
+
     if state is None:
         log.info("[signal-gate] %s — no prior state, firing", agent_name)
+        log_canary_decision(agent_name, fired=True, content_hash=current_hash, reason="no_prior_state", canary_log=canary_log)
         return True
 
     stored_hash = state.get("content_hash", "")
     if current_hash != stored_hash:
         log.info("[signal-gate] %s — content changed, firing (new=%s)", agent_name, current_hash[:12])
+        log_canary_decision(agent_name, fired=True, content_hash=current_hash, reason="content_changed", canary_log=canary_log)
         return True
 
     log.info("[signal-gate] %s — content unchanged, suppressing (hash=%s)", agent_name, current_hash[:12])
+    log_canary_decision(agent_name, fired=False, content_hash=current_hash, reason="content_unchanged", canary_log=canary_log)
     return False
 
 
@@ -106,6 +172,39 @@ def is_gate_enabled(agent_name: str, policy_path: Path) -> bool:
         return bool(section.get("signal_gate_enabled", False))
 
     return False
+
+
+def log_canary_decision(
+    agent_name: str,
+    *,
+    fired: bool,
+    content_hash: str,
+    reason: str = "",
+    canary_log: Path | None = None,
+) -> None:
+    """Append a gate hit/miss entry to the canary JSONL log.
+
+    Each entry records whether the gate fired (content changed) or suppressed
+    (content unchanged), enabling 7-day monitoring for misconfigurations.
+    """
+    if canary_log is None:
+        canary_log = Path(_DEFAULT_GATE_DIR).parent / "signal-gate-canary.jsonl"
+
+    entry: dict[str, Any] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "agent": agent_name,
+        "fired": fired,
+        "content_hash": content_hash,
+    }
+    if reason:
+        entry["reason"] = reason
+
+    try:
+        canary_log.parent.mkdir(parents=True, exist_ok=True)
+        with open(canary_log, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        log.warning("[signal-gate] failed to write canary log for %s", agent_name)
 
 
 def check_canary(
