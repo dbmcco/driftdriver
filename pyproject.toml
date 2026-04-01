@@ -31,3 +31,9 @@ python_classes = ["Test*", "*Tests"]
 
 [tool.uv.sources]
 speedrift-lane-sdk = { git = "https://github.com/dbmcco/speedrift-lane-sdk.git" }
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest-asyncio>=1.3.0",
+]
