@@ -66,4 +66,12 @@ if command -v driftdriver >/dev/null 2>&1; then
     --project "$(basename "$PROJECT_DIR")" 2>/dev/null || true
 fi
 
+# Emit task.claimed to events.jsonl so the factory brain tracks task lifecycle
+EVENTS_FILE="$PROJECT_DIR/.workgraph/service/runtime/events.jsonl"
+if [[ -d "$(dirname "$EVENTS_FILE")" ]]; then
+  REPO_NAME="$(basename "$PROJECT_DIR")"
+  TS="$(date +%s.%N 2>/dev/null || date +%s)"
+  echo "{\"kind\":\"task.claimed\",\"repo\":\"$REPO_NAME\",\"ts\":$TS,\"payload\":{\"task\":\"$TASK_ID\",\"cli\":\"$CLI_TOOL\"}}" >> "$EVENTS_FILE" 2>/dev/null || true
+fi
+
 wg_log "$TASK_ID" "task-claimed: cli=$CLI_TOOL checkpoint=pre-task-$TASK_ID"

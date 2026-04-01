@@ -9,14 +9,15 @@ require_new_evidence = true
 max_auto_depth = 2
 
 [factory_brain]
-enabled = false
+enabled = true
 signal_gate_enabled = true
 dry_run = true
-# Disabled 2026-03-25 — was firing Tier 2 (Sonnet) every 10 min with full 1.7MB snapshot (~$160/day).
-# Re-enable after signal gate validation and dry-run log review (see .workgraph/brain-dryruns.jsonl).
-# Rollout: (1) run dry_run=true for 48h, (2) confirm cost meter within budget,
-# (3) confirm dispatch pipeline healthy, (4) dry-run log shows actionable findings,
-# then set dry_run=false and enabled=true to go live.
+# Enabled 2026-04-01 — dark-factory-autonomy Phase 3.
+# Running in dry-run mode: brain analyses but directives are NOT executed.
+# Signal gate prevents repeated LLM calls on unchanged content.
+# Monitor: .workgraph/brain-dryruns.jsonl and llm_meter.py watchdog.
+# Rollout: (1) validate dry-run cost < $5/hr for 48h, (2) confirm actionable findings,
+# (3) set dry_run=false to go live.
 
 [factory]
 enabled = true
@@ -66,11 +67,9 @@ emit_operator_prompts = true
 daily_rollup = true
 weekly_trends = true
 max_review_tasks_per_repo = 2
-signal_gate_enabled = false
-# signal_gate_enabled: when true, a disk-persisted snapshot hash is checked
-# before every LLM alignment call.  If the hash matches the last-run hash,
-# the LLM call is skipped and the cached result is reused.  Set to true
-# after validating 48h token-spend delta in .workgraph/gate-validation/northstardrift.json.
+signal_gate_enabled = true
+# signal_gate_enabled: enabled 2026-04-01 — dark-factory-autonomy Phase 1.
+# Content-hash gate skips LLM calls when alignment input is unchanged.
 
 [northstardrift.targets]
 overall = 82.0
@@ -123,10 +122,9 @@ signal_gate_enabled = false
 
 [attractor]
 target = "onboarded"
-signal_gate_enabled = false
-# signal_gate_enabled: when true, attractor loop skips LLM pass if findings
-# hash is unchanged since last run (disk-persisted in .workgraph/attractor-gate-state.json).
-# Enable after verifying 48h before/after token spend via canary log.
+signal_gate_enabled = true
+# signal_gate_enabled: enabled 2026-04-01 — dark-factory-autonomy Phase 1.
+# Content-hash gate skips LLM pass when findings hash is unchanged.
 
 [watchdog]
 warn_per_hour_usd = 1.0

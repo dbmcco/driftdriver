@@ -55,4 +55,12 @@ if command -v driftdriver >/dev/null 2>&1 && [[ -n "$TASK_ID" ]] && [[ -n "$POST
   fi
 fi
 
+# Emit task.completed to events.jsonl so the factory brain tracks task lifecycle
+EVENTS_FILE="$PROJECT_DIR/.workgraph/service/runtime/events.jsonl"
+if [[ -d "$(dirname "$EVENTS_FILE")" ]]; then
+  REPO_NAME="$(basename "$PROJECT_DIR")"
+  TS="$(date +%s.%N 2>/dev/null || date +%s)"
+  echo "{\"kind\":\"task.completed\",\"repo\":\"$REPO_NAME\",\"ts\":$TS,\"payload\":{\"task\":\"$TASK_ID\",\"cli\":\"$CLI_TOOL\",\"files_changed\":$CHANGED_FILES}}" >> "$EVENTS_FILE" 2>/dev/null || true
+fi
+
 wg_log "$TASK_ID" "task-completing: cli=$CLI_TOOL files_changed=$CHANGED_FILES"

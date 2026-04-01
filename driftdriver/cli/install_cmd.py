@@ -20,6 +20,7 @@ from driftdriver.install import (
     install_claude_code_hooks,
     install_codex_adapter,
     install_handler_scripts,
+    install_hook_scripts,
     install_lessons_mcp_config,
     install_opencode_hooks,
     install_session_driver_executor,
@@ -224,6 +225,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             return ExitCode.usage
 
     handler_written, handler_count = install_handler_scripts(wg_dir)
+    hook_written, hook_count = install_hook_scripts(wg_dir)
 
     wrote_driver = write_driver_wrapper(wg_dir, driver_bin=driver_bin, wrapper_mode=wrapper_mode)
     wrote_drifts = write_drifts_wrapper(wg_dir)

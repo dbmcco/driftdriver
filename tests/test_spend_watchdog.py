@@ -381,3 +381,91 @@ def test_ok_when_below_thresholds(tmp_path: Path):
         watchdog_log_path=watchdog_log,
     )
     assert result.action == WatchdogAction.OK
+
+
+# --- kill-diagnostic.jsonl ---
+
+
+def test_kill_writes_diagnostic_jsonl(tmp_path: Path):
+    """When kill threshold triggers, kill-diagnostic.jsonl is written with last 10 invocations."""
+    log_path = tmp_path / "llm-spend.jsonl"
+    watchdog_log = tmp_path / "watchdog.log"
+    diagnostic_path = tmp_path / "kill-diagnostic.jsonl"
+    policy = tmp_path / "drift-policy.toml"
+    _write_policy(policy, "[watchdog]\nwarn_per_hour_usd = 1.0\nkill_per_hour_usd = 5.0\nkill_per_5min_usd = 2.0\n")
+
+    # $6.00/hr — above kill
+    records = _make_records("brain", 0.60, 10, span_seconds=3600)
+    _write_spend_log(log_path, records)
+
+    with patch("driftdriver.spend_watchdog._send_sigterm_to_hub"):
+        result = run_watchdog(
+            log_path=log_path,
+            policy_path=policy,
+            watchdog_log_path=watchdog_log,
+            diagnostic_path=diagnostic_path,
+        )
+
+    assert result.action == WatchdogAction.KILL
+    assert diagnostic_path.exists(), "kill-diagnostic.jsonl must be written on kill"
+
+    entry = json.loads(diagnostic_path.read_text().strip())
+    assert "last_invocations" in entry
+    assert len(entry["last_invocations"]) == 10
+    assert entry["top_agent"] == "brain"
+    assert entry["rate_1h_usd"] > 0
+    assert "reason" in entry
+    # Verify invocations have token counts
+    for inv in entry["last_invocations"]:
+        assert "input_tokens" in inv
+        assert "output_tokens" in inv
+
+
+def test_kill_diagnostic_caps_at_10_records(tmp_path: Path):
+    """kill-diagnostic.jsonl should contain at most 10 last invocations."""
+    log_path = tmp_path / "llm-spend.jsonl"
+    watchdog_log = tmp_path / "watchdog.log"
+    diagnostic_path = tmp_path / "kill-diagnostic.jsonl"
+    policy = tmp_path / "drift-policy.toml"
+    _write_policy(policy, "[watchdog]\nwarn_per_hour_usd = 1.0\nkill_per_hour_usd = 5.0\nkill_per_5min_usd = 2.0\n")
+
+    # 25 records — more than 10
+    records = _make_records("brain", 0.30, 25, span_seconds=3600)
+    _write_spend_log(log_path, records)
+
+    with patch("driftdriver.spend_watchdog._send_sigterm_to_hub"):
+        run_watchdog(
+            log_path=log_path,
+            policy_path=policy,
+            watchdog_log_path=watchdog_log,
+            diagnostic_path=diagnostic_path,
+        )
+
+    entry = json.loads(diagnostic_path.read_text().strip())
+    assert len(entry["last_invocations"]) == 10
+
+
+def test_5min_burst_writes_diagnostic(tmp_path: Path):
+    """5min burst kill also writes kill-diagnostic.jsonl."""
+    log_path = tmp_path / "llm-spend.jsonl"
+    watchdog_log = tmp_path / "watchdog.log"
+    diagnostic_path = tmp_path / "kill-diagnostic.jsonl"
+    policy = tmp_path / "drift-policy.toml"
+    _write_policy(policy, "[watchdog]\nwarn_per_hour_usd = 1.0\nkill_per_hour_usd = 5.0\nkill_per_5min_usd = 2.0\n")
+
+    # $3.00 in 5 minutes — above 5min kill
+    records = _make_records("brain", 0.60, 5, span_seconds=300)
+    _write_spend_log(log_path, records)
+
+    with patch("driftdriver.spend_watchdog._send_sigterm_to_hub"):
+        result = run_watchdog(
+            log_path=log_path,
+            policy_path=policy,
+            watchdog_log_path=watchdog_log,
+            diagnostic_path=diagnostic_path,
+        )
+
+    assert result.action == WatchdogAction.KILL
+    assert diagnostic_path.exists()
+    entry = json.loads(diagnostic_path.read_text().strip())
+    assert "5min" in entry["reason"].lower() or "burst" in entry["reason"].lower()

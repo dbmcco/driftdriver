@@ -120,8 +120,8 @@ class ClaudeRunAgencyFallbackTests(unittest.TestCase):
             self.assertTrue(wrap.exists())
             self.assertTrue(assign.stat().st_mode & stat.S_IXUSR)
 
-    def test_claude_run_skips_agency_with_env_flag(self) -> None:
-        """WG_SKIP_AGENCY=1 should bypass Agency enrichment entirely."""
+    def test_claude_run_calls_pre_dispatch_hook(self) -> None:
+        """claude-run.sh should call the pre-dispatch hook for Agency enrichment."""
         with tempfile.TemporaryDirectory() as td:
             wg_dir = Path(td) / ".workgraph"
             wg_dir.mkdir(parents=True, exist_ok=True)
@@ -130,9 +130,25 @@ class ClaudeRunAgencyFallbackTests(unittest.TestCase):
 
             runner = wg_dir / "executors" / "claude-run.sh"
             content = runner.read_text(encoding="utf-8")
-            self.assertIn("WG_SKIP_AGENCY", content)
+            self.assertIn("pre-dispatch.sh", content)
+            self.assertIn("PRE_DISPATCH_HOOK", content)
+
+    def test_pre_dispatch_hook_installed_with_executors(self) -> None:
+        """install_claude_executor_support deploys the pre-dispatch hook."""
+        from driftdriver.install import install_hook_scripts
+
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+
+            install_hook_scripts(wg_dir)
+
+            hook = wg_dir / "hooks" / "pre-dispatch.sh"
+            self.assertTrue(hook.exists())
+            self.assertTrue(hook.stat().st_mode & stat.S_IXUSR)
+            content = hook.read_text(encoding="utf-8")
             self.assertIn("agency-assign-workgraph", content)
-            self.assertIn("agency-speedrift-wrap.py", content)
+            self.assertIn("WG_SKIP_AGENCY", content)
 
 
 if __name__ == "__main__":

@@ -130,9 +130,14 @@ def _run_upstream_pass1(project_dir: Path) -> None:
     from driftdriver.upstream_tracker import run_pass1
 
     pins_path = project_dir / ".driftdriver" / "upstream-pins.toml"
-    results = run_pass1(config, pins_path)
+    results = run_pass1(config, pins_path, project_dir=project_dir)
     if results:
-        _log.info("upstream pass1: %d repo(s) with new commits", len(results))
+        emitted = sum(1 for r in results if r.get("wg_task_id"))
+        _log.info(
+            "upstream pass1: %d repo(s) with new commits, %d wg task(s) emitted",
+            len(results),
+            emitted,
+        )
 
 
 def _port_is_available(host: str, port: int) -> bool:

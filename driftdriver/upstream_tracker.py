@@ -260,10 +260,93 @@ def deep_eval_change(
     return result
 
 
+# --- Lag window and wg task emission ---
+
+from typing import Callable as _Callable
+
+_WgRunner = _Callable[[list[str]], tuple[int, str, str]]
+
+
+def lag_window_check(commit_count: int, threshold: int) -> bool:
+    """Return True if commit_count meets or exceeds threshold (task should be emitted)."""
+    return commit_count >= threshold
+
+
+def emit_wg_task(
+    repo_name: str,
+    commit_count: int,
+    eval_result: dict[str, Any],
+    project_dir: Path,
+    *,
+    wg_runner: _WgRunner | None = None,
+) -> str | None:
+    """Emit a wg task for an upstream sync opportunity.
+
+    Always passes --dir explicitly to avoid CWD resolution failures.
+    Returns the created task ID, or None on failure.
+    """
+    action = eval_result.get("recommended_action", "watch")
+    risk_score = eval_result.get("risk_score", 0.5)
+    category = eval_result.get("category", "unknown")
+
+    noun = "commit" if commit_count == 1 else "commits"
+    title = f"sync upstream: {repo_name} ({commit_count} {noun})"
+
+    desc_parts = [f"Upstream {repo_name} has {commit_count} new {noun}."]
+    desc_parts.append(f"Category: {category} | Risk: {risk_score:.2f} | Action: {action}")
+    if eval_result.get("value_gained"):
+        desc_parts.append(f"Value: {eval_result['value_gained']}")
+    if eval_result.get("risk_introduced"):
+        desc_parts.append(f"Risk detail: {eval_result['risk_introduced']}")
+    description = " ".join(desc_parts)
+
+    wg_dir = str(project_dir / ".workgraph")
+    cmd = ["wg", "--dir", wg_dir, "add", title, "--description", description]
+
+    def _default_runner(c: list[str]) -> tuple[int, str, str]:
+        try:
+            result = subprocess.run(c, capture_output=True, text=True, timeout=15.0)
+            return result.returncode, result.stdout, result.stderr
+        except Exception as exc:
+            return 1, "", str(exc)
+
+    runner = wg_runner or _default_runner
+    rc, stdout, _stderr = runner(cmd)
+
+    if rc != 0:
+        return None
+
+    # Parse "Added task: TITLE (ID)" from stdout
+    for line in stdout.splitlines():
+        if line.startswith("Added task:") and "(" in line:
+            task_id = line.rsplit("(", 1)[-1].rstrip(")")
+            if task_id:
+                return task_id
+
+    return None
+
+
 # --- Pass 1: External repos ---
 
 _RELEVANCE_THRESHOLD = 0.3
 _RISK_ALERT_THRESHOLD = 0.4
+
+
+def _git_commit_count(repo_path: Path, old_sha: str, new_sha: str) -> int:
+    """Return number of commits between two SHAs (exclusive old_sha, inclusive new_sha)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", "--count", f"{old_sha}..{new_sha}"],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=30.0,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.strip())
+    except Exception:
+        pass
+    return 0
 
 
 def _git_current_sha(repo_path: Path, branch: str) -> str | None:
@@ -326,8 +409,14 @@ def run_pass1(
     *,
     llm_caller: Callable[[str, str], dict[str, Any]] | None = None,
     deep_eval_caller: Callable[[str, str], dict[str, Any]] | None = None,
+    project_dir: Path | None = None,
+    wg_runner: _WgRunner | None = None,
 ) -> list[dict[str, Any]]:
-    """Evaluate all tracked external repos. Returns list of evaluation results."""
+    """Evaluate all tracked external repos. Returns list of evaluation results.
+
+    When *project_dir* is provided, emits wg tasks for repos that warrant action
+    (recommended_action != 'ignore') or exceed their configured lag_window_commits threshold.
+    """
     from driftdriver.upstream_pins import get_sha, is_snoozed, load_pins, save_pins, set_sha
 
     pins = load_pins(pins_path)
@@ -338,6 +427,7 @@ def run_pass1(
         repo_name = str(repo_cfg.get("name") or "")
         local_path_str = str(repo_cfg.get("local_path") or "")
         branches = list(repo_cfg.get("branches") or [])
+        lag_threshold = int(repo_cfg.get("lag_window_commits") or 0)
         if not repo_name or not local_path_str or not branches:
             continue
         local_path = Path(local_path_str)
@@ -359,9 +449,11 @@ def run_pass1(
             if pinned_sha:
                 changed_files = _git_changed_files(local_path, pinned_sha, current_sha)
                 subjects = _git_commit_subjects(local_path, pinned_sha, current_sha)
+                commit_count = _git_commit_count(local_path, pinned_sha, current_sha)
             else:
                 changed_files = []
                 subjects = []
+                commit_count = 0
 
             category = classify_changes(changed_files, subjects)
             relevance = triage_relevance(
@@ -375,6 +467,7 @@ def run_pass1(
                 "new_sha": current_sha,
                 "category": category,
                 "relevance_score": relevance,
+                "commit_count": commit_count,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
@@ -397,6 +490,20 @@ def run_pass1(
             eval_result["action"] = (
                 "alert" if risk_score >= _RISK_ALERT_THRESHOLD else "auto_adopt"
             )
+
+            # Emit a wg task when action warrants it or lag window exceeded
+            if project_dir is not None:
+                action = eval_result.get("recommended_action", "watch")
+                lag_exceeded = lag_threshold > 0 and lag_window_check(commit_count, lag_threshold)
+                if action != "ignore" or lag_exceeded:
+                    task_id = emit_wg_task(
+                        repo_name,
+                        commit_count,
+                        eval_result,
+                        project_dir,
+                        wg_runner=wg_runner,
+                    )
+                    eval_result["wg_task_id"] = task_id
 
             pins = set_sha(pins, repo_name, branch, current_sha)
             pins_updated = True

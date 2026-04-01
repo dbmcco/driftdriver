@@ -274,6 +274,105 @@ def test_run_upstream_pass1_skips_empty_config(tmp_path: Path) -> None:
     assert not (dd_dir / "upstream-tracker-last.json").exists()
 
 
+# --- lag_window_check tests ---
+
+from driftdriver.upstream_tracker import lag_window_check
+
+
+def test_lag_window_check_at_threshold() -> None:
+    assert lag_window_check(20, 20) is True
+
+
+def test_lag_window_check_above_threshold() -> None:
+    assert lag_window_check(51, 20) is True
+
+
+def test_lag_window_check_below_threshold() -> None:
+    assert lag_window_check(4, 5) is False
+
+
+def test_lag_window_check_zero_threshold_always_true() -> None:
+    assert lag_window_check(0, 0) is True
+
+
+# --- emit_wg_task tests ---
+
+from driftdriver.upstream_tracker import emit_wg_task
+
+
+def _make_fake_wg_runner(returncode: int = 0, stdout: str = "") -> object:
+    """Return a fake wg_runner callable that captures calls."""
+    calls: list[list[str]] = []
+
+    def runner(cmd: list[str]) -> tuple[int, str, str]:
+        calls.append(cmd)
+        return returncode, stdout, ""
+
+    runner.calls = calls  # type: ignore[attr-defined]
+    return runner
+
+
+def test_emit_wg_task_passes_dir_explicitly(tmp_path: Path) -> None:
+    """Critical: --dir must be in the wg command to avoid CWD resolution bug."""
+    runner = _make_fake_wg_runner(
+        stdout="Added task: sync upstream: graphwork/workgraph (52 commits) (sync-upstream-graphwork-workgraph)\n"
+    )
+    eval_result = {"recommended_action": "adopt", "risk_score": 0.3, "category": "behavior"}
+    emit_wg_task("graphwork/workgraph", 52, eval_result, tmp_path, wg_runner=runner)
+
+    assert len(runner.calls) == 1
+    cmd = runner.calls[0]
+    assert "--dir" in cmd
+    dir_idx = cmd.index("--dir")
+    assert ".workgraph" in cmd[dir_idx + 1]
+
+
+def test_emit_wg_task_does_not_set_cwd(tmp_path: Path) -> None:
+    """Verify emit_wg_task does NOT pass CWD — relies on --dir instead."""
+    captured: list[dict] = []
+
+    def runner(cmd: list[str], **kwargs: object) -> tuple[int, str, str]:
+        captured.append({"cmd": cmd, "kwargs": kwargs})
+        return 0, "Added task: x (y)\n", ""
+
+    eval_result = {"recommended_action": "watch", "risk_score": 0.4, "category": "api-surface"}
+    emit_wg_task("agentbureau/agency", 7, eval_result, tmp_path, wg_runner=runner)
+    for item in captured:
+        assert "cwd" not in item["kwargs"]
+
+
+def test_emit_wg_task_returns_task_id(tmp_path: Path) -> None:
+    runner = _make_fake_wg_runner(
+        stdout="Added task: sync upstream: graphwork/workgraph (52 commits) (upstream-workgraph-sync)\n"
+    )
+    eval_result = {"recommended_action": "adopt", "risk_score": 0.2, "category": "behavior"}
+    task_id = emit_wg_task("graphwork/workgraph", 52, eval_result, tmp_path, wg_runner=runner)
+    assert task_id == "upstream-workgraph-sync"
+
+
+def test_emit_wg_task_returns_none_on_failure(tmp_path: Path) -> None:
+    runner = _make_fake_wg_runner(returncode=1, stdout="error: something failed\n")
+    eval_result = {"recommended_action": "adopt", "risk_score": 0.3, "category": "behavior"}
+    task_id = emit_wg_task("graphwork/workgraph", 5, eval_result, tmp_path, wg_runner=runner)
+    assert task_id is None
+
+
+def test_emit_wg_task_include_repo_and_count_in_title(tmp_path: Path) -> None:
+    """Task title must include repo name and commit count."""
+    runner = _make_fake_wg_runner(
+        stdout="Added task: sync upstream: danshapiro/freshell (22 commits) (upstream-freshell-sync)\n"
+    )
+    eval_result = {"recommended_action": "watch", "risk_score": 0.15, "category": "internals-only"}
+    emit_wg_task("danshapiro/freshell", 22, eval_result, tmp_path, wg_runner=runner)
+    cmd = runner.calls[0]
+    title = next((arg for i, arg in enumerate(cmd) if arg == "add" and i + 1 < len(cmd)), None)
+    # Find the title arg (first positional after 'add')
+    add_idx = cmd.index("add")
+    title_arg = cmd[add_idx + 1]
+    assert "danshapiro/freshell" in title_arg
+    assert "22" in title_arg
+
+
 # --- Snapshot: upstream_eval field ---
 
 def test_build_snapshot_entry_upstream_eval_key_from_pass1_results(tmp_path: Path) -> None:

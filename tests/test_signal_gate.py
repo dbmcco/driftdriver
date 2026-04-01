@@ -12,12 +12,84 @@ from unittest.mock import patch
 import pytest
 
 from driftdriver.signal_gate import (
+    VOLATILE_FIELDS,
+    SignalGate,
     compute_content_hash,
     should_fire,
     record_fire,
     is_gate_enabled,
     check_canary,
+    log_canary_decision,
 )
+
+
+# ---------------------------------------------------------------------------
+# VOLATILE_FIELDS constant
+# ---------------------------------------------------------------------------
+
+
+class TestVolatileFields:
+    def test_contains_expected_fields(self) -> None:
+        for field in ("ts", "timestamp", "checked_at", "agent_count", "task_count", "cycle_id"):
+            assert field in VOLATILE_FIELDS, f"expected '{field}' in VOLATILE_FIELDS"
+
+    def test_is_frozenset(self) -> None:
+        assert isinstance(VOLATILE_FIELDS, frozenset)
+
+
+# ---------------------------------------------------------------------------
+# SignalGate class — volatile-stripped hash suppression
+# ---------------------------------------------------------------------------
+
+
+class TestSignalGate:
+    def test_fires_on_first_call(self, tmp_path: Path) -> None:
+        gate = SignalGate(tmp_path / "gate.json")
+        assert gate.should_fire({"findings": ["a"], "repo": "x"}) is True
+
+    def test_suppresses_when_only_volatile_fields_differ(self, tmp_path: Path) -> None:
+        """Same structural content, different ts — gate must suppress on second call."""
+        gate = SignalGate(tmp_path / "gate.json")
+        inp1 = {"findings": ["a", "b"], "repo": "test", "ts": "2026-04-01T00:00:00"}
+        inp2 = {"findings": ["a", "b"], "repo": "test", "ts": "2026-04-01T01:00:00"}
+        r1 = gate.should_fire(inp1)
+        r2 = gate.should_fire(inp2)
+        assert r1 is True
+        assert r2 is False
+
+    def test_fires_when_structural_content_changes(self, tmp_path: Path) -> None:
+        gate = SignalGate(tmp_path / "gate.json")
+        inp1 = {"findings": ["a", "b"], "repo": "test", "ts": "2026-04-01T00:00:00"}
+        inp2 = {"findings": ["a", "b", "c"], "repo": "test", "ts": "2026-04-01T01:00:00"}
+        r1 = gate.should_fire(inp1)
+        r2 = gate.should_fire(inp2)
+        assert r1 is True
+        assert r2 is True
+
+    def test_all_volatile_fields_stripped(self, tmp_path: Path) -> None:
+        """All six canonical volatile fields are ignored."""
+        gate = SignalGate(tmp_path / "gate.json")
+        base = {"findings": ["x"], "repo": "r"}
+        inp1 = {**base, "ts": "t1", "timestamp": "t1", "checked_at": "t1",
+                "agent_count": 3, "task_count": 10, "cycle_id": "c1"}
+        inp2 = {**base, "ts": "t2", "timestamp": "t2", "checked_at": "t2",
+                "agent_count": 7, "task_count": 20, "cycle_id": "c2"}
+        gate.should_fire(inp1)
+        assert gate.should_fire(inp2) is False
+
+    def test_persists_state_to_disk(self, tmp_path: Path) -> None:
+        state_path = tmp_path / "gate.json"
+        gate = SignalGate(state_path)
+        gate.should_fire({"findings": ["a"], "ts": "t1"})
+        assert state_path.exists()
+        # New instance reads from same file and suppresses
+        gate2 = SignalGate(state_path)
+        assert gate2.should_fire({"findings": ["a"], "ts": "t2"}) is False
+
+    def test_non_dict_input_works(self, tmp_path: Path) -> None:
+        gate = SignalGate(tmp_path / "gate.json")
+        assert gate.should_fire("hello") is True
+        assert gate.should_fire("hello") is False
 
 
 # ---------------------------------------------------------------------------
@@ -233,3 +305,54 @@ class TestCheckCanary:
 
         alert = check_canary("recent_agent", gate_dir=tmp_path, silent_threshold_seconds=3600)
         assert alert is None
+
+
+# ---------------------------------------------------------------------------
+# log_canary_decision (JSONL logging)
+# ---------------------------------------------------------------------------
+
+
+class TestLogCanaryDecision:
+    def test_creates_canary_file_on_first_write(self, tmp_path: Path) -> None:
+        """First log_canary_decision call creates the JSONL file."""
+        log_canary_decision(
+            agent_name="northstardrift",
+            fired=True,
+            content_hash="abc123",
+            canary_log=tmp_path / "signal-gate-canary.jsonl",
+        )
+        canary_file = tmp_path / "signal-gate-canary.jsonl"
+        assert canary_file.exists()
+        entries = [json.loads(line) for line in canary_file.read_text().strip().split("\n")]
+        assert len(entries) == 1
+        assert entries[0]["agent"] == "northstardrift"
+        assert entries[0]["fired"] is True
+        assert entries[0]["content_hash"] == "abc123"
+        assert "ts" in entries[0]
+
+    def test_appends_multiple_entries(self, tmp_path: Path) -> None:
+        """Multiple calls append separate JSONL lines."""
+        canary_file = tmp_path / "signal-gate-canary.jsonl"
+        log_canary_decision("agent_a", fired=True, content_hash="h1", canary_log=canary_file)
+        log_canary_decision("agent_b", fired=False, content_hash="h2", canary_log=canary_file)
+        entries = [json.loads(line) for line in canary_file.read_text().strip().split("\n")]
+        assert len(entries) == 2
+        assert entries[0]["agent"] == "agent_a"
+        assert entries[0]["fired"] is True
+        assert entries[1]["agent"] == "agent_b"
+        assert entries[1]["fired"] is False
+
+    def test_records_suppression(self, tmp_path: Path) -> None:
+        """When fired=False, entry records suppression."""
+        canary_file = tmp_path / "signal-gate-canary.jsonl"
+        log_canary_decision("attractor", fired=False, content_hash="same", canary_log=canary_file)
+        entry = json.loads(canary_file.read_text().strip())
+        assert entry["fired"] is False
+        assert entry["agent"] == "attractor"
+
+    def test_includes_reason_when_provided(self, tmp_path: Path) -> None:
+        """Optional reason field is included."""
+        canary_file = tmp_path / "signal-gate-canary.jsonl"
+        log_canary_decision("northstardrift", fired=True, content_hash="x", reason="content_changed", canary_log=canary_file)
+        entry = json.loads(canary_file.read_text().strip())
+        assert entry["reason"] == "content_changed"

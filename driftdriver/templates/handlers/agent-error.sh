@@ -30,4 +30,12 @@ else
   echo "RECOVERY: no checkpoint found — review git status and retry from last known good state"
 fi
 
+# Emit task.failed to events.jsonl so the factory brain tracks task lifecycle
+EVENTS_FILE="$PROJECT_DIR/.workgraph/service/runtime/events.jsonl"
+if [[ -d "$(dirname "$EVENTS_FILE")" ]]; then
+  REPO_NAME="$(basename "$PROJECT_DIR")"
+  TS="$(date +%s.%N 2>/dev/null || date +%s)"
+  echo "{\"kind\":\"task.failed\",\"repo\":\"$REPO_NAME\",\"ts\":$TS,\"payload\":{\"task\":\"$TASK_ID\",\"error\":\"$ERROR_MSG\"}}" >> "$EVENTS_FILE" 2>/dev/null || true
+fi
+
 wg_log "$TASK_ID" "agent-error: error=$ERROR_MSG checkpoint_available=$HAS_CHECKPOINT"

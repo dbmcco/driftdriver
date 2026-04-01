@@ -5,16 +5,19 @@
 name = "danshapiro/freshell"
 local_path = "/Users/braydon/projects/experiments/freshell"
 branches = ["main"]
+lag_window_commits = 15
 notes = "Browser terminal multiplexer. We run at port 3550, patch dist/ directly."
 
 [[external_repos]]
 name = "graphwork/workgraph"
 local_path = "/Users/braydon/projects/experiments/workgraph"
 branches = ["main"]
+lag_window_commits = 20
 notes = "Task graph spine for speedrift. We have a fork at dbmcco/workgraph."
 
 [[external_repos]]
 name = "agentbureau/agency"
 local_path = "/Users/braydon/projects/experiments/agency"
 branches = ["main"]
+lag_window_commits = 5
 notes = "Agent composition layer for speedrift execution. Provides agent lifecycle, capability routing, and multi-agent coordination."

@@ -65,4 +65,5 @@ if command -v driftdriver >/dev/null 2>&1; then
   REPO_NAME="$(basename "$PROJECT_DIR")"
   TS="$(date +%s.%N 2>/dev/null || date +%s)"
   echo "{\"kind\":\"session.started\",\"repo\":\"$REPO_NAME\",\"ts\":$TS,\"payload\":{\"cli\":\"$CLI_TOOL\",\"actor_id\":\"${CLAUDE_SESSION_ID:-${WG_SESSION_ID:-session-$$}}\"}}" >> "$EVENTS_FILE" 2>/dev/null || true
+  echo "events.jsonl: session.started emitted for $REPO_NAME"
 fi
