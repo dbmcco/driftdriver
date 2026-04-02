@@ -29,6 +29,7 @@ class BrainState:
     recent_directives: list[dict] = field(default_factory=list)
     tier1_escalation_count: int = 0
     last_known_stale: set[str] = field(default_factory=set)
+    last_agent_health_check: datetime | None = None
 
 
 def route_event(event: Event) -> int:
@@ -114,6 +115,14 @@ def should_sweep(state: BrainState, *, interval_seconds: int = 600) -> bool:
     if state.last_sweep is None:
         return True
     elapsed = (datetime.now(timezone.utc) - state.last_sweep).total_seconds()
+    return elapsed >= interval_seconds
+
+
+def should_run_agent_health(state: BrainState, *, interval_seconds: int = 86400) -> bool:
+    """True if last_agent_health_check is None or interval has elapsed."""
+    if state.last_agent_health_check is None:
+        return True
+    elapsed = (datetime.now(timezone.utc) - state.last_agent_health_check).total_seconds()
     return elapsed >= interval_seconds
 
 
@@ -423,5 +432,70 @@ def run_brain_tick(
             dry_run=dry_run,
         )
         all_results.append(result)
+
+    # 7-day outcome checks — re-escalate unresolved fixes
+    try:
+        from driftdriver.paia_agent_health.fix_history import pending_checks, update_outcome, DEFAULT_PATH as DEFAULT_HISTORY_PATH
+        from driftdriver.paia_agent_health.fixes import send_proposal
+        from driftdriver.paia_agent_health.analyzer import Finding, FixProposal
+        import asyncio
+        for due_record in pending_checks(DEFAULT_HISTORY_PATH):
+            from driftdriver.paia_agent_health.collector import collect_signals
+            bundle = asyncio.run(collect_signals())
+            agent_signals = bundle.agents.get(due_record.agent)
+            still_failing = agent_signals and any(
+                due_record.finding_pattern in str(e) or due_record.component in str(e)
+                for e in (agent_signals.conversation_turns + agent_signals.tool_events)[:10]
+            )
+            if still_failing:
+                finding = Finding(
+                    agent=due_record.agent, pattern_type=due_record.finding_pattern,
+                    evidence=[f"Previous fix did not resolve: {due_record.change_summary}"],
+                    evidence_count=1,
+                    affected_component=due_record.component, severity="high", confidence=1.0,
+                )
+                proposal = FixProposal(
+                    finding=finding,
+                    change_summary=f"Re-escalation: previous fix for {due_record.component} did not resolve the issue.",
+                    diff=due_record.diff,
+                    auto_apply=False, risk="medium",
+                )
+                send_proposal(proposal)
+                update_outcome(DEFAULT_HISTORY_PATH, due_record.fix_id, "persists")
+            else:
+                update_outcome(DEFAULT_HISTORY_PATH, due_record.fix_id, "resolved")
+    except Exception as exc:
+        logger.warning("agent_health_outcome_check_failed: %s", exc)
+
+    # Agent health lane — periodic 24h sweep + event-triggered fast path
+    agent_health_triggered = any(
+        e.kind in ("agent.task.failed",) for e in events
+    )
+    if should_run_agent_health(state) or agent_health_triggered:
+        state.last_agent_health_check = now
+        try:
+            import asyncio
+            from driftdriver.paia_agent_health.collector import collect_signals
+            from driftdriver.paia_agent_health.analyzer import run_analysis
+            from driftdriver.paia_agent_health.fixes import apply_fix, send_proposal
+            from driftdriver.paia_agent_health.fix_history import is_duplicate_pending, DEFAULT_PATH as DEFAULT_HEALTH_PATH
+
+            bundle = asyncio.run(collect_signals())
+            proposals = run_analysis(bundle)
+
+            for proposal in proposals:
+                if is_duplicate_pending(
+                    DEFAULT_HEALTH_PATH,
+                    proposal.finding.agent,
+                    proposal.finding.affected_component,
+                    proposal.finding.pattern_type,
+                ):
+                    continue
+                if proposal.auto_apply:
+                    apply_fix(proposal)
+                else:
+                    send_proposal(proposal)
+        except Exception as exc:
+            logger.warning("agent_health_lane_failed: %s", exc)
 
     return all_results
