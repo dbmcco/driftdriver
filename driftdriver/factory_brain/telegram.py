@@ -15,9 +15,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "workgraph" / "notify.toml"
 
 
-def load_telegram_config(config_path: Path | None = None) -> dict[str, str] | None:
+def load_telegram_config(
+    config_path: Path | None = None,
+    section: str = "telegram_factory",
+) -> dict[str, str] | None:
     """Load Telegram bot_token and chat_id from a TOML config file.
 
+    Reads the given section (default: telegram_factory for dFactory bot).
     Returns {"bot_token": ..., "chat_id": ...} or None if missing/invalid.
     """
     path = config_path or DEFAULT_CONFIG_PATH
@@ -27,7 +31,7 @@ def load_telegram_config(config_path: Path | None = None) -> dict[str, str] | No
     try:
         with open(path, "rb") as f:
             data = tomllib.load(f)
-        telegram = data.get("telegram", {})
+        telegram = data.get(section, {})
         bot_token = telegram.get("bot_token")
         chat_id = telegram.get("chat_id")
         if not bot_token or not chat_id:
