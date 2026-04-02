@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from driftdriver.factory_brain.directives import BrainResponse, Directive, parse_brain_response
@@ -15,8 +16,13 @@ from driftdriver.factory_brain.prompts import (
     build_system_prompt,
     build_user_prompt,
 )
-from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
+from driftdriver.llm_meter import (
+    extract_usage_from_claude_json,
+    record_spend,
+)
 from driftdriver.signal_gate import record_fire, should_fire
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,6 +38,7 @@ class BrainInvocation:
     input_tokens: int
     output_tokens: int
     dry_run: bool = False
+    backend: str = "claude"
 
 
 def _noop_response(reason: str) -> BrainResponse:
@@ -76,6 +83,7 @@ def _try_invoke(prompt: str, tier: int) -> tuple[dict, str, tuple[int, int]]:
     structured = cli_output.get("structured_output", {})
     usage = extract_usage_from_claude_json(cli_output) or (0, 0)
     return structured, model, usage
+
 
 
 def invoke_brain(
@@ -129,13 +137,9 @@ def invoke_brain(
 
     input_tokens = 0
     output_tokens = 0
+    backend = "claude"
     try:
-        result = _try_invoke(full_prompt, tier)
-        if len(result) == 3:
-            tool_input, model, usage = result
-            input_tokens, output_tokens = usage
-        else:
-            tool_input, model = result
+        tool_input, model, (input_tokens, output_tokens) = _try_invoke(full_prompt, tier)
         brain_response = parse_brain_response(tool_input)
     except subprocess.TimeoutExpired:
         brain_response = _noop_response("CLI timed out")
@@ -160,6 +164,7 @@ def invoke_brain(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         dry_run=dry_run,
+        backend=backend,
     )
 
     if log_dir is not None:
@@ -226,6 +231,7 @@ def _write_brain_log(log_dir: Path, invocation: BrainInvocation) -> None:
     record = {
         "tier": invocation.tier,
         "model": invocation.model,
+        "backend": invocation.backend,
         "trigger": invocation.trigger,
         "reasoning": invocation.reasoning,
         "directives": invocation.directives,
