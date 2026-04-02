@@ -29,6 +29,9 @@ DIRECTIVE_SCHEMA: dict[str, list[str]] = {
     "noop": ["reason"],
     "create_decision": ["repo", "question", "category"],
     "enforce_compliance": ["repo"],
+    "apply_skill_fix":      ["agent", "skill_file", "diff"],
+    "propose_agent_fix":    ["agent", "component", "finding_summary", "proposed_diff"],
+    "restart_paia_service": ["service"],
 }
 
 
@@ -307,6 +310,66 @@ def _handle_enforce_compliance(d: Directive, *, dry_run: bool, repo_paths: dict[
     }
 
 
+def _execute_apply_skill_fix(params: dict, *, dry_run: bool = False) -> str:
+    """Auto-apply a skill fix directly (used for small/auto fixes from the healer)."""
+    from driftdriver.paia_agent_health.analyzer import Finding, FixProposal
+    from driftdriver.paia_agent_health.fixes import apply_fix
+    agent = params.get("agent", "")
+    skill_file = params.get("skill_file", "")
+    diff = params.get("diff", "")
+    if not agent or not skill_file or not diff:
+        return "error: apply_skill_fix requires agent, skill_file, diff"
+    if dry_run:
+        return f"dry_run: would apply fix to {agent}/{skill_file}"
+    finding = Finding(agent=agent, pattern_type="directive", evidence=[],
+                      evidence_count=0, affected_component=skill_file,
+                      severity="low", confidence=1.0)
+    proposal = FixProposal(finding=finding, change_summary="directive-triggered fix",
+                           diff=diff, auto_apply=True, risk="low")
+    apply_fix(proposal)
+    return f"applied fix to {agent}/{skill_file}"
+
+
+def _execute_propose_agent_fix(params: dict, *, dry_run: bool = False) -> str:
+    """Send a large fix proposal via Telegram for user approval."""
+    from driftdriver.paia_agent_health.analyzer import Finding, FixProposal
+    from driftdriver.paia_agent_health.fixes import send_proposal
+    agent = params.get("agent", "")
+    component = params.get("component", "")
+    finding_summary = params.get("finding_summary", "")
+    proposed_diff = params.get("proposed_diff", "")
+    if dry_run:
+        return f"dry_run: would propose fix for {agent}/{component}"
+    finding = Finding(agent=agent, pattern_type="directive", evidence=[finding_summary],
+                      evidence_count=1, affected_component=component,
+                      severity="medium", confidence=1.0)
+    proposal = FixProposal(finding=finding, change_summary=finding_summary,
+                           diff=proposed_diff, auto_apply=False, risk="medium")
+    dec_id = send_proposal(proposal)
+    return f"proposed fix {dec_id} for {agent}/{component}"
+
+
+def _execute_restart_paia_service(params: dict, *, dry_run: bool = False) -> str:
+    """Restart a PAIA launchd service via launchctl kickstart."""
+    import os
+    import subprocess
+    service = params.get("service", "")
+    if not service:
+        return "error: restart_paia_service requires service"
+    label = f"com.paia.{service}"
+    uid = os.getuid()
+    domain = f"gui/{uid}/{label}"
+    if dry_run:
+        return f"dry_run: would run launchctl kickstart -k {domain}"
+    result = subprocess.run(
+        ["launchctl", "kickstart", "-k", domain],
+        capture_output=True, text=True, timeout=15,
+    )
+    if result.returncode == 0:
+        return f"restarted {label}"
+    return f"restart failed ({result.returncode}): {result.stderr.strip()[:200]}"
+
+
 _HANDLERS: dict[str, Any] = {
     "noop": _handle_noop,
     "kill_process": _handle_kill_process,
@@ -324,6 +387,9 @@ _HANDLERS: dict[str, Any] = {
     "escalate": _handle_escalate,
     "create_decision": _handle_create_decision,
     "enforce_compliance": _handle_enforce_compliance,
+    "apply_skill_fix":      lambda d, **kw: _execute_apply_skill_fix(d.params, dry_run=kw.get("dry_run", False)),
+    "propose_agent_fix":    lambda d, **kw: _execute_propose_agent_fix(d.params, dry_run=kw.get("dry_run", False)),
+    "restart_paia_service": lambda d, **kw: _execute_restart_paia_service(d.params, dry_run=kw.get("dry_run", False)),
 }
 
 

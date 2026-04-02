@@ -15,7 +15,7 @@ from driftdriver.factory_brain.directives import DIRECTIVE_SCHEMA
 logger = logging.getLogger(__name__)
 
 # Actions that require user confirmation before execution
-DESTRUCTIVE_ACTIONS = frozenset({"kill_daemon", "kill_process", "unenroll"})
+DESTRUCTIVE_ACTIONS = frozenset({"kill_daemon", "kill_process", "unenroll", "restart_paia_service"})
 
 # Max conversation history pairs per chat_id
 _MAX_HISTORY_PAIRS = 10

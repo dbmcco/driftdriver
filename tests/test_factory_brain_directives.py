@@ -36,6 +36,9 @@ class TestDirectiveSchema(unittest.TestCase):
             "noop",
             "create_decision",
             "enforce_compliance",
+            "apply_skill_fix",
+            "propose_agent_fix",
+            "restart_paia_service",
         }
         self.assertEqual(set(DIRECTIVE_SCHEMA.keys()), expected_actions)
 
