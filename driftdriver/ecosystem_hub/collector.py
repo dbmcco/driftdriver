@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from driftdriver.workgraph import find_workgraph_dir
+
 
 def load_tasks_via_wg_cli(repo_path: Path) -> dict[str, dict[str, Any]]:
     """Return a tasks dict keyed by task id using ``wg list --json``.
@@ -22,14 +24,17 @@ def load_tasks_via_wg_cli(repo_path: Path) -> dict[str, dict[str, Any]]:
 
     Returns an empty dict when neither wg CLI nor graph.jsonl is available.
     """
-    wg_dir = repo_path / ".workgraph"
+    try:
+        wg_dir = find_workgraph_dir(repo_path)
+    except FileNotFoundError:
+        wg_dir = repo_path / ".workgraph"
     # Primary path: wg list --json
     try:
         result = subprocess.run(
             ["wg", "--dir", str(wg_dir), "list", "--json"],
             capture_output=True,
             text=True,
-            cwd=str(repo_path),
+            cwd=str(wg_dir.parent),
             timeout=10,
         )
         if result.returncode == 0:

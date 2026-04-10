@@ -25,6 +25,7 @@ from driftdriver.qadrift import run_program_quality_scan
 from driftdriver.secdrift import run_secdrift_scan
 from driftdriver.directives import DirectiveLog
 from driftdriver.ecosystem_hub.collector import load_tasks_via_wg_cli as _load_tasks_via_wg_cli
+from driftdriver.workgraph import find_workgraph_dir
 
 from .discovery import (
     _age_days,
@@ -60,6 +61,7 @@ _MAX_TASK_GRAPH_NODES = 140
 _SUPERVISOR_DEFAULT_COOLDOWN_SECONDS = 180
 _SUPERVISOR_DEFAULT_MAX_STARTS = 4
 _SUPERVISOR_LAST_ATTEMPT: dict[str, float] = {}
+_RUNTIME_ACTIVE_DAEMON_STATES = {"running", "idle", "stalled"}
 
 
 def _run_cmd(cmd: list[str], **kwargs: object) -> tuple[int, str, str]:
@@ -101,6 +103,20 @@ def _service_warning(service_status: dict[str, Any] | None) -> str:
     if not isinstance(service_status, dict):
         return ""
     return str(service_status.get("warning") or "").strip()
+
+
+def _resolve_git_root(repo_path: Path) -> tuple[Path | None, str]:
+    rc, out, err = _run_cmd(["git", "rev-parse", "--show-toplevel"], cwd=repo_path)
+    if rc != 0 or not out:
+        return None, err or "unknown"
+    return Path(out.strip()), ""
+
+
+def _runtime_supervisor_running(runtime: dict[str, Any] | None) -> bool:
+    if not isinstance(runtime, dict):
+        return False
+    daemon_state = str(runtime.get("daemon_state") or "").strip().lower()
+    return daemon_state in _RUNTIME_ACTIVE_DAEMON_STATES
 
 
 def _build_repo_narrative(snap: RepoSnapshot) -> str:
@@ -429,8 +445,11 @@ def collect_repo_snapshot(
         snap.errors.append("repo_missing")
         return _finalize_repo_snapshot(snap)
     snap.repo_north_star = _collect_repo_north_star(repo_path)
-    if not (repo_path / ".git").exists():
+    git_root, git_err = _resolve_git_root(repo_path)
+    if git_root is None:
         snap.errors.append("not_a_git_repo")
+        if git_err:
+            snap.errors.append(f"git_root_error:{git_err}")
         return _finalize_repo_snapshot(snap)
 
     rc, branch, err = _run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_path)
@@ -439,7 +458,7 @@ def collect_repo_snapshot(
     else:
         snap.git_branch = branch
 
-    rc, porcelain, err = _run_cmd(["git", "status", "--porcelain"], cwd=repo_path)
+    rc, porcelain, err = _run_cmd(["git", "status", "--porcelain", "--", "."], cwd=repo_path)
     if rc != 0:
         snap.errors.append(f"git_status_error:{err or 'unknown'}")
     else:
@@ -448,7 +467,7 @@ def collect_repo_snapshot(
         snap.dirty_file_count = len(lines)
         snap.untracked_file_count = sum(1 for line in lines if line.startswith("??"))
 
-    base_ref = _git_default_ref(repo_path)
+    base_ref = _git_default_ref(git_root)
     rc, counts, _ = _run_cmd(["git", "rev-list", "--left-right", "--count", f"{base_ref}...HEAD"], cwd=repo_path)
     if rc == 0 and counts:
         parts = counts.split()
@@ -459,7 +478,10 @@ def collect_repo_snapshot(
             except ValueError:
                 pass
 
-    wg_dir = repo_path / ".workgraph"
+    try:
+        wg_dir = find_workgraph_dir(repo_path)
+    except FileNotFoundError:
+        wg_dir = repo_path / ".workgraph"
     _wg_tasks = _load_tasks_via_wg_cli(repo_path)
     if not wg_dir.exists() or not _wg_tasks:
         snap.wg_available = False
@@ -532,7 +554,8 @@ def collect_repo_snapshot(
         }
 
     # Service status is best-effort; missing wg is non-fatal.
-    rc, status_json, _ = _run_cmd(["wg", "--dir", str(wg_dir), "service", "status", "--json"], cwd=repo_path)
+    runtime_service_running = _runtime_supervisor_running(snap.runtime)
+    rc, status_json, _ = _run_cmd(["wg", "--dir", str(wg_dir), "service", "status", "--json"], cwd=wg_dir.parent)
     if rc == 0 and status_json:
         try:
             status = json.loads(status_json)
@@ -542,7 +565,9 @@ def collect_repo_snapshot(
             snap.service_status = status
             state = str(status.get("status") or "")
             running = bool(status.get("running")) or state == "running"
-            snap.service_running = running
+            snap.service_running = running or runtime_service_running
+    elif runtime_service_running:
+        snap.service_running = True
 
     # _wg_tasks already fetched via wg list --json above; wrap in a namespace
     # object so the rest of this function can access .tasks without changes.

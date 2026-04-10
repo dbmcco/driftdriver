@@ -295,6 +295,56 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertEqual(len(snap.runtime["active_workers"]), 1)
             self.assertEqual(snap.activity_state, "active")
 
+    def test_collect_repo_snapshot_uses_ancestor_git_and_workgraph_for_nested_component(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "paia-agents"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            agent_dir = repo / "caroline"
+            agent_dir.mkdir(parents=True)
+            (agent_dir / "README.md").write_text("## North Star\nStay helpful.\n", encoding="utf-8")
+            _write_graph(repo, [{"id": "t1", "title": "done", "status": "done"}])
+            runtime_dir = repo / ".workgraph" / "service" / "runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            (runtime_dir / "current.json").write_text(
+                json.dumps(
+                    {
+                        "repo": "paia-agents",
+                        "daemon_state": "idle",
+                        "active_workers": [],
+                        "stalled_task_ids": [],
+                        "next_action": "await new ready work",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            real_run = ecosystem_hub_module._run
+
+            def fake_run(cmd, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
+                cmd_list = [str(part) for part in cmd]
+                if cmd_list[:6] == [
+                    "wg",
+                    "--dir",
+                    str(repo / ".workgraph"),
+                    "service",
+                    "status",
+                    "--json",
+                ]:
+                    return (0, json.dumps({"status": "not_running", "running": False}), "")
+                return real_run(cmd, cwd=cwd, timeout=timeout)
+
+            with patch("driftdriver.ecosystem_hub._run", side_effect=fake_run):
+                snap = collect_repo_snapshot("caroline", agent_dir)
+
+            self.assertTrue(snap.exists)
+            self.assertTrue(snap.workgraph_exists)
+            self.assertTrue(snap.wg_available)
+            self.assertTrue(snap.service_running)
+            self.assertEqual(snap.runtime["daemon_state"], "idle")
+            self.assertNotIn("not_a_git_repo", snap.errors)
+            self.assertEqual(snap.activity_state, "idle")
+
     def test_collect_repo_snapshot_marks_in_progress_without_live_workers_stalled(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
