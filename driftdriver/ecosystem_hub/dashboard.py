@@ -4399,6 +4399,13 @@ def render_dashboard_html() -> str:
 
     // --- Factory panel ---
     var factoryLoaded = false;
+    async function refreshFactoryDecisionBadge() {
+      try {
+        var data = await fetch('/api/decisions').then(function(r) { return r.json(); });
+        var count = Number(data.count || ((data.decisions || []).length) || 0);
+        el('factory-decision-count').textContent = String(count);
+      } catch (_err) {}
+    }
     async function loadFactoryPanel() {
       if (factoryLoaded) return;
       try {
@@ -4912,6 +4919,7 @@ def render_dashboard_html() -> str:
 
     loadFiltersFromUrl();
     refreshHttp().catch(() => {});
+    refreshFactoryDecisionBadge();
     startPolling();
     connectWebSocket();
 

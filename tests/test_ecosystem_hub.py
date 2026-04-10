@@ -796,6 +796,7 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("factory-decision-count", html)
         self.assertIn("factory-decisions-table", html)
         self.assertIn("fetch('/api/decisions')", html)
+        self.assertIn("refreshFactoryDecisionBadge()", html)
 
     def test_build_draft_pr_requests_dry_run(self) -> None:
         candidates = [
