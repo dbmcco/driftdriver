@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from driftdriver.decision_queue import DecisionRecord
@@ -52,6 +54,24 @@ class FormatDecisionMessageTests(unittest.TestCase):
     def test_message_contains_reply_hint(self) -> None:
         msg = format_decision_message(self._make_decision())
         self.assertIn("Reply to this message", msg)
+
+    def test_message_includes_provenance_context_when_present(self) -> None:
+        msg = format_decision_message(
+            self._make_decision(
+                repo="paia-agents",
+                context={
+                    "options": ["yes", "no"],
+                    "source_queue": "agent_health_pending",
+                    "agent_member": "derek",
+                    "component": "workgraph_cli_integration",
+                    "pattern": "toolinvocationfailure",
+                },
+                category="agent_health",
+            )
+        )
+        self.assertIn("derek", msg)
+        self.assertIn("workgraph_cli_integration", msg)
+        self.assertIn("agent_health_pending", msg)
 
 
 class NotifyDecisionTests(unittest.TestCase):
@@ -103,6 +123,32 @@ class NotifyDecisionTests(unittest.TestCase):
     def test_notify_returns_false_when_no_config(self, mock_cfg: object) -> None:
         result = notify_decision(self._make_decision())
         self.assertFalse(result)
+
+    @patch("driftdriver.decision_notifier.send_telegram", return_value=True)
+    def test_notify_records_notification_ledger(self, mock_send: object) -> None:
+        with TemporaryDirectory() as td:
+            ledger = Path(td) / "notification-ledger.jsonl"
+            decision = self._make_decision()
+            decision.context = {
+                "source_queue": "agent_health_pending",
+                "agent_member": "caroline",
+                "component": "conversation_state",
+            }
+            result = notify_decision(
+                decision,
+                bot_token="test-token",
+                chat_id="test-chat",
+                ledger_path=ledger,
+            )
+            self.assertTrue(result)
+            rows = [line for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(rows), 1)
+            entry = __import__("json").loads(rows[0])
+            self.assertEqual(entry["decision_id"], decision.id)
+            self.assertEqual(entry["repo"], decision.repo)
+            self.assertEqual(entry["channel"], "telegram_factory")
+            self.assertEqual(entry["delivery_status"], "sent")
+            self.assertEqual(entry["provenance"]["source_queue"], "agent_health_pending")
 
 
 if __name__ == "__main__":

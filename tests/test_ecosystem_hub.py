@@ -1086,6 +1086,48 @@ class DashboardDecisionDisplayTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            paia_program = root / "paia-program"
+            paia_program.mkdir()
+            (paia_program / "config.toml").write_text(
+                f"""
+[repos]
+paia-agents = "{root / 'paia-agents'}"
+samantha = "{root / 'paia-agents' / 'samantha'}"
+caroline = "{root / 'paia-agents' / 'caroline'}"
+derek = "{root / 'paia-agents' / 'derek'}"
+ingrid = "{root / 'paia-agents' / 'ingrid'}"
+
+[topology.canonical]
+target_repos = ["paia-agents"]
+
+[topology.agent_family]
+target_repo = "paia-agents"
+members = ["samantha", "caroline", "derek", "ingrid"]
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            config_dir = root / ".config" / "workgraph"
+            config_dir.mkdir(parents=True)
+            (config_dir / "agent_health_pending.json").write_text(
+                json.dumps(
+                    {
+                        "dec-20260410-xyz789": {
+                            "agent": "derek",
+                            "pattern": "toolinvocationfailure",
+                            "component": "workgraph_cli_integration",
+                            "risk": "medium",
+                            "change_summary": "Teach Derek the current wg flags.",
+                            "diff": "--- a/experiments/derek/CLAUDE.md\n+++ b/experiments/derek/CLAUDE.md\n",
+                        }
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
             ecosystem_root = root / "speedrift-ecosystem"
             ecosystem_root.mkdir()
             (ecosystem_root / "ecosystem.toml").write_text(
@@ -1098,42 +1140,44 @@ class DashboardDecisionDisplayTests(unittest.TestCase):
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
 
-            start_service_process(
-                project_dir=project,
-                workspace_root=root,
-                host="127.0.0.1",
-                port=port,
-                interval_seconds=2,
-                include_updates=False,
-                max_next=3,
-                ecosystem_toml=None,
-                central_repo=None,
-                execute_draft_prs=False,
-                draft_pr_title_prefix="speedrift",
-            )
-            try:
+            with patch.dict(os.environ, {"WORKGRAPH_CONFIG_DIR": str(config_dir)}):
+                start_service_process(
+                    project_dir=project,
+                    workspace_root=root,
+                    host="127.0.0.1",
+                    port=port,
+                    interval_seconds=2,
+                    include_updates=False,
+                    max_next=3,
+                    ecosystem_toml=None,
+                    central_repo=None,
+                    execute_draft_prs=False,
+                    draft_pr_title_prefix="speedrift",
+                )
+                try:
                 # Wait for snapshot to be written (repos list populated)
-                deadline = time.time() + 6.0
-                while time.time() < deadline:
-                    try:
-                        with urlopen(f"http://127.0.0.1:{port}/api/repos", timeout=1.0) as resp:  # noqa: S310
-                            repos_data = json.loads(resp.read().decode("utf-8"))
-                            if isinstance(repos_data, list) and len(repos_data) > 0:
-                                break
-                    except Exception:
-                        pass
-                    time.sleep(0.1)
+                    deadline = time.time() + 6.0
+                    while time.time() < deadline:
+                        try:
+                            with urlopen(f"http://127.0.0.1:{port}/api/repos", timeout=1.0) as resp:  # noqa: S310
+                                repos_data = json.loads(resp.read().decode("utf-8"))
+                                if isinstance(repos_data, list) and len(repos_data) > 0:
+                                    break
+                        except Exception:
+                            pass
+                        time.sleep(0.1)
 
                 # Now query decisions
-                with urlopen(f"http://127.0.0.1:{port}/api/decisions", timeout=2.0) as resp:  # noqa: S310
-                    payload = json.loads(resp.read().decode("utf-8"))
-                self.assertIn("decisions", payload)
-                self.assertIsInstance(payload["decisions"], list)
-                pending = [d for d in payload["decisions"] if d.get("status") == "pending"]
-                self.assertGreaterEqual(len(pending), 1)
-                self.assertEqual(pending[0]["id"], "dec-20260313-aaa111")
-            finally:
-                stop_service_process(project)
+                    with urlopen(f"http://127.0.0.1:{port}/api/decisions", timeout=2.0) as resp:  # noqa: S310
+                        payload = json.loads(resp.read().decode("utf-8"))
+                    self.assertIn("decisions", payload)
+                    self.assertIsInstance(payload["decisions"], list)
+                    pending = [d for d in payload["decisions"] if d.get("status") == "pending"]
+                    pending_ids = {d["id"] for d in pending}
+                    self.assertIn("dec-20260313-aaa111", pending_ids)
+                    self.assertIn("dec-20260410-xyz789", pending_ids)
+                finally:
+                    stop_service_process(project)
 
 
 if __name__ == "__main__":

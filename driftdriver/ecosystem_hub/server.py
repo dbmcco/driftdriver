@@ -692,7 +692,13 @@ def run_service_foreground(
         )
         raise SystemExit(1)
 
-    handler_cls = _handler_factory(paths["snapshot"], paths["state"], live_hub, paths["activity"])
+    handler_cls = _handler_factory(
+        paths["snapshot"],
+        paths["state"],
+        live_hub,
+        paths["activity"],
+        workspace_root,
+    )
     server = ThreadingHTTPServer((host, port), handler_cls)
 
     def _graceful_shutdown(_signum: int, _frame: Any) -> None:

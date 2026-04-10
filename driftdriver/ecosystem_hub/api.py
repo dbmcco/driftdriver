@@ -55,6 +55,7 @@ class _HubHandler(BaseHTTPRequestHandler):
     state_path: Path
     activity_path: Path | None = None
     live_hub: LiveStreamHub | None = None
+    workspace_root: Path | None = None
 
     def _read_snapshot(self) -> dict[str, Any]:
         if not self.snapshot_path.exists():
@@ -180,6 +181,7 @@ class _HubHandler(BaseHTTPRequestHandler):
     def _load_chat_decisions(self, snapshot: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Load pending decisions across all repos for chat context."""
         from driftdriver.decision_queue import read_pending_decisions, _record_to_dict
+        from driftdriver.paia_agent_health.queue import load_pending_agent_health_decisions
 
         repos = snapshot.get("repos") or []
         all_decisions: list[dict[str, Any]] = []
@@ -191,6 +193,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 continue
             for dec in read_pending_decisions(Path(repo_path)):
                 all_decisions.append(_record_to_dict(dec))
+        for dec in load_pending_agent_health_decisions(workspace_root=self.workspace_root):
+            all_decisions.append(_record_to_dict(dec))
         return all_decisions or None
 
     def _find_repo_path(self, repo_name: str) -> str | None:
@@ -485,6 +489,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return
             # Search all enrolled repos for this decision
             from driftdriver.cli.decisions_cmd import handle_decisions_answer
+            from driftdriver.paia_agent_health.queue import answer_agent_health_decision
             snapshot = self._read_snapshot()
             for r in snapshot.get("repos") or []:
                 if not isinstance(r, dict):
@@ -502,6 +507,23 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if "error" not in result:
                     self._send_json(result)
                     return
+            agent_health = answer_agent_health_decision(
+                decision_id=decision_id,
+                answer=answer,
+                answered_via=answered_via,
+                workspace_root=self.workspace_root,
+            )
+            if agent_health is not None:
+                self._send_json(
+                    {
+                        "decision_id": agent_health.id,
+                        "repo": agent_health.repo,
+                        "answer": agent_health.answer,
+                        "answered_via": agent_health.answered_via,
+                        "answered_at": agent_health.answered_at,
+                    }
+                )
+                return
             self._send_json(
                 {"error": "decision_not_found", "decision_id": decision_id},
                 status=HTTPStatus.NOT_FOUND,
@@ -1000,19 +1022,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 self._send_json(_build_activity_payload(activity_path, window))
             return
         if route in ("/api/decisions", "/api/decisions/pending"):
-            from driftdriver.decision_queue import read_pending_decisions, _record_to_dict
-
-            repos = snapshot.get("repos") or []
-            all_decisions: list[dict[str, Any]] = []
-            for repo_row in repos:
-                if not isinstance(repo_row, dict):
-                    continue
-                repo_path = str(repo_row.get("path") or "")
-                if not repo_path or not Path(repo_path).is_dir():
-                    continue
-                pending = read_pending_decisions(Path(repo_path))
-                for dec in pending:
-                    all_decisions.append(_record_to_dict(dec))
+            all_decisions = self._load_chat_decisions(snapshot) or []
             # /api/decisions/pending returns flat list (used by telegram poller)
             # /api/decisions returns wrapped object (used by dashboard)
             if route == "/api/decisions/pending":
@@ -1360,7 +1370,13 @@ def _build_repo_detail_payload(
     }
 
 
-def _handler_factory(snapshot_path: Path, state_path: Path, live_hub: LiveStreamHub, activity_path: Path | None = None) -> type[_HubHandler]:
+def _handler_factory(
+    snapshot_path: Path,
+    state_path: Path,
+    live_hub: LiveStreamHub,
+    activity_path: Path | None = None,
+    workspace_root: Path | None = None,
+) -> type[_HubHandler]:
     class Handler(_HubHandler):
         pass
 
@@ -1368,4 +1384,5 @@ def _handler_factory(snapshot_path: Path, state_path: Path, live_hub: LiveStream
     Handler.state_path = state_path
     Handler.live_hub = live_hub
     Handler.activity_path = activity_path
+    Handler.workspace_root = workspace_root
     return Handler
