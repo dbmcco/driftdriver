@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
 
 from driftdriver.ecosystem_hub.models import NextWorkItem, RepoSnapshot
@@ -496,3 +497,55 @@ def rank_next_work(repos: list[RepoSnapshot], *, limit: int = 20) -> list[dict[s
         items.extend(repo.top_next_work(limit=3))
     items.sort(key=lambda i: (-i.priority, i.repo, i.task_id))
     return [asdict(x) for x in items[:limit]]
+
+
+def is_stale_decision(decision: dict[str, Any], *, now: datetime | None = None) -> bool:
+    """Return True when a pending decision has aged beyond the watch threshold."""
+    created_at = str(decision.get("created_at") or "").strip()
+    if not created_at:
+        return False
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    current = now or datetime.now(timezone.utc)
+    return (current - created).total_seconds() >= 72 * 3600
+
+
+def count_autonomous_closures(notification_ledger: list[dict[str, Any]]) -> int:
+    """Count outcomes that indicate the factory closed work without operator intervention."""
+    total = 0
+    for row in notification_ledger:
+        status = str(row.get("delivery_status") or "").strip().lower()
+        if status == "autonomous_closed":
+            total += 1
+    return total
+
+
+def build_operator_domains(
+    *,
+    snapshot: dict[str, Any],
+    decisions: list[dict[str, Any]],
+    notification_ledger: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the high-level control, gate, autonomy, and convergence domains."""
+    north_star = ((snapshot.get("northstardrift") or {}).get("summary") or {})
+    control_errors = list((snapshot.get("control_plane") or {}).get("errors") or [])
+    pending = [decision for decision in decisions if str(decision.get("status") or "pending") == "pending"]
+    return {
+        "control_plane": {
+            "error_count": len(control_errors),
+            "confidence": "high" if not control_errors else "medium",
+        },
+        "gate": {
+            "pending_count": len(pending),
+            "stale_count": sum(1 for decision in pending if is_stale_decision(decision)),
+        },
+        "autonomy": {
+            "closed_without_operator": count_autonomous_closures(notification_ledger),
+        },
+        "convergence": {
+            "score": float(north_star.get("overall_score") or 0.0),
+            "trend": str(north_star.get("overall_trend") or "flat"),
+        },
+    }
