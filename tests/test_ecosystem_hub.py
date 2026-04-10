@@ -792,6 +792,10 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("renderRepoTable", html)
         self.assertIn("drawRepoDependencyOverview", html)
         self.assertIn("/ws/status", html)
+        self.assertIn("Pending Decisions", html)
+        self.assertIn("factory-decision-count", html)
+        self.assertIn("factory-decisions-table", html)
+        self.assertIn("fetch('/api/decisions')", html)
 
     def test_build_draft_pr_requests_dry_run(self) -> None:
         candidates = [

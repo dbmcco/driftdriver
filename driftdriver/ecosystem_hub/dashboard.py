@@ -1309,7 +1309,7 @@ def render_dashboard_html() -> str:
       <button class="hub-tab" data-tab="conformance">Conformance</button>
       <button class="hub-tab" data-tab="convergence">Convergence</button>
       <button class="hub-tab" data-tab="planforge">PlanForge</button>
-      <button class="hub-tab" data-tab="factory">Factory</button>
+      <button class="hub-tab" data-tab="factory">Factory <span class="badge" id="factory-decision-count">0</span></button>
       <button class="hub-tab" data-tab="sessions">Sessions</button>
       <button class="hub-tab" data-tab="services">Services</button>
       <button class="hub-tab" data-tab="daily-report">Daily Report</button>
@@ -1669,6 +1669,20 @@ def render_dashboard_html() -> str:
     <!-- Factory Tab -->
     <div class="hub-tab-content" id="tab-factory">
       <div id="factory-panel">
+
+        <div class="card" style="margin-bottom:0.75rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+            <h2 style="margin:0">Pending Decisions</h2>
+            <span style="font-size:0.82rem;color:var(--muted)" id="factory-decisions-summary">Loading…</span>
+          </div>
+          <div id="factory-decisions-empty" style="color:var(--muted);padding-top:0.75rem">Loading pending decisions…</div>
+          <table class="conf-table" id="factory-decisions-table" style="display:none;margin-top:0.75rem">
+            <thead>
+              <tr><th>Repo</th><th>Member</th><th>Component</th><th>Question</th><th>Decision ID</th></tr>
+            </thead>
+            <tbody id="factory-decisions-rows"></tbody>
+          </table>
+        </div>
 
         <!-- Upstream Tracker -->
         <div class="factory-upstream card">
@@ -4388,10 +4402,39 @@ def render_dashboard_html() -> str:
     async function loadFactoryPanel() {
       if (factoryLoaded) return;
       try {
-        var [trackerData, pipelineData] = await Promise.all([
+        var [trackerData, pipelineData, decisionData] = await Promise.all([
           fetch('/api/upstream-tracker').then(function(r) { return r.json(); }),
           fetch('/api/creation-pipeline').then(function(r) { return r.json(); }),
+          fetch('/api/decisions').then(function(r) { return r.json(); }),
         ]);
+
+        var pendingDecisions = Array.isArray(decisionData.decisions) ? decisionData.decisions : [];
+        el('factory-decision-count').textContent = String(pendingDecisions.length);
+        el('factory-decisions-summary').textContent = pendingDecisions.length
+          ? pendingDecisions.length + ' pending human decision' + (pendingDecisions.length !== 1 ? 's' : '')
+          : 'No pending human decisions';
+        var decisionRows = el('factory-decisions-rows');
+        var decisionTable = el('factory-decisions-table');
+        var decisionEmpty = el('factory-decisions-empty');
+        decisionRows.innerHTML = '';
+        if (pendingDecisions.length === 0) {
+          decisionTable.style.display = 'none';
+          decisionEmpty.style.display = '';
+          decisionEmpty.textContent = 'No pending human decisions.';
+        } else {
+          decisionTable.style.display = '';
+          decisionEmpty.style.display = 'none';
+          pendingDecisions.slice(0, 25).forEach(function(d) {
+            var ctx = d.context || {};
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td><code>' + esc(d.repo || '') + '</code></td>'
+              + '<td>' + esc(ctx.agent_member || '—') + '</td>'
+              + '<td>' + esc(ctx.component || '—') + '</td>'
+              + '<td>' + esc(d.question || '') + '</td>'
+              + '<td><code>' + esc(d.id || '') + '</code></td>';
+            decisionRows.appendChild(tr);
+          });
+        }
 
         // Upstream tracker meta
         var lastRun = trackerData.pass1_last_run;
