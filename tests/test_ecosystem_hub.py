@@ -798,6 +798,27 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("fetch('/api/decisions')", html)
         self.assertIn("refreshFactoryDecisionBadge()", html)
 
+    def test_dashboard_template_emits_javascript_that_parses(self) -> None:
+        html = render_dashboard_html()
+        start = html.rfind("<script>")
+        end = html.rfind("</script>")
+        self.assertGreater(start, -1)
+        self.assertGreater(end, start)
+        script = html[start + len("<script>"):end]
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as handle:
+            handle.write(script)
+            temp_path = Path(handle.name)
+        try:
+            result = subprocess.run(
+                ["node", "--check", str(temp_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            temp_path.unlink(missing_ok=True)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
     def test_build_draft_pr_requests_dry_run(self) -> None:
         candidates = [
             UpstreamCandidate(

@@ -5097,7 +5097,7 @@ def render_dashboard_html() -> str:
           var rows = reports.map(function(r) {
             var cost = typeof r.llm_cost_usd === 'number' ? '$' + r.llm_cost_usd.toFixed(4) : '—';
             var gated = r.gated_total != null ? r.gated_total : '—';
-            return '<tr style="border-bottom:1px solid var(--line);cursor:pointer" onclick="openDailyReport(\'' + esc(r.report_date) + '\')">'
+            return '<tr style="border-bottom:1px solid var(--line);cursor:pointer" onclick="openDailyReport(\\'' + escAttr(r.report_date || '') + '\\')">'
               + '<td style="padding:0.5rem;font-weight:600;color:var(--accent)">' + esc(r.report_date || '—') + '</td>'
               + '<td style="padding:0.5rem;text-align:right">' + (r.findings_total != null ? r.findings_total : '—') + '</td>'
               + '<td style="padding:0.5rem;text-align:right">' + (r.completed_drift_tasks != null ? r.completed_drift_tasks : '—') + '</td>'
