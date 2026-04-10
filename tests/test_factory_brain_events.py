@@ -93,6 +93,25 @@ def test_read_events_limit(tmp_path: Path) -> None:
     assert len(events) == 3
 
 
+def test_read_events_skips_records_missing_required_fields(tmp_path: Path) -> None:
+    events_file = tmp_path / "events.jsonl"
+    events_file.write_text(
+        "\n".join(
+            [
+                json.dumps({"kind": "loop.started", "ts": 1.0, "payload": {"note": "missing repo"}}),
+                json.dumps({"kind": "agent.spawned", "repo": "/tmp/r", "ts": 2.0, "payload": {"ok": True}}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    events = read_events(events_file)
+
+    assert len(events) == 1
+    assert events[0].kind == "agent.spawned"
+    assert events[0].repo == "/tmp/r"
+
+
 def test_aggregate_events_across_repos(tmp_path: Path) -> None:
     repo_a = tmp_path / "repo-a"
     repo_b = tmp_path / "repo-b"

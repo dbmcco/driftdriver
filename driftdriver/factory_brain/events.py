@@ -88,12 +88,15 @@ def read_events(
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        ev = Event(
-            kind=record["kind"],
-            repo=record["repo"],
-            ts=record["ts"],
-            payload=record.get("payload", {}),
-        )
+        try:
+            ev = Event(
+                kind=record["kind"],
+                repo=record["repo"],
+                ts=record["ts"],
+                payload=record.get("payload", {}),
+            )
+        except KeyError:
+            continue
         if since is not None and ev.ts <= since:
             continue
         events.append(ev)
