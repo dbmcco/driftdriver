@@ -57,8 +57,9 @@ def _try_invoke(prompt: str, tier: int) -> tuple[dict, str, tuple[int, int]]:
             "--model", model,
             "--output-format", "json",
             "--max-turns", "1",
-            "-p", prompt,
+            "--print",
         ],
+        input=prompt,
         capture_output=True,
         text=True,
         timeout=120,
@@ -141,6 +142,8 @@ def invoke_brain(
         brain_response = _noop_response("CLI timed out")
     except FileNotFoundError as exc:
         brain_response = _noop_response(f"CLI not found: {exc}")
+    except OSError as exc:
+        brain_response = _noop_response(f"CLI invocation failed: {exc}")
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         brain_response = _noop_response(f"Failed to parse CLI output: {exc}")
 

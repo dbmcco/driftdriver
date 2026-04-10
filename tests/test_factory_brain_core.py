@@ -266,6 +266,47 @@ def test_invoke_brain_cli_not_found_returns_noop():
     assert result.directives[0].action == "noop"
 
 
+def test_try_invoke_streams_prompt_via_stdin() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _mock_cli_result(
+            {
+                "reasoning": "stdin prompt worked",
+                "directives": [{"action": "noop", "params": {"reason": "ok"}}],
+                "telegram": None,
+                "escalate": False,
+            }
+        )
+
+    with patch("driftdriver.factory_brain.brain.subprocess.run", side_effect=fake_run):
+        from driftdriver.factory_brain.brain import _try_invoke
+
+        structured, model, usage = _try_invoke("very large prompt body", 1)
+
+    assert structured["reasoning"] == "stdin prompt worked"
+    assert model == "claude-haiku-4-5-20251001"
+    assert usage == (0, 0)
+    assert "--print" in captured["cmd"]
+    assert "-p" not in captured["cmd"]
+    assert captured["kwargs"]["input"] == "very large prompt body"
+
+
+def test_invoke_brain_cli_oserror_returns_noop() -> None:
+    with patch(
+        "driftdriver.factory_brain.brain.subprocess.run",
+        side_effect=OSError(7, "Argument list too long", "claude"),
+    ):
+        from driftdriver.factory_brain.brain import invoke_brain
+
+        result = invoke_brain(tier=1, trigger_event={"kind": "loop.started", "repo": "test"})
+
+    assert "invocation failed" in result.reasoning
+    assert result.directives[0].action == "noop"
+
+
 # --- Token tracking tests ---
 
 
