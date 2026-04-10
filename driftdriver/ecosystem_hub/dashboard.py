@@ -1304,7 +1304,8 @@ def render_dashboard_html() -> str:
   <main class="hub-layout">
     <!-- Tab Navigation -->
     <nav class="hub-tabs" id="hub-tabs">
-      <button class="hub-tab active" data-tab="operations">Operations</button>
+      <button class="hub-tab active" data-tab="home">Home</button>
+      <button class="hub-tab" data-tab="operations">Operations</button>
       <button class="hub-tab" data-tab="intelligence">Intelligence</button>
       <button class="hub-tab" data-tab="conformance">Conformance</button>
       <button class="hub-tab" data-tab="convergence">Convergence</button>
@@ -1315,8 +1316,42 @@ def render_dashboard_html() -> str:
       <button class="hub-tab" data-tab="daily-report">Daily Report</button>
     </nav>
 
+    <!-- Home Tab -->
+    <div class="hub-tab-content active" id="tab-home">
+      <div class="card" style="margin-bottom:0.75rem">
+        <h2>Factory Status</h2>
+        <div class="intel-stats" id="operator-scorecard"></div>
+        <div id="operator-why" style="color:var(--muted);font-size:0.88rem;margin-top:0.5rem">Loading operator scorecard…</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.75rem;align-items:start">
+        <div class="card">
+          <h2>Now</h2>
+          <div id="operator-now-list"><em style="color:var(--muted)">Loading…</em></div>
+        </div>
+        <div class="card">
+          <h2>Decide</h2>
+          <div id="operator-decide-list"><em style="color:var(--muted)">Loading…</em></div>
+        </div>
+        <div class="card">
+          <h2>Watch</h2>
+          <div id="operator-watch-list"><em style="color:var(--muted)">Loading…</em></div>
+        </div>
+      </div>
+
+      <div id="operator-evidence-drawer" class="task-graph-drawer" style="margin-top:0.75rem;display:none">
+        <div class="drawer-repo-name" id="operator-evidence-title"></div>
+        <div id="operator-evidence-rationale" style="margin-top:0.5rem;color:var(--muted)"></div>
+        <pre id="operator-evidence-summary" style="white-space:pre-wrap;font-size:0.8rem;max-height:220px;overflow:auto;margin-top:0.75rem"></pre>
+        <div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+          <button id="operator-evidence-open" type="button">Open Full View</button>
+          <button id="operator-evidence-close" type="button">Close</button>
+        </div>
+      </div>
+    </div><!-- end tab-home -->
+
     <!-- Operations Tab (existing content) -->
-    <div class="hub-tab-content active" id="tab-operations">
+    <div class="hub-tab-content" id="tab-operations">
 
     <!-- Zone 1: Briefing Bar -->
     <section class="briefing-bar card" id="briefing-bar">
@@ -4085,7 +4120,93 @@ def render_dashboard_html() -> str:
     detailSvg.addEventListener('pointercancel', endDetailGraphDrag);
 
     // --- Tab navigation ---
-    var currentTab = 'operations';
+    var currentTab = 'home';
+    var operatorHomeState = { now: [], decide: [], watch: [], scorecard: null };
+
+    function operatorItemButton(label, action, bucket, index) {
+      return '<button type="button" onclick="' + action + '(' + index + ', \\''
+        + bucket + '\\')">' + label + '</button>';
+    }
+
+    function renderOperatorScorecard(scorecard) {
+      var host = el('operator-scorecard');
+      if (!host) return;
+      host.innerHTML =
+        '<div class="intel-stat"><div class="intel-stat-value">' + esc(scorecard.status || '-') + '</div><div class="intel-stat-label">Factory Status</div></div>' +
+        '<div class="intel-stat"><div class="intel-stat-value">' + n(scorecard.needs_you || 0) + '</div><div class="intel-stat-label">Needs You</div></div>' +
+        '<div class="intel-stat"><div class="intel-stat-value">' + n(scorecard.autonomous_this_week || 0) + '</div><div class="intel-stat-label">Autonomous This Week</div></div>' +
+        '<div class="intel-stat"><div class="intel-stat-value">' + esc(scorecard.convergence_trend || '-') + '</div><div class="intel-stat-label">Convergence Trend</div></div>' +
+        '<div class="intel-stat"><div class="intel-stat-value">' + esc(scorecard.confidence || '-') + '</div><div class="intel-stat-label">Confidence</div></div>';
+      var why = el('operator-why');
+      if (why) why.textContent = scorecard.why || '';
+    }
+
+    function renderOperatorList(targetId, bucket, items) {
+      var host = el(targetId);
+      if (!host) return;
+      if (!items.length) {
+        host.innerHTML = '<div style="color:var(--muted);font-size:0.85rem">No items.</div>';
+        return;
+      }
+      host.innerHTML = items.map(function(item, index) {
+        return '<div class="card" style="padding:0.6rem;margin-bottom:0.5rem">' +
+          '<div style="display:flex;justify-content:space-between;gap:0.5rem;align-items:flex-start">' +
+            '<div><strong>' + esc(item.title || '') + '</strong><div style="color:var(--muted);font-size:0.78rem;margin-top:0.2rem"><code>' + esc(item.repo || '') + '</code> · confidence ' + esc(String(item.confidence != null ? item.confidence : '')) + '</div></div>' +
+            '<span class="badge">' + esc(bucket) + '</span>' +
+          '</div>' +
+          '<div style="margin-top:0.5rem;color:var(--muted);font-size:0.84rem">' + esc(item.rationale || '') + '</div>' +
+          '<div style="margin-top:0.6rem;display:flex;gap:0.45rem;flex-wrap:wrap">' +
+            operatorItemButton('Open Evidence', 'openOperatorEvidence', bucket, index) +
+            operatorItemButton('Open Full View', 'openOperatorFullView', bucket, index) +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    async function loadOperatorHome() {
+      var payload = await fetch('/api/operator/home').then(function(r) { return r.json(); });
+      operatorHomeState = {
+        now: payload.now || [],
+        decide: payload.decide || [],
+        watch: payload.watch || [],
+        scorecard: payload.scorecard || {}
+      };
+      renderOperatorScorecard(operatorHomeState.scorecard || {});
+      renderOperatorList('operator-now-list', 'now', operatorHomeState.now);
+      renderOperatorList('operator-decide-list', 'decide', operatorHomeState.decide);
+      renderOperatorList('operator-watch-list', 'watch', operatorHomeState.watch);
+    }
+
+    function operatorBucket(bucket) {
+      return operatorHomeState[bucket] || [];
+    }
+
+    function openOperatorEvidence(index, bucket) {
+      var item = operatorBucket(bucket)[index];
+      if (!item) return;
+      var drawer = el('operator-evidence-drawer');
+      if (!drawer) return;
+      drawer.style.display = 'block';
+      el('operator-evidence-title').textContent = item.title || '';
+      el('operator-evidence-rationale').textContent = item.rationale || '';
+      el('operator-evidence-summary').textContent = JSON.stringify(item.evidence || {}, null, 2);
+      el('operator-evidence-open').onclick = function() { openOperatorFullView(index, bucket); };
+      el('operator-evidence-close').onclick = function() { drawer.style.display = 'none'; };
+    }
+
+    function openOperatorFullView(index, bucket) {
+      var item = operatorBucket(bucket)[index];
+      if (!item) return;
+      var fullView = item.full_view || {};
+      var target = fullView.tab || 'factory';
+      document.querySelectorAll('.hub-tab').forEach(function(t) {
+        if (t.getAttribute('data-tab') === target) t.click();
+      });
+      if (fullView.focus) {
+        window.location.hash = String(fullView.focus);
+      }
+    }
+
     document.querySelectorAll('.hub-tab').forEach(function(tab) {
       tab.addEventListener('click', function() {
         var target = tab.getAttribute('data-tab');
@@ -4095,6 +4216,7 @@ def render_dashboard_html() -> str:
         tab.classList.add('active');
         var content = document.getElementById('tab-' + target);
         if (content) content.classList.add('active');
+        if (target === 'home') loadOperatorHome();
         if (target === 'intelligence') loadIntelligenceData();
         if (target === 'conformance') loadConformancePanel();
         if (target === 'convergence') loadConvergencePanel();
@@ -4920,6 +5042,7 @@ def render_dashboard_html() -> str:
     loadFiltersFromUrl();
     refreshHttp().catch(() => {});
     refreshFactoryDecisionBadge();
+    loadOperatorHome();
     startPolling();
     connectWebSocket();
 

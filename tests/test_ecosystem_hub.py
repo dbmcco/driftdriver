@@ -772,6 +772,13 @@ class EcosystemHubTests(unittest.TestCase):
     def test_dashboard_template_contains_expected_sections(self) -> None:
         html = render_dashboard_html()
         self.assertIn("Speedrift Ecosystem Hub", html)
+        self.assertIn('data-tab="home"', html)
+        self.assertIn("Factory Status", html)
+        self.assertIn("operator-scorecard", html)
+        self.assertIn("operator-now-list", html)
+        self.assertIn("operator-decide-list", html)
+        self.assertIn("operator-watch-list", html)
+        self.assertIn("operator-evidence-drawer", html)
         self.assertIn("/api/status", html)
         self.assertIn("briefing-bar", html)
         self.assertIn("repo-health-filter", html)
@@ -796,7 +803,11 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("factory-decision-count", html)
         self.assertIn("factory-decisions-table", html)
         self.assertIn("fetch('/api/decisions')", html)
+        self.assertIn("fetch('/api/operator/home')", html)
         self.assertIn("refreshFactoryDecisionBadge()", html)
+        self.assertIn("loadOperatorHome()", html)
+        self.assertIn("openOperatorEvidence", html)
+        self.assertIn("openOperatorFullView", html)
 
     def test_dashboard_template_emits_javascript_that_parses(self) -> None:
         html = render_dashboard_html()
