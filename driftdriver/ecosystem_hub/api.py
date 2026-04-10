@@ -21,6 +21,7 @@ from driftdriver.control_plane import (
 
 from .activity_cache import read_activity_digest
 from .agent_history import build_agent_history as _build_agent_history
+from .operator_home import build_operator_home
 from .dashboard import render_dashboard_html
 from .discovery import _read_json
 from .services import detect_services as _detect_services, _validate_plist_path
@@ -196,6 +197,24 @@ class _HubHandler(BaseHTTPRequestHandler):
         for dec in load_pending_agent_health_decisions(workspace_root=self.workspace_root):
             all_decisions.append(_record_to_dict(dec))
         return all_decisions or None
+
+    def _load_notification_ledger(self) -> list[dict[str, Any]]:
+        """Load sent-decision provenance from the factory notification ledger."""
+        ledger_path = Path.home() / ".config" / "workgraph" / "factory-brain" / "notification-ledger.jsonl"
+        if not ledger_path.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        for line in ledger_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, dict):
+                rows.append(entry)
+        return rows
 
     def _find_repo_path(self, repo_name: str) -> str | None:
         """Resolve a repo name to its filesystem path via snapshot."""
@@ -876,6 +895,15 @@ class _HubHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/repos":
             self._send_json(snapshot.get("repos") or [])
+            return
+        if route == "/api/operator/home":
+            self._send_json(
+                build_operator_home(
+                    snapshot=snapshot,
+                    decisions=self._load_chat_decisions(snapshot) or [],
+                    notification_ledger=self._load_notification_ledger(),
+                )
+            )
             return
         if route == "/api/next-work":
             self._send_json(snapshot.get("next_work") or [])

@@ -1205,6 +1205,90 @@ members = ["samantha", "caroline", "derek", "ingrid"]
                 finally:
                     stop_service_process(project)
 
+    def test_api_operator_home_returns_scorecard_and_action_buckets(self) -> None:
+        """The /api/operator/home endpoint should expose scorecard and canonical action buckets."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "driftdriver"
+            project.mkdir(parents=True)
+            _init_repo(project)
+            _write_graph(project, [{"id": "a", "title": "A", "status": "open"}])
+
+            decisions_dir = project / ".workgraph" / "service" / "runtime"
+            decisions_dir.mkdir(parents=True, exist_ok=True)
+            (decisions_dir / "decisions.jsonl").write_text(
+                json.dumps({
+                    "id": "dec-20260410-home01",
+                    "repo": "paia-agents",
+                    "status": "pending",
+                    "question": "Review operator queue?",
+                    "context": {"severity": "high", "confidence": 0.9},
+                    "category": "feature",
+                    "created_at": "2026-04-10T19:59:00+00:00",
+                    "notified_via": [],
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            paia_program = root / "paia-program"
+            paia_program.mkdir()
+            (paia_program / "config.toml").write_text(
+                f"""
+[repos]
+paia-agents = "{root / 'paia-agents'}"
+
+[topology.canonical]
+target_repos = ["paia-agents"]
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            ecosystem_root = root / "speedrift-ecosystem"
+            ecosystem_root.mkdir()
+            (ecosystem_root / "ecosystem.toml").write_text(
+                "schema = 1\n[repos.driftdriver]\nrole='orchestrator'\nurl='https://example.com'\n",
+                encoding="utf-8",
+            )
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+
+            start_service_process(
+                project_dir=project,
+                workspace_root=root,
+                host="127.0.0.1",
+                port=port,
+                interval_seconds=2,
+                include_updates=False,
+                max_next=3,
+                ecosystem_toml=None,
+                central_repo=None,
+                execute_draft_prs=False,
+                draft_pr_title_prefix="speedrift",
+            )
+            try:
+                deadline = time.time() + 6.0
+                while time.time() < deadline:
+                    try:
+                        with urlopen(f"http://127.0.0.1:{port}/api/repos", timeout=1.0) as resp:  # noqa: S310
+                            repos_data = json.loads(resp.read().decode("utf-8"))
+                            if isinstance(repos_data, list) and len(repos_data) > 0:
+                                break
+                    except Exception:
+                        pass
+                    time.sleep(0.1)
+
+                with urlopen(f"http://127.0.0.1:{port}/api/operator/home", timeout=2.0) as resp:  # noqa: S310
+                    payload = json.loads(resp.read().decode("utf-8"))
+                self.assertIn("scorecard", payload)
+                self.assertIn("decide", payload)
+                self.assertEqual(payload["decide"][0]["repo"], "paia-agents")
+                self.assertEqual(payload["counts"]["decide"], 1)
+            finally:
+                stop_service_process(project)
+
 
 if __name__ == "__main__":
     unittest.main()
