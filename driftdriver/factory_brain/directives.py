@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from driftdriver.paia_topology import is_noncanonical_paia_repo
+
 logger = logging.getLogger(__name__)
 
 DIRECTIVE_SCHEMA: dict[str, list[str]] = {
@@ -214,6 +216,12 @@ def _handle_enroll(d: Directive, *, dry_run: bool, repo_paths: dict[str, str]) -
         return {"action": "enroll", "status": "error", "error": f"path not found: {repo_path_str}"}
     if not (repo_path / ".workgraph").exists():
         return {"action": "enroll", "status": "error", "error": f"no .workgraph in: {repo_path_str}"}
+    if is_noncanonical_paia_repo(repo_path):
+        return {
+            "action": "enroll",
+            "status": "error",
+            "error": f"not a canonical PAIA factory surface: {repo_path_str}",
+        }
     dispatch = repo_path / ".workgraph" / "executors" / "dispatch-loop.sh"
     if not dispatch.exists():
         template = Path(__file__).parent.parent / "templates" / "dispatch-loop.sh"

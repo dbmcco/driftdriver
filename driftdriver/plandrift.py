@@ -325,7 +325,7 @@ def run_workgraph_plan_review(
                 "title": "Implementation task lacks intervening test gates",
                 "evidence": f"task={task_id} ({task_title}); missing={missing_label}",
                 "recommendation": (
-                    f"Add explicit {missing_label} task(s) after `{task_id}` (use `wg add --after {task_id} --immediate`) and keep them on the critical path before completion."
+                    f"Add explicit {missing_label} task(s) after `{task_id}` (use `wg add --after {task_id} --no-place`) and keep them on the critical path before completion."
                 ),
             }
         )

@@ -6,6 +6,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from driftdriver.paia_topology import is_noncanonical_paia_repo
 from driftdriver.factory_brain.roster import (
     Roster,
     active_repos,
@@ -52,7 +53,21 @@ class FactoryBrain:
         if not repos:
             return []
 
-        roster_repos = [Path(v["path"]) for v in repos.values()]
+        roster_changed = False
+        roster_repos: list[Path] = []
+        for name, entry in repos.items():
+            repo_path = Path(str(entry.get("path") or ""))
+            if self._is_noncanonical_paia_repo(repo_path):
+                _log.info("Retiring noncanonical PAIA repo from factory roster: %s", repo_path)
+                unenroll_repo(self.roster, name=name)
+                roster_changed = True
+                continue
+            roster_repos.append(repo_path)
+
+        if not roster_repos:
+            if roster_changed:
+                save_roster(self.roster, self.roster_file)
+            return []
 
         results = run_brain_tick(
             state=self.state,
@@ -64,7 +79,6 @@ class FactoryBrain:
         )
 
         # Process enrollment/unenrollment directives from results
-        roster_changed = False
         for result in results:
             for attempt in result.get("results", []):
                 action = attempt.get("action")
@@ -99,6 +113,9 @@ class FactoryBrain:
         if not (repo_path / ".workgraph").is_dir():
             _log.warning("Cannot enroll %s — no .workgraph/ directory", repo_path_str)
             return
+        if self._is_noncanonical_paia_repo(repo_path):
+            _log.warning("Cannot enroll %s — not a canonical PAIA factory surface", repo_path_str)
+            return
 
         enroll_repo(self.roster, path=repo_path_str, target="onboarded")
 
@@ -118,3 +135,10 @@ class FactoryBrain:
             _log.warning("Cannot unenroll %s — not in roster", repo_name)
             return
         unenroll_repo(self.roster, name=repo_name)
+
+    def _is_noncanonical_paia_repo(self, repo_path: Path) -> bool:
+        """Return True if repo_path is not a canonical PAIA factory surface."""
+        for workspace_root in self.workspace_roots:
+            if is_noncanonical_paia_repo(repo_path, workspace_root=workspace_root):
+                return True
+        return False

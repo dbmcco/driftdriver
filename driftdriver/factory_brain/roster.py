@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from driftdriver.paia_topology import is_noncanonical_paia_repo
+
 
 @dataclass
 class Roster:
@@ -80,6 +82,8 @@ def discover_repos(
             if entry.name in exclude:
                 continue
             if (entry / ".workgraph").is_dir():
+                if is_noncanonical_paia_repo(entry, workspace_root=workspace_root):
+                    continue
                 found.append(entry)
                 # Don't recurse into repos once found
                 continue

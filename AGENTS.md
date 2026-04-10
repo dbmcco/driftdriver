@@ -17,7 +17,7 @@ code, specs, and intent in sync without hard-blocking work.
 # Tailscale: http://100.77.214.44:8777/
 
 # Create tasks with current wg flags
-wg add "Title" --after <dep-id> --immediate --verify "test command"
+wg add "Title" --after <dep-id> --no-place --verify "test command"
 
 # Attractor loop — check convergence status or run convergence
 driftdriver attractor status --json
@@ -52,4 +52,3 @@ driftdriver attractor run --json
 - **Prompt evolution**: recurring drift patterns trigger `wg evolve` to teach agents
 - **Outcome learning**: resolution rates feed back into notification significance scoring
 <!-- driftdriver-codex:end -->
-

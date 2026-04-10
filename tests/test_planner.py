@@ -29,6 +29,8 @@ def test_build_decompose_prompt_includes_wg_instructions():
     """Prompt instructs the planner to use workgraph commands."""
     prompt = build_decompose_prompt("Build something", Path("/project"))
     assert "wg add" in prompt
+    assert "--no-place" in prompt
+    assert "--immediate" not in prompt
 
 
 def test_build_decompose_prompt_returns_string():

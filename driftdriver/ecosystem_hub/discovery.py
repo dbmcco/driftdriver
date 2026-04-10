@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from driftdriver.directives import Action, Directive, DirectiveLog
 from driftdriver.executor_shim import ExecutorShim
+from driftdriver.paia_topology import is_noncanonical_paia_repo
 from driftdriver.policy import load_drift_policy
 from driftdriver.updates import (
     check_ecosystem_updates,
@@ -355,6 +356,8 @@ def _discover_active_workspace_repos(
         if not graph.exists():
             continue
         if not _policy_uses_speedrift(wg_dir):
+            continue
+        if is_noncanonical_paia_repo(child, workspace_root=workspace_root):
             continue
         try:
             age_days = (now - graph.stat().st_mtime) / 86400.0

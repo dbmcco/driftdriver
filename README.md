@@ -71,7 +71,7 @@ Plugin interface: see `DRIFT_PLUGIN_CONTRACT.md`.
 All drift lanes create follow-up tasks through a centralized guard (`drift_task_guard.py`) that prevents feedback loops:
 - **Exact-ID dedup** — won't create a task that already exists
 - **Per-lane cap** (default 3) — at most 3 active drift tasks per lane per repo
-- **Immediate creation** — drift tasks bypass draft mode (`--immediate`)
+- **Immediate dispatchability** — drift tasks use `--no-place` so they are ready for dispatch without a publish pass
 
 ### Proactive Notifications
 
@@ -898,19 +898,19 @@ wg done <id>
 Follow-up tasks are created automatically when drift is found. They are:
 - Deduped (won't recreate an existing task)
 - Capped at 3 per lane per repo
-- Created with `--immediate` (bypass draft mode)
+- Created with `--no-place` (ready for dispatch immediately)
 
 ### Task Creation
 
 ```bash
 # Create a task with dependency
-wg add "Implement feature X" --after <dep-id> --immediate
+wg add "Implement feature X" --after <dep-id> --no-place
 
 # Create a task with a verification gate
-wg add "Fix auth bug" --verify "pytest tests/test_auth.py" --immediate
+wg add "Fix auth bug" --verify "pytest tests/test_auth.py" --no-place
 
 # Full form with description
-wg add "Title" --after <dep> --immediate --verify "test command" \
+wg add "Title" --after <dep> --no-place --verify "test command" \
   -d "## Description
 What to do.
 
@@ -921,7 +921,7 @@ What to do.
 
 Key flags:
 - `--after <dep-id>` — dependency (replaces old `--blocked-by`)
-- `--immediate` — bypass draft mode (required for drift follow-ups)
+- `--no-place` — create an open task without a separate publish/place step
 - `--verify "command"` — hard gate checked by `wg done`
 - `--id <kebab-case>` — explicit task ID
 

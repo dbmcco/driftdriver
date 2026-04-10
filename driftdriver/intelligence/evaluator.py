@@ -657,7 +657,7 @@ def default_task_creator(signal: Signal, envelope: DecisionEnvelope) -> dict[str
         signal.title,
         "--id",
         task_id,
-        "--immediate",
+        "--no-place",
         "-d",
         description,
     ]

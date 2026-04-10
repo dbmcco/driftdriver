@@ -21,7 +21,9 @@ Use `/speedrift` (or `/rifts`) to invoke the full protocol skill.
 # Tailscale: http://100.77.214.44:8777/
 
 # Create tasks with current wg flags
-wg add "Title" --after <dep-id> --immediate --verify "test command"
+# `--after` is valid for dependency edges; `--no-place` makes the task dispatchable immediately.
+# Do NOT invent flags like `--immediate`, `--priority`, or `--dep` — they will cause a parse error.
+wg add "Title" --after <dep-id> --no-place --verify "test command"
 
 # Attractor loop — check convergence status or run convergence
 driftdriver attractor status --json

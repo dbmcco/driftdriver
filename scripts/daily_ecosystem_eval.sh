@@ -132,7 +132,7 @@ Updates detected:
 $REPO_UPDATES
 
 Review JSON: $JSON_OUT"
-      wg add "$TASK_ID" --id "$TASK_ID" --immediate -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
+      wg add "$TASK_ID" --id "$TASK_ID" --no-place -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
     fi
 
     NEW_REPOS=$(python3 -c "
@@ -150,7 +150,7 @@ New repos:
 $NEW_REPOS
 
 Review JSON: $JSON_OUT"
-      wg add "$TASK_ID" --id "$TASK_ID" --immediate -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
+      wg add "$TASK_ID" --id "$TASK_ID" --no-place -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
     fi
 
     REPO_ACTIVITY=$(python3 -c "
@@ -168,7 +168,7 @@ Active repos:
 $REPO_ACTIVITY
 
 Review JSON: $JSON_OUT"
-      wg add "$TASK_ID" --id "$TASK_ID" --immediate -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
+      wg add "$TASK_ID" --id "$TASK_ID" --no-place -d "$DESC" 2>/dev/null && TASK_IDS+=("$TASK_ID") || true
     fi
 
     echo "Legacy fallback created ${#TASK_IDS[@]} evaluation task(s)."

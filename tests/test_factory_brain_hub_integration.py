@@ -108,3 +108,37 @@ def test_factory_brain_persists_roster(tmp_path: Path) -> None:
     assert "persist-repo" in loaded.repos
     assert loaded.repos["persist-repo"]["status"] == "active"
     assert loaded.repos["persist-repo"]["path"] == str(repo)
+
+
+def test_factory_brain_tick_unenrolls_shadowed_legacy_repo(tmp_path: Path) -> None:
+    """A legacy PAIA repo path should be retired from the roster instead of reaching the brain."""
+    hub_dir = tmp_path / "hub-data"
+    hub_dir.mkdir()
+    legacy = tmp_path / "derek"
+    (legacy / ".workgraph").mkdir(parents=True)
+    canonical = tmp_path / "paia-agents" / "derek"
+    canonical.mkdir(parents=True)
+    config = tmp_path / "paia-program" / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        f"""
+[repos]
+derek = "{canonical}"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    brain = FactoryBrain(
+        hub_data_dir=hub_dir,
+        workspace_roots=[tmp_path],
+        dry_run=True,
+    )
+    enroll_repo(brain.roster, path=str(legacy), target="onboarded")
+
+    with patch("driftdriver.factory_brain.hub_integration.run_brain_tick") as mock_tick:
+        results = brain.tick(snapshot={"repos": []})
+
+    assert results == []
+    mock_tick.assert_not_called()
+    assert brain.roster.repos["derek"]["status"] == "inactive"

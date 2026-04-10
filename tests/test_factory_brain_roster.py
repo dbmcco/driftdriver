@@ -94,6 +94,28 @@ def test_discover_repos_excludes_enrolled(tmp_path: Path) -> None:
     assert "repo-b" in names
 
 
+def test_discover_repos_skips_shadowed_legacy_paia_repo(tmp_path: Path) -> None:
+    """Legacy standalone PAIA agent repos should not be rediscovered once canonically moved."""
+    canonical = tmp_path / "paia-agents" / "derek" / ".workgraph"
+    canonical.mkdir(parents=True)
+    legacy = tmp_path / "derek" / ".workgraph"
+    legacy.mkdir(parents=True)
+    config = tmp_path / "paia-program" / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        f"""
+[repos]
+derek = "{canonical.parent}"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    found = discover_repos(tmp_path)
+    names = {p.name for p in found}
+    assert "derek" not in names
+
+
 def test_active_repos_filters_inactive() -> None:
     """active_repos returns only repos with status=active."""
     roster = Roster(repos={

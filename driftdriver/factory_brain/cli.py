@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from driftdriver.paia_topology import is_noncanonical_paia_repo
 from driftdriver.factory_brain.roster import (
     active_repos,
     enroll_repo,
@@ -101,7 +102,11 @@ def handle_brain_enroll(args: argparse.Namespace, *, hub_data_dir: Path | None =
     hub = hub_data_dir or _resolve_hub_dir(args)
     roster_file = hub / "roster.json"
     roster = load_roster(roster_file)
-    path = str(Path(args.path).resolve())
+    path_obj = Path(args.path).resolve()
+    if is_noncanonical_paia_repo(path_obj):
+        print(f"Refusing to enroll '{path_obj.name}' — not a canonical PAIA factory surface.")
+        return 1
+    path = str(path_obj)
     target = getattr(args, "target", "onboarded") or "onboarded"
     name = enroll_repo(roster, path=path, target=target)
     save_roster(roster, roster_file)

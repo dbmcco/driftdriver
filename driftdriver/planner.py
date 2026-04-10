@@ -22,7 +22,7 @@ concrete workgraph tasks with dependencies.
    - A clear title
    - A `-d` description covering: what to do, which files to touch, acceptance criteria
    - `--after` dependencies where appropriate
-   - `--immediate` to bypass draft mode
+   - `--no-place` when the task should be immediately dispatchable
 3. Keep tasks small — each should be completable in one focused session.
 4. After creating all tasks, run:
    ./.workgraph/coredrift ensure-contracts --apply

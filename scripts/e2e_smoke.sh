@@ -198,7 +198,7 @@ auto_followups = true
 Do the thing.
 MD
 
-wg add "Core task" --id core-task --immediate -d "$(cat "$DESC_FILE")" >/dev/null
+wg add "Core task" --id core-task --no-place -d "$(cat "$DESC_FILE")" >/dev/null
 
 echo "1) drifts runs baseline coredrift always"
 rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$ARCHDRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
@@ -239,7 +239,7 @@ llm = false
 Run uxdrift.
 MD
 
-wg add "UX task" --id ux-task --immediate -d "$(cat "$UX_DESC_FILE")" >/dev/null
+wg add "UX task" --id ux-task --no-place -d "$(cat "$UX_DESC_FILE")" >/dev/null
 
 rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$ARCHDRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task ux-task --write-log --create-followups >/dev/null
@@ -278,7 +278,7 @@ require_spec_update_when_code_changes = true
 Run specdrift.
 MD
 
-wg add "Spec task" --id spec-task --immediate -d "$(cat "$SPEC_DESC_FILE")" >/dev/null
+wg add "Spec task" --id spec-task --no-place -d "$(cat "$SPEC_DESC_FILE")" >/dev/null
 
 rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$ARCHDRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task spec-task --write-log --create-followups >/dev/null
@@ -318,7 +318,7 @@ require_schema_update_when_code_changes = true
 Run datadrift.
 MD
 
-wg add "Data task" --id data-task --immediate -d "$(cat "$DATA_DESC_FILE")" >/dev/null
+wg add "Data task" --id data-task --no-place -d "$(cat "$DATA_DESC_FILE")" >/dev/null
 
 rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$ARCHDRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task data-task --write-log --create-followups >/dev/null
@@ -358,7 +358,7 @@ require_arch_update_when_code_changes = true
 Run archdrift.
 MD
 
-wg add "Arch task" --id arch-task --immediate -d "$(cat "$ARCH_DESC_FILE")" >/dev/null
+wg add "Arch task" --id arch-task --no-place -d "$(cat "$ARCH_DESC_FILE")" >/dev/null
 
 rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$ARCHDRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task arch-task --write-log --create-followups >/dev/null
@@ -404,7 +404,7 @@ require_lock_update_when_manifest_changes = true
 Run depsdrift.
 MD
 
-wg add "Deps task" --id deps-task --immediate -d "$(cat "$DEPS_DESC_FILE")" >/dev/null
+wg add "Deps task" --id deps-task --no-place -d "$(cat "$DEPS_DESC_FILE")" >/dev/null
 
 rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$ARCHDRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task deps-task --write-log --create-followups >/dev/null
@@ -444,7 +444,7 @@ require_recovery_plan = true
 Run therapydrift.
 MD
 
-wg add "Therapy task" --id therapy-task --immediate -d "$(cat "$THERAPY_DESC_FILE")" >/dev/null
+wg add "Therapy task" --id therapy-task --no-place -d "$(cat "$THERAPY_DESC_FILE")" >/dev/null
 wg log therapy-task "Coredrift: yellow (scope_drift)" >/dev/null
 wg log therapy-task "Specdrift: yellow (spec_not_updated)" >/dev/null
 
@@ -487,7 +487,7 @@ abstraction_keywords = ["factory", "adapter", "manager", "engine"]
 Run yagnidrift.
 MD
 
-wg add "Yagni task" --id yagni-task --immediate -d "$(cat "$YAGNI_DESC_FILE")" >/dev/null
+wg add "Yagni task" --id yagni-task --no-place -d "$(cat "$YAGNI_DESC_FILE")" >/dev/null
 mkdir -p src/adapters
 echo "x" > src/adapters/http_adapter.py
 
@@ -532,7 +532,7 @@ create_phase_followups = true
 Run redrift.
 MD
 
-wg add "Redrift task" --id redrift-task --immediate -d "$(cat "$REDRIFT_DESC_FILE")" >/dev/null
+wg add "Redrift task" --id redrift-task --no-place -d "$(cat "$REDRIFT_DESC_FILE")" >/dev/null
 
 rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$ARCHDRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task redrift-task --write-log --create-followups >/dev/null
@@ -717,7 +717,7 @@ auto_followups = true
 Do the thing.
 MD
 
-wg add "Core task" --id core-task --immediate -d "$(cat "$DESC_FILE_2")" >/dev/null
+wg add "Core task" --id core-task --no-place -d "$(cat "$DESC_FILE_2")" >/dev/null
 
 rm -f "$COREDRIFT_MARKER_2" "$SPECDRIFT_MARKER_2" "$DATADRIFT_MARKER_2" "$ARCHDRIFT_MARKER_2" "$DEPSDRIFT_MARKER_2" "$UXDRIFT_MARKER_2" "$THERAPYDRIFT_MARKER_2" "$YAGNIDRIFT_MARKER_2" "$REDRIFT_MARKER_2"
 ./.workgraph/drifts check --task core-task --write-log --create-followups >/dev/null

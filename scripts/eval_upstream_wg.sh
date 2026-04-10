@@ -208,7 +208,7 @@ auto_followups = false
 5. Verify: \`cd $DD_DIR && python3 -m pytest tests/ -x -q\`
 6. Log decision: \`wg log $TASK_ID \"Decision: <pull|defer|skip> — <reasoning>\"\`"
 
-        wg --dir "$DD_DIR/.workgraph" add "$TASK_ID" --id "$TASK_ID" --immediate \
+        wg --dir "$DD_DIR/.workgraph" add "$TASK_ID" --id "$TASK_ID" --no-place \
             -d "$DESC" -t "upstream" -t "evaluation" 2>/dev/null \
             && echo "Created evaluation task: $TASK_ID" \
             || echo "warning: failed to create evaluation task"
