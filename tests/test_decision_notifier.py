@@ -150,6 +150,23 @@ class NotifyDecisionTests(unittest.TestCase):
             self.assertEqual(entry["delivery_status"], "sent")
             self.assertEqual(entry["provenance"]["source_queue"], "agent_health_pending")
 
+    @patch("driftdriver.decision_notifier.send_telegram", return_value=True)
+    def test_notify_records_route_and_severity_in_ledger(self, mock_send: object) -> None:
+        with TemporaryDirectory() as td:
+            ledger = Path(td) / "notification-ledger.jsonl"
+            decision = self._make_decision()
+            decision.context = {"severity": "high", "confidence": 0.92, "route": "page"}
+            result = notify_decision(
+                decision,
+                bot_token="test-token",
+                chat_id="test-chat",
+                ledger_path=ledger,
+            )
+            self.assertTrue(result)
+            entry = __import__("json").loads(ledger.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(entry["route"], "page")
+            self.assertEqual(entry["severity"], "high")
+
 
 if __name__ == "__main__":
     unittest.main()

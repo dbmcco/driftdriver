@@ -92,6 +92,15 @@ def format_decision_message(decision: DecisionRecord) -> str:
     return "\n".join(lines)
 
 
+def classify_notification_route(decision: DecisionRecord) -> str:
+    """Route high-confidence high-severity items to pages; keep the rest digest-level."""
+    severity = str(decision.context.get("severity") or "medium").lower()
+    confidence = float(decision.context.get("confidence") or 0.0)
+    if severity in {"critical", "high"} and confidence >= 0.8:
+        return "page"
+    return "digest"
+
+
 def notify_decision(
     decision: DecisionRecord,
     *,
@@ -122,6 +131,9 @@ def notify_decision(
         "category": decision.category,
         "channel": "telegram_factory",
         "delivery_status": "sent" if sent else "failed",
+        "route": str(decision.context.get("route") or classify_notification_route(decision)),
+        "severity": str(decision.context.get("severity") or "medium"),
+        "confidence": float(decision.context.get("confidence") or 0.0),
         "sent_at": datetime.now(timezone.utc).isoformat(),
         "provenance": dict(decision.context),
     }

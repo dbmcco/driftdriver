@@ -4,7 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from driftdriver.hub_analytics import build_operator_domains, is_stale_decision
+from driftdriver.decision_queue import classify_gate_bucket
+from driftdriver.hub_analytics import build_operator_domains
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,7 @@ def rank_operator_items(
         context = decision.get("context") or {}
         severity = str(context.get("severity") or "medium")
         confidence = float(context.get("confidence") or 0.0)
-        bucket = "watch" if severity == "low" or confidence < 0.5 or is_stale_decision(decision) else "decide"
+        bucket = classify_gate_bucket(decision)
         full_view = context.get("full_view")
         if not isinstance(full_view, dict):
             full_view = {"tab": "factory", "focus": f"decision:{decision.get('id', '')}"}

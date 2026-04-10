@@ -69,3 +69,29 @@ def test_build_operator_home_moves_low_signal_or_stale_items_into_watch() -> Non
 
     assert payload["decide"] == []
     assert payload["watch"][0]["decision_id"] == "dec-20260410-stale01"
+
+
+def test_scorecard_reports_autonomy_and_convergence_fields() -> None:
+    snapshot = {
+        "repos": [],
+        "northstardrift": {
+            "summary": {
+                "overall_score": 61.0,
+                "overall_trend": "improving",
+                "overall_tier": "healthy",
+            }
+        },
+        "overview": {},
+    }
+    ledger = [
+        {"decision_id": "dec-1", "delivery_status": "sent", "route": "digest", "provenance": {}},
+        {"decision_id": "dec-2", "delivery_status": "autonomous_closed", "route": "digest", "provenance": {}},
+    ]
+
+    payload = build_operator_home(snapshot=snapshot, decisions=[], notification_ledger=ledger)
+
+    assert payload["scorecard"]["autonomous_this_week"] == 1
+    assert payload["scorecard"]["convergence_trend"] == "improving"
+    assert "control_plane" in payload["domains"]
+    assert "autonomy" in payload["domains"]
+    assert "convergence" in payload["domains"]

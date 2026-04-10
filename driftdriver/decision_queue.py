@@ -117,6 +117,29 @@ def read_pending_decisions(project_dir: Path) -> list[DecisionRecord]:
     return [d for d in read_decisions(project_dir) if d.status == "pending"]
 
 
+def decision_age_hours(decision: dict[str, Any], *, now: datetime | None = None) -> float:
+    """Return decision age in hours for queue shaping."""
+    created_at = str(decision.get("created_at") or "").strip()
+    if not created_at:
+        return 0.0
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    current = now or datetime.now(timezone.utc)
+    return max(0.0, (current - created).total_seconds() / 3600.0)
+
+
+def classify_gate_bucket(decision: dict[str, Any]) -> str:
+    """Classify a pending decision into decide/watch for the operator surface."""
+    context = decision.get("context") or {}
+    severity = str(context.get("severity") or "medium").lower()
+    confidence = float(context.get("confidence") or 0.0)
+    if severity == "low" or confidence < 0.5 or decision_age_hours(decision) >= 72.0:
+        return "watch"
+    return "decide"
+
+
 def answer_decision(
     project_dir: Path,
     *,
