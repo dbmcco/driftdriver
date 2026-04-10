@@ -47,6 +47,20 @@ def _iso_to_epoch(iso: str) -> float | None:
         return None
 
 
+def _coerce_event_ts(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return _iso_to_epoch(text)
+
+
 def _load_events(repo_path: Path) -> list[dict[str, Any]]:
     events_file = repo_path / ".workgraph" / "service" / "runtime" / "events.jsonl"
     if not events_file.exists():
@@ -102,10 +116,13 @@ def build_agent_history(
         e for e in raw_events
         if isinstance(e.get("kind"), str) and e["kind"] in _SESSION_KINDS
     ]
-    relevant.sort(key=lambda e: float(e.get("ts") or 0))
+    relevant.sort(key=lambda e: _coerce_event_ts(e.get("ts")) or 0.0)
 
     # Oldest event timestamp for history_since
-    all_timestamps = [float(e.get("ts") or 0) for e in raw_events if e.get("ts")]
+    all_timestamps = [
+        ts for e in raw_events
+        if (ts := _coerce_event_ts(e.get("ts"))) is not None
+    ]
     oldest_ts = min(all_timestamps) if all_timestamps else None
 
     now = time.time()
@@ -116,7 +133,7 @@ def build_agent_history(
 
     for event in relevant:
         kind = event.get("kind", "")
-        ts = float(event.get("ts") or 0)
+        ts = _coerce_event_ts(event.get("ts")) or 0.0
         payload = event.get("payload") or {}
 
         if kind == "session.started":

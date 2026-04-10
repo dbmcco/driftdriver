@@ -79,6 +79,28 @@ class TestBuildAgentHistorySingleCleanSession(unittest.TestCase):
         self.assertIsNotNone(result["history_since"])
 
 
+class TestBuildAgentHistoryIsoEventTimestamps(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = _make_repo(self._tmp.name)
+        _write_events(self.repo, [
+            {"kind": "session.started", "repo": "myrepo", "ts": "2026-04-01T00:42:00Z",
+             "payload": {"cli": "claude-code", "actor_id": "session-iso"}},
+            {"kind": "session.ended", "repo": "myrepo", "ts": "2026-04-01T01:12:00Z",
+             "payload": {"actor_id": "session-iso"}},
+        ])
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_iso_timestamp_events_do_not_crash_and_produce_session(self):
+        result = build_agent_history(self.repo)
+        self.assertEqual(result["total_sessions_in_file"], 1)
+        self.assertEqual(len(result["sessions"]), 1)
+        self.assertEqual(result["sessions"][0]["session_id"], "session-iso")
+        self.assertEqual(result["sessions"][0]["outcome"], "clean_exit")
+
+
 class TestBuildAgentHistoryNoCrashOutcome(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
