@@ -109,6 +109,25 @@ class TestAgencyResult:
         assert result is not None
         assert result.prompt == "Role: challenger"
 
+    def test_from_json_current_agency_shape(self) -> None:
+        data = json.dumps({
+            "assignments": {
+                "task-1": {
+                    "agency_task_id": "task-1",
+                    "agent_hash": "hash-1",
+                    "agent_id": "agent-1",
+                }
+            },
+            "agents": {
+                "hash-1": {
+                    "rendered_prompt": "You are a strategic synthesis agent.",
+                }
+            },
+        })
+        result = AgencyResult.from_json(data)
+        assert result is not None
+        assert result.prompt == "You are a strategic synthesis agent."
+
     def test_from_json_empty_list(self) -> None:
         data = json.dumps([])
         assert AgencyResult.from_json(data) is None

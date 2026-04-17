@@ -81,10 +81,15 @@ class AgencyResult:
                 return None
             assignment = data[0]
         elif isinstance(data, dict):
-            assignments = data.get("assignments", [data])
-            if not assignments:
+            assignments = data.get("assignments")
+            if isinstance(assignments, dict):
+                assignment = next(iter(assignments.values()), None)
+            elif isinstance(assignments, list):
+                assignment = assignments[0] if assignments else None
+            else:
+                assignment = data
+            if not assignment:
                 return None
-            assignment = assignments[0]
         else:
             return None
 
@@ -95,6 +100,16 @@ class AgencyResult:
             or assignment.get("instructions")
             or ""
         )
+        if not prompt.strip():
+            agent_hash = assignment.get("agent_hash")
+            agents = data.get("agents", {}) if isinstance(data, dict) else {}
+            agent = agents.get(agent_hash, {}) if isinstance(agents, dict) else {}
+            prompt = (
+                agent.get("rendered_prompt")
+                or agent.get("system_prompt")
+                or agent.get("prompt")
+                or ""
+            )
         if not prompt.strip():
             return None
 
