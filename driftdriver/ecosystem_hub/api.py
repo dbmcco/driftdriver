@@ -924,10 +924,25 @@ class _HubHandler(BaseHTTPRequestHandler):
             self._send_json(extract_conformance_response(snapshot))
             return
         if route == "/api/upstream-tracker":
-            self._send_json(snapshot.get("upstream_tracker") or {
+            payload = snapshot.get("upstream_tracker")
+            if not isinstance(payload, dict) or "adoption_cycle" not in payload:
+                from driftdriver.upstream_tracker import build_snapshot_entry as _build_upstream_entry
+
+                project_dir_raw = snapshot.get("project_dir")
+                project_dir = (
+                    Path(str(project_dir_raw)).resolve()
+                    if project_dir_raw
+                    else self.snapshot_path.parents[3]
+                )
+                payload = _build_upstream_entry(
+                    snapshot.get("repos") if isinstance(snapshot.get("repos"), list) else [],
+                    state_dir=project_dir / ".driftdriver",
+                )
+            self._send_json(payload or {
                 "pass1_last_run": None,
                 "pass1_results": [],
                 "pass2_findings": [],
+                "adoption_cycle": {},
             })
             return
         if route == "/api/creation-pipeline":

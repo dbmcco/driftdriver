@@ -354,6 +354,42 @@ def test_run_pass1_emits_task_when_compatibility_fails_even_if_llm_would_ignore(
     assert result["wg_task_id"] == "upstream-workgraph-sync"
 
 
+def test_build_adoption_cycle_summarizes_pass1_results() -> None:
+    from driftdriver.upstream_tracker import build_adoption_cycle
+
+    cycle = build_adoption_cycle(
+        [
+            {
+                "repo": "graphwork/workgraph",
+                "branch": "main",
+                "new_sha": "abc12345",
+                "upstream_ref": "origin/main",
+                "adopted_ref": "main",
+                "tracking_status": "tracking-adopted-line",
+                "action": "auto_adopt",
+                "compatibility": {"status": "passed", "checks": [{"name": "wg-cli", "ok": True}]},
+            },
+            {
+                "repo": "agentbureau/agency",
+                "branch": "main",
+                "new_sha": "def67890",
+                "upstream_ref": "origin/main",
+                "adopted_ref": "main",
+                "tracking_status": "tracking-upstream",
+                "action": "needs_update",
+                "compatibility": {"status": "failed", "checks": [{"name": "agency", "ok": False}]},
+                "wg_task_id": "upstream-agency-sync",
+            },
+        ]
+    )
+
+    assert cycle["counts"]["adopted"] == 1
+    assert cycle["counts"]["needs_update"] == 1
+    assert cycle["items"][0]["status"] == "adopted"
+    assert cycle["items"][1]["status"] == "needs_update"
+    assert cycle["items"][1]["wg_task_id"] == "upstream-agency-sync"
+
+
 # --- Pass 2 tests ---
 
 from driftdriver.upstream_tracker import run_pass2

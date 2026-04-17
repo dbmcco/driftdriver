@@ -807,6 +807,8 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("Pending Decisions", html)
         self.assertIn("factory-decision-count", html)
         self.assertIn("factory-decisions-table", html)
+        self.assertIn("Dependency Adoption Cycle", html)
+        self.assertIn("upstream-adoptions-table", html)
         self.assertIn("Tracking", html)
         self.assertIn("Upstream Ref", html)
         self.assertIn("Adopted Ref", html)
@@ -890,6 +892,27 @@ class EcosystemHubTests(unittest.TestCase):
             )
             self.assertEqual(payload["request_count"], 1)
             self.assertTrue((service_dir / "upstream-actions.json").exists())
+
+    def test_service_status_reports_upstream_adoption_cycle_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / "driftdriver"
+            service_dir = project / ".workgraph" / "service" / "ecosystem-hub"
+            service_dir.mkdir(parents=True)
+            (service_dir / "upstream-adoptions.json").write_text(
+                json.dumps(
+                    {
+                        "updated_at": "2026-04-17T15:30:00+00:00",
+                        "counts": {"adopted": 2, "needs_update": 1, "watch": 3},
+                        "items": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            status = read_service_status(project)
+
+            self.assertEqual(status["upstream_adoption_adopted"], 2)
+            self.assertEqual(status["upstream_adoption_needs_update"], 1)
 
     def test_resolve_central_repo_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -1009,6 +1032,107 @@ class EcosystemHubTests(unittest.TestCase):
                 with urlopen(f"http://127.0.0.1:{port}/api/quality", timeout=1.0) as resp:  # noqa: S310
                     quality_payload = json.loads(resp.read().decode("utf-8"))
                 self.assertIn("summary", quality_payload)
+            finally:
+                stop_service_process(project)
+
+    def test_service_upstream_tracker_api_backfills_adoption_cycle_when_snapshot_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "driftdriver"
+            project.mkdir(parents=True)
+            (project / ".workgraph").mkdir(parents=True)
+
+            tracker_state = project / ".driftdriver" / "upstream-tracker-last.json"
+            tracker_state.parent.mkdir(parents=True, exist_ok=True)
+            tracker_state.write_text(
+                json.dumps(
+                    {
+                        "timestamp": "2026-04-17T15:00:00+00:00",
+                        "results": [
+                            {
+                                "repo": "graphwork/workgraph",
+                                "branch": "main",
+                                "action": "auto_adopt",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            adoption_path = project / ".workgraph" / "service" / "ecosystem-hub" / "upstream-adoptions.json"
+            adoption_path.parent.mkdir(parents=True, exist_ok=True)
+            adoption_path.write_text(
+                json.dumps(
+                    {
+                        "updated_at": "2026-04-17T15:00:00+00:00",
+                        "counts": {
+                            "adopted": 1,
+                            "needs_update": 0,
+                            "review": 0,
+                            "tracking": 0,
+                            "watch": 0,
+                        },
+                        "items": [
+                            {
+                                "repo": "graphwork/workgraph",
+                                "branch": "main",
+                                "status": "adopted",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+
+            start_service_process(
+                project_dir=project,
+                workspace_root=root,
+                host="127.0.0.1",
+                port=port,
+                interval_seconds=60,
+                include_updates=False,
+                max_next=3,
+                ecosystem_toml=None,
+                central_repo=None,
+                execute_draft_prs=False,
+                draft_pr_title_prefix="speedrift",
+            )
+            try:
+                deadline = time.time() + 6.0
+                while time.time() < deadline:
+                    try:
+                        with urlopen(f"http://127.0.0.1:{port}/api/status", timeout=1.0) as resp:  # noqa: S310
+                            json.loads(resp.read().decode("utf-8"))
+                            break
+                    except Exception:
+                        time.sleep(0.1)
+
+                snapshot_path = project / ".workgraph" / "service" / "ecosystem-hub" / "snapshot.json"
+                snapshot_path.write_text(
+                    json.dumps(
+                        {
+                            "schema": 1,
+                            "project_dir": str(project),
+                            "repos": [],
+                            "upstream_tracker": {
+                                "pass1_last_run": None,
+                                "pass1_results": [],
+                                "pass2_findings": [],
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                with urlopen(f"http://127.0.0.1:{port}/api/upstream-tracker", timeout=1.0) as resp:  # noqa: S310
+                    payload = json.loads(resp.read().decode("utf-8"))
+                self.assertEqual(len(payload.get("pass1_results") or []), 1)
+                self.assertEqual((payload.get("adoption_cycle") or {}).get("counts", {}).get("adopted"), 1)
             finally:
                 stop_service_process(project)
 

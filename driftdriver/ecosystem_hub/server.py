@@ -127,10 +127,11 @@ def _run_upstream_pass1(project_dir: Path) -> None:
     if not config.get("external_repos"):
         return
 
-    from driftdriver.upstream_tracker import run_pass1
+    from driftdriver.upstream_tracker import run_pass1, write_adoption_cycle
 
     pins_path = project_dir / ".driftdriver" / "upstream-pins.toml"
     results = run_pass1(config, pins_path, project_dir=project_dir)
+    write_adoption_cycle(project_dir / ".workgraph" / "service" / "ecosystem-hub", results)
     if results:
         emitted = sum(1 for r in results if r.get("wg_task_id"))
         _log.info(

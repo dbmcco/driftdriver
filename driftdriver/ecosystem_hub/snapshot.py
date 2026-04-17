@@ -1336,8 +1336,10 @@ def read_service_status(project_dir: Path) -> dict[str, Any]:
     snapshot_exists = paths["snapshot"].exists()
     central = _read_json(paths["dir"] / "central-register.json")
     upstream_actions = _read_json(paths["dir"] / "upstream-actions.json")
+    upstream_adoptions = _read_json(paths["dir"] / "upstream-adoptions.json")
     northstar = _read_json(paths["dir"] / "northstardrift" / "current.json")
     northstar_summary = northstar.get("summary") if isinstance(northstar.get("summary"), dict) else {}
+    adoption_counts = upstream_adoptions.get("counts") if isinstance(upstream_adoptions.get("counts"), dict) else {}
     return {
         "running": running,
         "pid": pid if running else None,
@@ -1355,6 +1357,8 @@ def read_service_status(project_dir: Path) -> dict[str, Any]:
         "central_register_latest": str(central.get("latest_path") or ""),
         "upstream_action_count": int(upstream_actions.get("request_count") or 0),
         "upstream_execute_mode": bool(upstream_actions.get("execute_draft_prs", False)),
+        "upstream_adoption_adopted": int(adoption_counts.get("adopted") or 0),
+        "upstream_adoption_needs_update": int(adoption_counts.get("needs_update") or 0),
         "northstardrift_score": float(northstar_summary.get("overall_score") or 0.0),
         "northstardrift_tier": str(northstar_summary.get("overall_tier") or ""),
         "northstardrift_path": str(paths["dir"] / "northstardrift" / "current.json"),

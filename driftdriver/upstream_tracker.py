@@ -483,6 +483,76 @@ def _run_compatibility_checks(
 
 
 _STATE_FILENAME = "upstream-tracker-last.json"
+_ADOPTION_FILENAME = "upstream-adoptions.json"
+
+
+def _adoption_status(result: dict[str, Any]) -> str:
+    compatibility = result.get("compatibility") if isinstance(result.get("compatibility"), dict) else {}
+    compat_status = str(compatibility.get("status") or "").strip().lower()
+    action = str(result.get("action") or "").strip().lower()
+    tracking_status = str(result.get("tracking_status") or "").strip().lower()
+    if compat_status == "failed" or action == "needs_update":
+        return "needs_update"
+    if action == "auto_adopt" and compat_status == "passed":
+        return "adopted"
+    if action == "alert":
+        return "review"
+    if tracking_status == "tracking-adopted-line":
+        return "tracking"
+    return "watch"
+
+
+def build_adoption_cycle(results: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {
+        "adopted": 0,
+        "needs_update": 0,
+        "review": 0,
+        "tracking": 0,
+        "watch": 0,
+    }
+    items: list[dict[str, Any]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        status = _adoption_status(result)
+        counts[status] = counts.get(status, 0) + 1
+        items.append(
+            {
+                "repo": str(result.get("repo") or ""),
+                "branch": str(result.get("branch") or ""),
+                "status": status,
+                "action": str(result.get("action") or ""),
+                "tracking_status": str(result.get("tracking_status") or ""),
+                "upstream_ref": str(result.get("upstream_ref") or ""),
+                "adopted_ref": str(result.get("adopted_ref") or ""),
+                "new_sha": str(result.get("new_sha") or ""),
+                "adopted_sha": str(result.get("adopted_sha") or ""),
+                "compatibility": result.get("compatibility") if isinstance(result.get("compatibility"), dict) else {"status": "unchecked", "checks": []},
+                "wg_task_id": str(result.get("wg_task_id") or ""),
+                "timestamp": str(result.get("timestamp") or ""),
+            }
+        )
+    return {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "counts": counts,
+        "items": items,
+        # Backward-compatible aliases for older readers.
+        "summary": counts,
+        "entries": items,
+    }
+
+
+def write_adoption_cycle(service_dir: Path, results: list[dict[str, Any]]) -> dict[str, Any]:
+    payload = build_adoption_cycle(results)
+    try:
+        service_dir.mkdir(parents=True, exist_ok=True)
+        (service_dir / _ADOPTION_FILENAME).write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    return payload
 
 
 def run_pass1(
@@ -721,8 +791,17 @@ def build_snapshot_entry(
         except Exception:
             pass1_last = {}
 
+    adoption_file = state_dir.parent / ".workgraph" / "service" / "ecosystem-hub" / _ADOPTION_FILENAME
+    adoption_cycle: dict[str, Any] = {}
+    if adoption_file.exists():
+        try:
+            adoption_cycle = json.loads(adoption_file.read_text(encoding="utf-8"))
+        except Exception:
+            adoption_cycle = {}
+
     return {
         "pass1_last_run": pass1_last.get("timestamp"),
         "pass1_results": pass1_last.get("results", []),
         "pass2_findings": pass2_findings,
+        "adoption_cycle": adoption_cycle,
     }

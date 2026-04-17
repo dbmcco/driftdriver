@@ -1724,6 +1724,16 @@ def render_dashboard_html() -> str:
           <h2>Upstream Tracker</h2>
           <div class="factory-upstream-meta" id="upstream-meta" style="color:var(--muted); margin-bottom:0.75rem;"></div>
 
+          <h3 style="font-size:0.9rem; margin:0.5rem 0 0.25rem;">Dependency Adoption Cycle</h3>
+          <div id="upstream-adoptions-meta" style="color:var(--muted); margin-bottom:0.5rem;"></div>
+          <div id="upstream-adoptions-empty" style="display:none; color:var(--muted); padding:0.25rem 0;">No adoption-cycle records yet.</div>
+          <table class="conf-table" id="upstream-adoptions-table" style="display:none;">
+            <thead>
+              <tr><th>Repo</th><th>Branch</th><th>Status</th><th>Tracking</th><th>Compatibility</th><th>Task</th><th>When</th></tr>
+            </thead>
+            <tbody id="upstream-adoptions-rows"></tbody>
+          </table>
+
           <h3 style="font-size:0.9rem; margin:0.5rem 0 0.25rem;">External Repo Evaluations <small>(Pass 1)</small></h3>
           <div id="upstream-pass1-empty" style="display:none; color:var(--muted); padding:0.25rem 0;">No evaluations recorded yet.</div>
           <table class="conf-table" id="upstream-pass1-table" style="display:none;">
@@ -3968,7 +3978,7 @@ def render_dashboard_html() -> str:
         e.preventDefault();
         e.stopPropagation();
         var rn = nameLink.getAttribute('href') || '';
-        var match = rn.match(/^\/repo\/(.+)$/);
+        var match = rn.match(/^\\/repo\\/(.+)$/);
         if (match) openRepoDetail(decodeURIComponent(match[1]));
         return;
       }
@@ -4570,6 +4580,39 @@ def render_dashboard_html() -> str:
         el('upstream-meta').textContent = lastRun
           ? 'Pass 1 last run: ' + lastRun.substring(0, 16).replace('T', ' ') + ' UTC'
           : 'Pass 1 has not run yet — trigger via wg cycle task.';
+
+        var adoptionCycle = trackerData.adoption_cycle || {};
+        var adoptionItems = Array.isArray(adoptionCycle.items) ? adoptionCycle.items : [];
+        var adoptionCounts = adoptionCycle.counts || {};
+        el('upstream-adoptions-meta').textContent = adoptionItems.length
+          ? ('adopted=' + Number(adoptionCounts.adopted || 0)
+            + ' needs_update=' + Number(adoptionCounts.needs_update || 0)
+            + ' review=' + Number(adoptionCounts.review || 0)
+            + ' watch=' + Number(adoptionCounts.watch || 0))
+          : 'No dependency adoption activity recorded.';
+        var adoptionRows = el('upstream-adoptions-rows');
+        var adoptionTable = el('upstream-adoptions-table');
+        var adoptionEmpty = el('upstream-adoptions-empty');
+        adoptionRows.innerHTML = '';
+        if (adoptionItems.length === 0) {
+          adoptionTable.style.display = 'none';
+          adoptionEmpty.style.display = '';
+        } else {
+          adoptionTable.style.display = '';
+          adoptionEmpty.style.display = 'none';
+          adoptionItems.forEach(function(item) {
+            var compatibility = item.compatibility || {};
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td><code>' + esc(item.repo || '') + '</code></td>'
+              + '<td><code>' + esc(item.branch || '') + '</code></td>'
+              + '<td>' + esc(item.status || '') + '</td>'
+              + '<td>' + esc(item.tracking_status || '') + '</td>'
+              + '<td>' + esc(compatibility.status || 'unchecked') + '</td>'
+              + '<td>' + (item.wg_task_id ? ('<code>' + esc(item.wg_task_id) + '</code>') : '—') + '</td>'
+              + '<td><small>' + esc(String(item.timestamp || '').substring(0, 10)) + '</small></td>';
+            adoptionRows.appendChild(tr);
+          });
+        }
 
         // Pass 1 results
         var pass1Results = trackerData.pass1_results || [];
