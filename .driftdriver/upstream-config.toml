@@ -19,6 +19,14 @@ adopted_ref = "main"
 lag_window_commits = 20
 notes = "Task graph spine for speedrift. We have a fork at dbmcco/workgraph."
 
+[[external_repos.compatibility_checks]]
+name = "workgraph-cli-contract"
+command = "PYTHONPATH=$PWD pytest tests/test_executor_shim.py tests/test_upstream_tracker.py -q"
+
+[[external_repos.compatibility_checks]]
+name = "workgraph-managed-surface-contract"
+command = "PYTHONPATH=$PWD pytest tests/test_handlers.py tests/test_unified_install.py -q"
+
 [[external_repos]]
 name = "agentbureau/agency"
 local_path = "/Users/braydon/projects/experiments/agency"
@@ -27,3 +35,7 @@ upstream_ref = "origin/main"
 adopted_ref = "main"
 lag_window_commits = 5
 notes = "Agent composition layer for speedrift execution. Provides agent lifecycle, capability routing, and multi-agent coordination."
+
+[[external_repos.compatibility_checks]]
+name = "agency-speedrift-contract"
+command = "PYTHONPATH=$PWD pytest tests/test_agency_wg_dispatch.py tests/test_planforge_agency.py -q"

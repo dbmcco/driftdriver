@@ -1728,7 +1728,7 @@ def render_dashboard_html() -> str:
           <div id="upstream-pass1-empty" style="display:none; color:var(--muted); padding:0.25rem 0;">No evaluations recorded yet.</div>
           <table class="conf-table" id="upstream-pass1-table" style="display:none;">
             <thead>
-              <tr><th>Repo</th><th>Branch</th><th>Category</th><th>Relevance</th><th>Action</th><th>Risk</th><th>Impact</th><th>Rec</th><th>When</th></tr>
+              <tr><th>Repo</th><th>Branch</th><th>Tracking</th><th>Upstream Ref</th><th>Adopted Ref</th><th>Category</th><th>Relevance</th><th>Action</th><th>Risk</th><th>Impact</th><th>Rec</th><th>When</th></tr>
             </thead>
             <tbody id="upstream-pass1-rows"></tbody>
           </table>
@@ -4590,8 +4590,20 @@ def render_dashboard_html() -> str:
             var impactClass = llm.impact === 'high' ? 'severity-high' : llm.impact === 'moderate' ? 'severity-medium' : '';
             var impactCell = llm.impact ? '<span class="' + impactClass + '">' + esc(llm.impact) + '</span>' : '<span style="color:var(--muted)">—</span>';
             var recCell = llm.recommended_action ? esc(llm.recommended_action) : '<span style="color:var(--muted)">—</span>';
+            var trackingCell = esc(r.tracking_status || '—');
+            var upstreamRefCell = '<code>' + esc(r.upstream_ref || '—') + '</code>';
+            if (r.new_sha) {
+              upstreamRefCell += '<div style="color:var(--muted);font-size:0.75rem">' + esc(String(r.new_sha).substring(0, 8)) + '</div>';
+            }
+            var adoptedRefCell = '<code>' + esc(r.adopted_ref || '—') + '</code>';
+            if (r.adopted_sha) {
+              adoptedRefCell += '<div style="color:var(--muted);font-size:0.75rem">' + esc(String(r.adopted_sha).substring(0, 8)) + '</div>';
+            }
             tr.innerHTML = '<td><code>' + esc(r.repo || '') + '</code></td>'
               + '<td><code>' + esc(r.branch || '') + '</code></td>'
+              + '<td>' + trackingCell + '</td>'
+              + '<td>' + upstreamRefCell + '</td>'
+              + '<td>' + adoptedRefCell + '</td>'
               + '<td>' + esc(r.category || '') + '</td>'
               + '<td>' + (r.relevance_score != null ? r.relevance_score.toFixed(2) : '-') + '</td>'
               + '<td class="' + actionClass + '">' + esc(r.action || '') + '</td>'

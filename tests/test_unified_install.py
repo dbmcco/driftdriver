@@ -8,12 +8,17 @@ import unittest
 from pathlib import Path
 
 from driftdriver.install import (
+    CODEX_ADAPTER_START,
+    CODEX_ADAPTER_END,
+    CLAUDE_ADAPTER_START,
+    CLAUDE_ADAPTER_END,
     install_amplifier_adapter,
     install_claude_adapter,
     install_claude_code_hooks,
     install_codex_adapter,
     install_lessons_mcp_config,
     install_opencode_hooks,
+    refresh_existing_managed_surfaces,
     install_session_driver_executor,
 )
 
@@ -83,6 +88,67 @@ class UnifiedInstallAdapterTests(unittest.TestCase):
 
         args2 = parser.parse_args(["install", "--with-lessons-mcp", "--no-ensure-contracts"])
         self.assertTrue(args2.with_lessons_mcp)
+
+    def test_refresh_existing_managed_surfaces_updates_only_opted_in_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            wg_dir = project_dir / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+
+            install_claude_adapter(project_dir)
+            install_codex_adapter(project_dir)
+            install_claude_code_hooks(project_dir)
+            install_opencode_hooks(project_dir)
+            install_amplifier_adapter(project_dir)
+            install_session_driver_executor(wg_dir)
+
+            claude_md = project_dir / "CLAUDE.md"
+            agents_md = project_dir / "AGENTS.md"
+            claude_md.write_text(
+                f"# CLAUDE.md\n\n{CLAUDE_ADAPTER_START}\nOLD CLAUDE\n{CLAUDE_ADAPTER_END}\n",
+                encoding="utf-8",
+            )
+            agents_md.write_text(
+                f"# AGENTS.md\n\n{CODEX_ADAPTER_START}\nOLD CODEX\n{CODEX_ADAPTER_END}\n",
+                encoding="utf-8",
+            )
+            (project_dir / ".claude" / "hooks.json").write_text('{"hooks":{}}\n', encoding="utf-8")
+            (project_dir / ".opencode" / "hooks.json").write_text('{"hooks":{}}\n', encoding="utf-8")
+            (project_dir / ".amplifier" / "hooks" / "driftdriver" / "session-hooks.sh").write_text(
+                "#!/usr/bin/env bash\nexit 7\n",
+                encoding="utf-8",
+            )
+            (wg_dir / "executors" / "session-driver.toml").write_text("command = 'old'\n", encoding="utf-8")
+            (wg_dir / "executors" / "session-driver-run.sh").write_text("#!/usr/bin/env bash\nexit 9\n", encoding="utf-8")
+
+            refreshed = refresh_existing_managed_surfaces(project_dir, wg_dir)
+
+            self.assertTrue(refreshed["wrote_claude_md"])
+            self.assertTrue(refreshed["wrote_agents_md"])
+            self.assertTrue(refreshed["wrote_claude_code_hooks"])
+            self.assertTrue(refreshed["wrote_opencode_hooks"])
+            self.assertTrue(refreshed["wrote_amplifier_adapter"])
+            self.assertTrue(refreshed["wrote_session_driver_executor"])
+            self.assertTrue(refreshed["wrote_session_driver_runner"])
+            self.assertNotIn("OLD CLAUDE", claude_md.read_text(encoding="utf-8"))
+            self.assertNotIn("OLD CODEX", agents_md.read_text(encoding="utf-8"))
+
+    def test_refresh_existing_managed_surfaces_does_not_create_new_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            wg_dir = project_dir / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+
+            install_claude_adapter(project_dir)
+
+            refreshed = refresh_existing_managed_surfaces(project_dir, wg_dir)
+
+            self.assertTrue(refreshed["wrote_claude_md"] in (True, False))
+            self.assertFalse((project_dir / "AGENTS.md").exists())
+            self.assertFalse((project_dir / ".claude" / "hooks.json").exists())
+            self.assertFalse((project_dir / ".opencode" / "hooks.json").exists())
+            self.assertFalse((project_dir / ".amplifier" / "hooks" / "driftdriver" / "session-hooks.sh").exists())
+            self.assertFalse((wg_dir / "executors" / "session-driver.toml").exists())
 
 
 if __name__ == "__main__":

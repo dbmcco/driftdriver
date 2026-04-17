@@ -39,6 +39,73 @@ CLAUDE_EXECUTOR_CURRENT = (
 )
 
 
+def _has_managed_block(path: Path, start_marker: str, legacy_marker: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return start_marker in content or legacy_marker in content
+
+
+def has_managed_codex_adapter(project_dir: Path) -> bool:
+    return _has_managed_block(
+        project_dir / "AGENTS.md",
+        CODEX_ADAPTER_START,
+        CODEX_ADAPTER_MARKER,
+    )
+
+
+def has_managed_claude_adapter(project_dir: Path) -> bool:
+    return _has_managed_block(
+        project_dir / "CLAUDE.md",
+        CLAUDE_ADAPTER_START,
+        CLAUDE_ADAPTER_MARKER,
+    )
+
+
+def refresh_existing_managed_surfaces(project_dir: Path, wg_dir: Path) -> dict[str, bool]:
+    """Refresh only Speedrift-managed surfaces the repo already opted into."""
+    refreshed = {
+        "wrote_claude_md": False,
+        "wrote_agents_md": False,
+        "wrote_claude_code_hooks": False,
+        "wrote_opencode_hooks": False,
+        "wrote_amplifier_adapter": False,
+        "wrote_amplifier_autostart_hook": False,
+        "wrote_amplifier_autostart_hooks_json": False,
+        "wrote_session_driver_executor": False,
+        "wrote_session_driver_runner": False,
+    }
+
+    if has_managed_claude_adapter(project_dir):
+        refreshed["wrote_claude_md"] = install_claude_adapter(project_dir).wrote_claude_md
+    if has_managed_codex_adapter(project_dir):
+        refreshed["wrote_agents_md"] = install_codex_adapter(project_dir).wrote_agents_md
+    if (project_dir / ".claude" / "hooks.json").exists():
+        refreshed["wrote_claude_code_hooks"] = install_claude_code_hooks(project_dir)
+    if (project_dir / ".opencode" / "hooks.json").exists():
+        refreshed["wrote_opencode_hooks"] = install_opencode_hooks(project_dir)
+    if (project_dir / ".amplifier" / "hooks" / "driftdriver" / "session-hooks.sh").exists():
+        refreshed["wrote_amplifier_adapter"] = install_amplifier_adapter(project_dir)
+    if (project_dir / ".amplifier" / "hooks" / "speedrift-autostart" / "session-start.sh").exists():
+        (
+            refreshed["wrote_amplifier_autostart_hook"],
+            refreshed["wrote_amplifier_autostart_hooks_json"],
+        ) = ensure_amplifier_autostart_hook(project_dir)
+    if (
+        (wg_dir / "executors" / "session-driver.toml").exists()
+        or (wg_dir / "executors" / "session-driver-run.sh").exists()
+    ):
+        (
+            refreshed["wrote_session_driver_executor"],
+            refreshed["wrote_session_driver_runner"],
+        ) = install_session_driver_executor(wg_dir)
+
+    return refreshed
+
+
 @dataclass(frozen=True)
 class InstallResult:
     wrote_drifts: bool

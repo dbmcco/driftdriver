@@ -23,6 +23,7 @@ from driftdriver.install import (
     install_hook_scripts,
     install_lessons_mcp_config,
     install_opencode_hooks,
+    refresh_existing_managed_surfaces,
     install_session_driver_executor,
     ensure_archdrift_gitignore,
     ensure_executor_guidance,
@@ -57,18 +58,6 @@ from driftdriver.policy import ensure_drift_policy
 from driftdriver.workgraph import find_workgraph_dir
 
 from .check import ExitCode, _ensure_wg_init
-
-
-def _has_driftdriver_claude_block(project_dir: Path) -> bool:
-    """Check if CLAUDE.md already has the driftdriver managed block."""
-    claude_md = project_dir / "CLAUDE.md"
-    if not claude_md.exists():
-        return False
-    try:
-        content = claude_md.read_text(encoding="utf-8")
-        return "<!-- driftdriver-claude:start -->" in content
-    except OSError:
-        return False
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -288,11 +277,6 @@ def cmd_install(args: argparse.Namespace) -> int:
     if bool(getattr(args, "with_claude_code_hooks", False)):
         wrote_claude_code_hooks = install_claude_code_hooks(project_dir)
         install_claude_adapter(project_dir)
-    elif _has_driftdriver_claude_block(project_dir):
-        # Always update the managed CLAUDE.md block if it already exists,
-        # even without --with-claude-code-hooks. First injection requires the
-        # flag; subsequent updates are automatic.
-        install_claude_adapter(project_dir)
 
     wrote_session_driver_executor = False
     wrote_session_driver_runner = False
@@ -303,6 +287,21 @@ def cmd_install(args: argparse.Namespace) -> int:
         install_opencode_hooks(project_dir)
         install_amplifier_adapter(project_dir)
         wrote_session_driver_executor, wrote_session_driver_runner = install_session_driver_executor(wg_dir)
+
+    refreshed_surfaces = refresh_existing_managed_surfaces(project_dir, wg_dir)
+    wrote_claude_code_hooks = refreshed_surfaces["wrote_claude_code_hooks"] or wrote_claude_code_hooks
+    wrote_amplifier_autostart_hook = (
+        refreshed_surfaces["wrote_amplifier_autostart_hook"] or wrote_amplifier_autostart_hook
+    )
+    wrote_amplifier_autostart_hooks_json = (
+        refreshed_surfaces["wrote_amplifier_autostart_hooks_json"] or wrote_amplifier_autostart_hooks_json
+    )
+    wrote_session_driver_executor = (
+        refreshed_surfaces["wrote_session_driver_executor"] or wrote_session_driver_executor
+    )
+    wrote_session_driver_runner = (
+        refreshed_surfaces["wrote_session_driver_runner"] or wrote_session_driver_runner
+    )
 
     if bool(getattr(args, "with_lessons_mcp", False)):
         install_lessons_mcp_config(wg_dir)

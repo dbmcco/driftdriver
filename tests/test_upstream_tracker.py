@@ -55,6 +55,10 @@ def _fake_sonnet_caller(model: str, prompt: str) -> dict[str, Any]:
     }
 
 
+def _fake_low_relevance_caller(model: str, prompt: str) -> dict[str, Any]:
+    return {"relevance_score": 0.0, "rationale": "not relevant"}
+
+
 def test_triage_relevance_returns_score() -> None:
     score = triage_relevance(
         changed_files=["src/coordinator.rs"],
@@ -255,6 +259,99 @@ def test_run_pass1_high_relevance_populates_llm_eval(tmp_path: Path) -> None:
     assert result["llm_eval"] is not None
     assert result["llm_eval"]["impact"] == "moderate"
     assert result["llm_eval"]["risk_score"] == pytest.approx(0.2)
+
+
+def test_run_pass1_records_compatibility_success_for_upstream_change(tmp_path: Path) -> None:
+    from driftdriver.upstream_pins import load_pins, save_pins, set_sha
+
+    repo = tmp_path / "wg"
+    old_sha = _make_git_repo(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "commands.rs").write_text("pub fn new_cmd() {}\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "feat: add new-cmd"], cwd=repo, check=True, capture_output=True)
+
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", old_sha)
+    save_pins(pins_path, pins)
+
+    calls: list[tuple[str, str]] = []
+
+    def _compat_runner(project_dir: Path, check_name: str, command: str) -> tuple[bool, str]:
+        calls.append((check_name, command))
+        return True, "ok"
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+            "compatibility_checks": [{"name": "wg-cli", "command": "pytest tests/test_executor_shim.py -q"}],
+        }]
+    }
+
+    results = run_pass1(
+        config,
+        pins_path,
+        llm_caller=_fake_haiku_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+        project_dir=tmp_path,
+        compatibility_runner=_compat_runner,
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["compatibility"]["status"] == "passed"
+    assert result["compatibility"]["checks"][0]["name"] == "wg-cli"
+    assert calls == [("wg-cli", "pytest tests/test_executor_shim.py -q")]
+
+
+def test_run_pass1_emits_task_when_compatibility_fails_even_if_llm_would_ignore(tmp_path: Path) -> None:
+    from driftdriver.upstream_pins import load_pins, save_pins, set_sha
+
+    repo = tmp_path / "wg"
+    old_sha = _make_git_repo(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "commands.rs").write_text("pub fn new_cmd() {}\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "feat: add new-cmd"], cwd=repo, check=True, capture_output=True)
+
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", old_sha)
+    save_pins(pins_path, pins)
+
+    def _compat_runner(project_dir: Path, check_name: str, command: str) -> tuple[bool, str]:
+        return False, "executor shim contract failed"
+
+    def _wg_runner(cmd: list[str]) -> tuple[int, str, str]:
+        return 0, "Added task: sync upstream: graphwork/workgraph (1 commit) (upstream-workgraph-sync)\n", ""
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+            "compatibility_checks": [{"name": "wg-cli", "command": "pytest tests/test_executor_shim.py -q"}],
+        }]
+    }
+
+    results = run_pass1(
+        config,
+        pins_path,
+        llm_caller=_fake_low_relevance_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+        project_dir=tmp_path,
+        compatibility_runner=_compat_runner,
+        wg_runner=_wg_runner,
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["compatibility"]["status"] == "failed"
+    assert result["action"] == "needs_update"
+    assert result["wg_task_id"] == "upstream-workgraph-sync"
 
 
 # --- Pass 2 tests ---

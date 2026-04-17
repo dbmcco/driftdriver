@@ -265,6 +265,7 @@ def deep_eval_change(
 from typing import Callable as _Callable
 
 _WgRunner = _Callable[[list[str]], tuple[int, str, str]]
+_CompatibilityRunner = _Callable[[Path, str, str], tuple[bool, str]]
 
 
 def lag_window_check(commit_count: int, threshold: int) -> bool:
@@ -298,6 +299,20 @@ def emit_wg_task(
         desc_parts.append(f"Value: {eval_result['value_gained']}")
     if eval_result.get("risk_introduced"):
         desc_parts.append(f"Risk detail: {eval_result['risk_introduced']}")
+    compatibility = eval_result.get("compatibility")
+    if isinstance(compatibility, dict):
+        status = str(compatibility.get("status") or "").strip()
+        checks = compatibility.get("checks") if isinstance(compatibility.get("checks"), list) else []
+        if status == "passed":
+            desc_parts.append("Compatibility: checks passed.")
+        elif status == "failed":
+            failed = [
+                f"{str(row.get('name') or '').strip()}: {str(row.get('detail') or '').strip()}"
+                for row in checks
+                if isinstance(row, dict) and not bool(row.get("ok"))
+            ]
+            if failed:
+                desc_parts.append("Compatibility failed: " + "; ".join(failed[:2]))
     description = " ".join(desc_parts)
 
     wg_dir = str(project_dir / ".workgraph")
@@ -419,6 +434,54 @@ def _git_commit_subjects(repo_path: Path, old_sha: str, new_sha: str) -> list[st
     return []
 
 
+def _default_compatibility_runner(project_dir: Path, check_name: str, command: str) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            ["/bin/zsh", "-lc", command],
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=600.0,
+        )
+    except Exception as exc:
+        return False, str(exc)
+
+    detail = result.stdout.strip() or result.stderr.strip() or f"exit {result.returncode}"
+    if len(detail) > 240:
+        detail = detail[:237] + "..."
+    return result.returncode == 0, detail
+
+
+def _run_compatibility_checks(
+    project_dir: Path | None,
+    repo_cfg: dict[str, Any],
+    *,
+    runner: _CompatibilityRunner | None = None,
+) -> dict[str, Any]:
+    checks_cfg = repo_cfg.get("compatibility_checks")
+    if project_dir is None or not isinstance(checks_cfg, list):
+        return {"status": "unchecked", "checks": []}
+
+    effective_runner = runner or _default_compatibility_runner
+    checks: list[dict[str, Any]] = []
+    for idx, raw in enumerate(checks_cfg, start=1):
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or f"check-{idx}").strip()
+        command = str(raw.get("command") or "").strip()
+        if not command:
+            continue
+        ok, detail = effective_runner(project_dir, name, command)
+        checks.append({"name": name, "command": command, "ok": bool(ok), "detail": detail})
+
+    if not checks:
+        return {"status": "unchecked", "checks": []}
+    return {
+        "status": "failed" if any(not bool(row.get("ok")) for row in checks) else "passed",
+        "checks": checks,
+    }
+
+
 _STATE_FILENAME = "upstream-tracker-last.json"
 
 
@@ -430,6 +493,7 @@ def run_pass1(
     deep_eval_caller: Callable[[str, str], dict[str, Any]] | None = None,
     project_dir: Path | None = None,
     wg_runner: _WgRunner | None = None,
+    compatibility_runner: _CompatibilityRunner | None = None,
 ) -> list[dict[str, Any]]:
     """Evaluate all tracked external repos. Returns list of evaluation results.
 
@@ -539,17 +603,26 @@ def run_pass1(
                 eval_result["recommended_action"] = "ignore"
                 eval_result["llm_eval"] = None
 
-            eval_result["action"] = (
-                "tracked"
-                if not upstream_changed
-                else ("alert" if risk_score >= _RISK_ALERT_THRESHOLD else "auto_adopt")
+            compatibility = (
+                _run_compatibility_checks(project_dir, repo_cfg, runner=compatibility_runner)
+                if upstream_changed
+                else {"status": "unchecked", "checks": []}
             )
+            eval_result["compatibility"] = compatibility
+
+            if not upstream_changed:
+                eval_result["action"] = "tracked"
+            elif compatibility.get("status") == "failed":
+                eval_result["action"] = "needs_update"
+            else:
+                eval_result["action"] = "alert" if risk_score >= _RISK_ALERT_THRESHOLD else "auto_adopt"
 
             # Emit a wg task when action warrants it or lag window exceeded
             if project_dir is not None and upstream_changed:
                 action = eval_result.get("recommended_action", "watch")
                 lag_exceeded = lag_threshold > 0 and lag_window_check(commit_count, lag_threshold)
-                if action != "ignore" or lag_exceeded:
+                compat_failed = compatibility.get("status") == "failed"
+                if action != "ignore" or lag_exceeded or compat_failed:
                     task_id = emit_wg_task(
                         repo_name,
                         commit_count,

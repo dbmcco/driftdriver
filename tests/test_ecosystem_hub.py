@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import patch
 from urllib.request import urlopen
@@ -806,8 +807,14 @@ class EcosystemHubTests(unittest.TestCase):
         self.assertIn("Pending Decisions", html)
         self.assertIn("factory-decision-count", html)
         self.assertIn("factory-decisions-table", html)
+        self.assertIn("Tracking", html)
+        self.assertIn("Upstream Ref", html)
+        self.assertIn("Adopted Ref", html)
         self.assertIn("fetch('/api/decisions')", html)
         self.assertIn("fetch('/api/operator/home')", html)
+        self.assertIn("tracking_status", html)
+        self.assertIn("upstream_ref", html)
+        self.assertIn("adopted_ref", html)
         self.assertIn("refreshFactoryDecisionBadge()", html)
         self.assertIn("loadOperatorHome()", html)
         self.assertIn("openOperatorEvidence", html)
@@ -1239,7 +1246,7 @@ members = ["samantha", "caroline", "derek", "ingrid"]
                     "question": "Review operator queue?",
                     "context": {"severity": "high", "confidence": 0.9},
                     "category": "feature",
-                    "created_at": "2026-04-10T19:59:00+00:00",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "notified_via": [],
                 }) + "\n",
                 encoding="utf-8",
