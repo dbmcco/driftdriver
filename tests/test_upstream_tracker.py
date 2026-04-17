@@ -114,6 +114,29 @@ def _make_git_repo(path: Path) -> str:
     return result.stdout.strip()
 
 
+def _make_git_repo_with_diverged_upstream(path: Path) -> tuple[str, str]:
+    """Create repo where origin/main lags behind local main by one commit."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "branch", "-M", "main"], cwd=path, check=True, capture_output=True)
+    (path / "README.md").write_text("base")
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=path, check=True, capture_output=True)
+    upstream_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "update-ref", "refs/remotes/origin/main", upstream_sha], cwd=path, check=True, capture_output=True)
+    (path / "local.txt").write_text("adopted")
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "local adopted change"], cwd=path, check=True, capture_output=True)
+    adopted_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    return upstream_sha, adopted_sha
+
+
 def test_git_current_sha(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     expected_sha = _make_git_repo(repo)
@@ -162,6 +185,39 @@ def test_run_pass1_new_sha_triggers_eval(tmp_path: Path) -> None:
     assert "action" in result
     # llm_eval key must always be present (None when relevance too low for deep eval)
     assert "llm_eval" in result
+
+
+def test_run_pass1_separates_upstream_from_adopted_line(tmp_path: Path) -> None:
+    from driftdriver.upstream_pins import get_adopted_sha, get_sha, load_pins
+
+    repo = tmp_path / "wg"
+    upstream_sha, adopted_sha = _make_git_repo_with_diverged_upstream(repo)
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+        }]
+    }
+
+    results = run_pass1(
+        config,
+        pins_path,
+        llm_caller=_fake_haiku_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["new_sha"] == upstream_sha
+    assert result["upstream_ref"] == "origin/main"
+    assert result["adopted_ref"] == "main"
+    assert result["adopted_sha"] == adopted_sha
+    assert result["adopted_diverged"] is True
+    pins = load_pins(pins_path)
+    assert get_sha(pins, "graphwork/workgraph", "main") == upstream_sha
+    assert get_adopted_sha(pins, "graphwork/workgraph", "main") == adopted_sha
 
 
 def test_run_pass1_high_relevance_populates_llm_eval(tmp_path: Path) -> None:

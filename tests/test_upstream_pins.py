@@ -7,10 +7,12 @@ from pathlib import Path
 import pytest
 
 from driftdriver.upstream_pins import (
+    get_adopted_sha,
     get_sha,
     is_snoozed,
     load_pins,
     save_pins,
+    set_adopted_sha,
     set_sha,
     snooze_branch,
 )
@@ -18,7 +20,7 @@ from driftdriver.upstream_pins import (
 
 def test_load_missing_file_returns_empty(tmp_path: Path) -> None:
     pins = load_pins(tmp_path / "upstream-pins.toml")
-    assert pins == {"shas": {}, "snoozed": {}}
+    assert pins == {"shas": {}, "adopted_shas": {}, "snoozed": {}}
 
 
 def test_set_and_get_sha(tmp_path: Path) -> None:
@@ -28,6 +30,15 @@ def test_set_and_get_sha(tmp_path: Path) -> None:
     save_pins(path, pins)
     pins2 = load_pins(path)
     assert get_sha(pins2, "graphwork/workgraph", "main") == "abc123"
+
+
+def test_set_and_get_adopted_sha(tmp_path: Path) -> None:
+    path = tmp_path / "upstream-pins.toml"
+    pins = load_pins(path)
+    pins = set_adopted_sha(pins, "graphwork/workgraph", "main", "def456")
+    save_pins(path, pins)
+    pins2 = load_pins(path)
+    assert get_adopted_sha(pins2, "graphwork/workgraph", "main") == "def456"
 
 
 def test_get_sha_missing_returns_none(tmp_path: Path) -> None:

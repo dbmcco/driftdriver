@@ -12,6 +12,9 @@ test-results/
 # Git worktrees
 .worktrees/
 
+# Tracker runtime state
+.driftdriver/upstream-tracker-last.json
+
 # Packaging / env
 .venv/
 dist/

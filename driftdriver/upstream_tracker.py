@@ -366,6 +366,25 @@ def _git_current_sha(repo_path: Path, branch: str) -> str | None:
     return None
 
 
+def _resolve_upstream_ref(repo_cfg: dict[str, Any], branch: str, repo_path: Path) -> str:
+    """Return the ref that represents the true external upstream line."""
+    explicit = str(repo_cfg.get("upstream_ref") or "").strip()
+    if explicit:
+        return explicit
+    candidate = f"origin/{branch}"
+    if _git_current_sha(repo_path, candidate):
+        return candidate
+    return branch
+
+
+def _resolve_adopted_ref(repo_cfg: dict[str, Any], branch: str) -> str:
+    """Return the ref that represents the currently adopted local/fork line."""
+    explicit = str(repo_cfg.get("adopted_ref") or "").strip()
+    if explicit:
+        return explicit
+    return branch
+
+
 def _git_changed_files(repo_path: Path, old_sha: str, new_sha: str) -> list[str]:
     """Return list of files changed between two SHAs."""
     try:
@@ -417,7 +436,15 @@ def run_pass1(
     When *project_dir* is provided, emits wg tasks for repos that warrant action
     (recommended_action != 'ignore') or exceed their configured lag_window_commits threshold.
     """
-    from driftdriver.upstream_pins import get_sha, is_snoozed, load_pins, save_pins, set_sha
+    from driftdriver.upstream_pins import (
+        get_adopted_sha,
+        get_sha,
+        is_snoozed,
+        load_pins,
+        save_pins,
+        set_adopted_sha,
+        set_sha,
+    )
 
     pins = load_pins(pins_path)
     results: list[dict[str, Any]] = []
@@ -438,40 +465,65 @@ def run_pass1(
             if is_snoozed(pins, repo_name, branch):
                 continue
 
-            current_sha = _git_current_sha(local_path, branch)
-            if not current_sha:
+            upstream_ref = _resolve_upstream_ref(repo_cfg, branch, local_path)
+            adopted_ref = _resolve_adopted_ref(repo_cfg, branch)
+
+            upstream_sha = _git_current_sha(local_path, upstream_ref)
+            if not upstream_sha:
                 continue
+            adopted_sha = _git_current_sha(local_path, adopted_ref) or upstream_sha
 
             pinned_sha = get_sha(pins, repo_name, branch)
-            if pinned_sha == current_sha:
-                continue  # No change
+            pinned_adopted_sha = get_adopted_sha(pins, repo_name, branch)
+            upstream_changed = pinned_sha != upstream_sha
+            adopted_changed = pinned_adopted_sha != adopted_sha
+            adopted_diverged = adopted_sha != upstream_sha
+            should_report = upstream_changed or adopted_diverged
 
-            if pinned_sha:
-                changed_files = _git_changed_files(local_path, pinned_sha, current_sha)
-                subjects = _git_commit_subjects(local_path, pinned_sha, current_sha)
-                commit_count = _git_commit_count(local_path, pinned_sha, current_sha)
+            if not should_report and not adopted_changed:
+                continue  # No upstream or adoption-state change
+
+            if not should_report:
+                pins = set_adopted_sha(pins, repo_name, branch, adopted_sha)
+                pins_updated = True
+                continue
+
+            if upstream_changed and pinned_sha:
+                changed_files = _git_changed_files(local_path, pinned_sha, upstream_sha)
+                subjects = _git_commit_subjects(local_path, pinned_sha, upstream_sha)
+                commit_count = _git_commit_count(local_path, pinned_sha, upstream_sha)
             else:
                 changed_files = []
                 subjects = []
                 commit_count = 0
 
-            category = classify_changes(changed_files, subjects)
-            relevance = triage_relevance(
-                changed_files, subjects, category, llm_caller=llm_caller
-            )
+            if upstream_changed:
+                category = classify_changes(changed_files, subjects)
+                relevance = triage_relevance(
+                    changed_files, subjects, category, llm_caller=llm_caller
+                )
+            else:
+                category = "tracking-state"
+                relevance = 0.0
 
             eval_result: dict[str, Any] = {
                 "repo": repo_name,
                 "branch": branch,
                 "old_sha": pinned_sha,
-                "new_sha": current_sha,
+                "new_sha": upstream_sha,
                 "category": category,
                 "relevance_score": relevance,
                 "commit_count": commit_count,
+                "upstream_ref": upstream_ref,
+                "adopted_ref": adopted_ref,
+                "adopted_old_sha": pinned_adopted_sha,
+                "adopted_sha": adopted_sha,
+                "adopted_diverged": adopted_diverged,
+                "tracking_status": "tracking-adopted-line" if adopted_diverged else "tracking-upstream",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
-            if relevance > _RELEVANCE_THRESHOLD:
+            if upstream_changed and relevance > _RELEVANCE_THRESHOLD:
                 deep = deep_eval_change(
                     changed_files,
                     subjects,
@@ -488,11 +540,13 @@ def run_pass1(
                 eval_result["llm_eval"] = None
 
             eval_result["action"] = (
-                "alert" if risk_score >= _RISK_ALERT_THRESHOLD else "auto_adopt"
+                "tracked"
+                if not upstream_changed
+                else ("alert" if risk_score >= _RISK_ALERT_THRESHOLD else "auto_adopt")
             )
 
             # Emit a wg task when action warrants it or lag window exceeded
-            if project_dir is not None:
+            if project_dir is not None and upstream_changed:
                 action = eval_result.get("recommended_action", "watch")
                 lag_exceeded = lag_threshold > 0 and lag_window_check(commit_count, lag_threshold)
                 if action != "ignore" or lag_exceeded:
@@ -505,7 +559,10 @@ def run_pass1(
                     )
                     eval_result["wg_task_id"] = task_id
 
-            pins = set_sha(pins, repo_name, branch, current_sha)
+            if upstream_changed:
+                pins = set_sha(pins, repo_name, branch, upstream_sha)
+            if adopted_changed:
+                pins = set_adopted_sha(pins, repo_name, branch, adopted_sha)
             pins_updated = True
             results.append(eval_result)
 
