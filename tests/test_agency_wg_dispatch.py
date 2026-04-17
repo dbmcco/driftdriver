@@ -102,6 +102,43 @@ class AgencyAssignWorkgraphTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
 
+    def test_extracts_rendered_prompt_from_current_agency_json_shape(self) -> None:
+        """Current Agency returns prompt material under agents[agent_hash].rendered_prompt."""
+        with tempfile.TemporaryDirectory() as td:
+            fake_bin = Path(td) / "bin"
+            fake_bin.mkdir()
+
+            curl_stub = fake_bin / "curl"
+            curl_stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            curl_stub.chmod(0o755)
+
+            agency_stub = fake_bin / "agency"
+            agency_stub.write_text(
+                """#!/bin/sh
+cat <<'EOF'
+{"assignments":{"task-123":{"agency_task_id":"task-123","agent_hash":"hash-1","agent_id":"agent-1"}},"agents":{"hash-1":{"rendered_prompt":"You are a current Agency-composed specialist."}}}
+EOF
+""",
+                encoding="utf-8",
+            )
+            agency_stub.chmod(0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+            result = subprocess.run(
+                [str(self.assign_script), "task-123", "test description"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertEqual(
+                result.stdout.strip(),
+                "You are a current Agency-composed specialist.",
+            )
+
 
 class ClaudeRunAgencyFallbackTests(unittest.TestCase):
     """Test that claude-run.sh falls back gracefully when Agency is down."""
