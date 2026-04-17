@@ -44,6 +44,7 @@ class TestExecutorShim(unittest.TestCase):
             self.assertIn("add", cmd)
             self.assertIn("--id", cmd)
             self.assertIn("drift-scope-t1", cmd)
+            self.assertIn("--no-place", cmd)
             self.assertNotIn("--immediate", cmd)
 
     @patch("driftdriver.executor_shim.subprocess.run")
@@ -61,6 +62,7 @@ class TestExecutorShim(unittest.TestCase):
             self.assertEqual(result, "completed")
             cmd = mock_run.call_args[0][0]
             self.assertIn("add", cmd)
+            self.assertIn("--no-place", cmd)
             self.assertIn("--after", cmd)
             self.assertIn("t1", cmd)
             self.assertNotIn("--immediate", cmd)
@@ -143,8 +145,8 @@ class TestExecutorShimLive(unittest.TestCase):
             result = shim.execute(d)
             self.assertEqual(result, "completed")
 
-    def test_create_task_with_deps_fails_due_to_after_flag(self) -> None:
-        """Documents that --after is also invalid for wg add (separate bug)."""
+    def test_create_task_with_deps_succeeds_with_after_flag(self) -> None:
+        """Current wg add supports --after dependency edges."""
         with TemporaryDirectory() as tmp:
             wg_dir = Path(tmp) / ".workgraph"
             subprocess.run(
@@ -162,6 +164,5 @@ class TestExecutorShimLive(unittest.TestCase):
                 "title": "child task",
                 "after": ["parent-1"],
             })
-            # --after is also invalid for wg add — separate bug from --immediate
             result = shim.execute(d)
-            self.assertEqual(result, "failed")
+            self.assertEqual(result, "completed")
