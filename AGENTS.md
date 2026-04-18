@@ -37,6 +37,10 @@ driftdriver attractor run --json
 - Arm repo: `driftdriver --dir "$PWD" speedriftd status --set-mode supervise --lease-owner <agent> --reason "reason"`
 - Disarm: `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "done"`
 
+### Model Routing Warning
+- Workspace config may still point `agent.executor`/`coordinator.executor` at `claude`, and lightweight Workgraph calls (`wg evaluate`, FLIP, triage, assigner/evaluator roles) fall back to the `claude` CLI unless a provider is explicitly configured for that role.
+- If you want evaluator or FLIP work to avoid the Claude CLI, set provider-aware role config in `.workgraph/config.toml` or via `wg config --set-model <role> ... --set-provider <role> ...`; otherwise `wg evaluate run --flip` can fail with a Claude CLI error even when the product code has no Claude dependency.
+
 ### Attractor Loop (Convergence Engine)
 - Each repo declares a target attractor in `drift-policy.toml`: `onboarded` → `production-ready` → `hardened`
 - The loop runs diagnose → plan → execute → re-diagnose until convergence or circuit breaker

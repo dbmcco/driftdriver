@@ -45,6 +45,10 @@ driftdriver attractor run --json
 - Arm repo: `driftdriver --dir "$PWD" speedriftd status --set-mode supervise --lease-owner <agent> --reason "reason"`
 - Disarm: `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "done"`
 
+### Model Routing Warning
+- Workspace config may still set `agent.executor`/`coordinator.executor` to `claude`, and lightweight Workgraph calls such as `wg evaluate`, FLIP, triage, and assigner/evaluator dispatch will fall back to the `claude` CLI unless a provider is explicitly configured for that role.
+- If you want evaluator or FLIP work to avoid the Claude CLI, set provider-aware role config in `.workgraph/config.toml` or via `wg config --set-model <role> ... --set-provider <role> ...`; otherwise `wg evaluate run --flip` can fail with a Claude CLI error even when the target product has no Claude dependency.
+
 ### Dark Factory
 This repo is part of a dark factory managed by the **Factory Brain** — a three-tier
 LLM supervisor (Haiku → Sonnet → Opus) that watches all enrolled repos via events
