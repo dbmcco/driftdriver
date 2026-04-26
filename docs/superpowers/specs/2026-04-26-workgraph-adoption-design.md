@@ -92,10 +92,17 @@ Why this shape:
 
 ### Tranche 4: Execution Routing
 
-Scope:
+This tranche is now partially landed as the narrow provider-model routing slice.
+
+Landed scope:
+- `provider:model` parsing for known upstream prefixes
+- effective executor inference from model prefix
+- daemon start / tick / status / reconfigure paths using effective executor
+- coordinator-adjacent command paths using effective executor where raw executor assumptions were still embedded
+
+Deferred from the broader upstream tranche:
 - model endpoint support
 - `wg service set-executor`
-- executor selection and routing
 - spawn-task unification and handler routing
 - tag/model/provider routing behavior
 
@@ -157,10 +164,10 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 ### Tranche 4 Contract
 
 - existing Speedrift wrapper/managed-surface checks stay green
-- one spawn/executor routing smoke
-- one service executor swap / coordinator path smoke
-- one session resume / reconnect smoke
-- one session repair/doctor smoke
+- `provider:model` parsing resolves known upstream prefixes correctly
+- daemon reconfigure from disk infers the correct executor from `coordinator.model`
+- daemon reconfigure with a model-only override infers the correct executor when the executor is not explicitly overridden
+- service/runtime surfaces report the effective executor rather than the raw default field
 
 ## Operational Rules
 
@@ -177,7 +184,8 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 - The adopted line has first-class graph-level recovery commands instead of only manual cleanup.
 - The adopted line has opt-in worktree isolation substrate that later lifecycle cleanup can build on.
 - The adopted line has coordinator-driven worktree lifecycle cleanup for the marked happy path.
-- Execution-routing is explicitly recorded as the next high-value tranche.
+- The adopted line has narrow provider-model execution routing across the service/runtime paths.
+- Broader execution-routing work is explicitly reduced to the remaining residuals above.
 
 ## Recommended Execution Order
 
@@ -186,4 +194,5 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 3. Land the narrow Tranche 3 coordinator cleanup sweep in `workgraph`.
 4. Strengthen `driftdriver` compatibility gates to include all landed tranche contracts.
 5. Re-run upstream tracking and confirm the adopted line remains intentionally diverged but materially improved.
-6. Start execution-routing design/adoption as the next high-value tranche.
+6. Land the narrow Tranche 4 provider-model execution-routing slice.
+7. Carry the remaining execution-routing and session-runtime work only after stronger service-level contracts exist.

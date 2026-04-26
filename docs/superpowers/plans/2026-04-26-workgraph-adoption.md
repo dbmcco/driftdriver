@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Adopt the highest-value upstream `workgraph` changes into our fork in a staged, testable way, starting with graph-level recovery, then the worktree substrate, then the narrow lifecycle cleanup sweep, rather than a blind repo-wide convergence move.
+**Goal:** Adopt the highest-value upstream `workgraph` changes into our fork in a staged, testable way, starting with graph-level recovery, then the worktree substrate, then the narrow lifecycle cleanup sweep, then the narrow provider-model execution-routing slice, rather than a blind repo-wide convergence move.
 
-**Architecture:** Treat the current adopted `workgraph` line as canonical until upstream replacements are proven better under stronger contracts. Land changes by tranche: first graph-level recovery, then minimal worktree-isolation substrate, then the dependent coordinator cleanup sweep, then execution routing, then session runtime. Use upstream commit lift or cherry-pick where clean, preserve local fork behavior by default, and strengthen `driftdriver` compatibility checks after each landed tranche.
+**Architecture:** Treat the current adopted `workgraph` line as canonical until upstream replacements are proven better under stronger contracts. Land changes by tranche: first graph-level recovery, then minimal worktree-isolation substrate, then the dependent coordinator cleanup sweep, then the narrow execution-routing slice, then broader session/runtime adoption. Use upstream commit lift or cherry-pick where clean, preserve local fork behavior by default, and strengthen `driftdriver` compatibility checks after each landed tranche.
 
 **Tech Stack:** Rust (`workgraph` CLI/service), Python (`driftdriver` upstream tracker), pytest for Speedrift contracts, cargo test for `workgraph`, git fork/upstream remotes.
 
@@ -232,6 +232,6 @@ git push
 git status -sb
 ```
 
-- [ ] **Step 4: Record the next tranche**
+- [ ] **Step 4: Record the remaining tranche boundary**
 
-Update the adoption plan or create a follow-up issue/task for the execution-routing tranche.
+Update the adoption plan or create a follow-up issue/task for the remaining execution-routing residuals and the later session-runtime tranche.
