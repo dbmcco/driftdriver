@@ -47,6 +47,10 @@ command = "cd /Users/braydon/projects/experiments/workgraph && cargo test --test
 name = "workgraph-execution-routing-contract"
 command = "cd /Users/braydon/projects/experiments/workgraph && cargo test handle_reconfigure -- --nocapture && cargo test effective_executor -- --nocapture && cargo test parse_model_spec -- --nocapture"
 
+[[external_repos.compatibility_checks]]
+name = "workgraph-endpoint-routing-contract"
+command = "cd /Users/braydon/projects/experiments/workgraph && cargo test endpoint_execution_ -- --nocapture && cargo test native_client_config_ -- --nocapture && cargo test --test integration_native_executor test_native_executor_config_from_toml -- --nocapture"
+
 [[external_repos]]
 name = "agentbureau/agency"
 local_path = "/Users/braydon/projects/experiments/agency"

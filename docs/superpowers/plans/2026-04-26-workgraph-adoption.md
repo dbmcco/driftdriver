@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Adopt the highest-value upstream `workgraph` changes into our fork in a staged, testable way, starting with graph-level recovery, then the worktree substrate, then the narrow lifecycle cleanup sweep, then the narrow provider-model execution-routing slice, rather than a blind repo-wide convergence move.
+**Goal:** Adopt the highest-value upstream `workgraph` changes into our fork in a staged, testable way, starting with graph-level recovery, then the worktree substrate, then the narrow lifecycle cleanup sweep, then the narrow provider-model execution-routing slice extended with endpoint-aware native execution, rather than a blind repo-wide convergence move.
 
-**Architecture:** Treat the current adopted `workgraph` line as canonical until upstream replacements are proven better under stronger contracts. Land changes by tranche: first graph-level recovery, then minimal worktree-isolation substrate, then the dependent coordinator cleanup sweep, then the narrow execution-routing slice, then broader session/runtime adoption. Use upstream commit lift or cherry-pick where clean, preserve local fork behavior by default, and strengthen `driftdriver` compatibility checks after each landed tranche.
+**Architecture:** Treat the current adopted `workgraph` line as canonical until upstream replacements are proven better under stronger contracts. Land changes by tranche: first graph-level recovery, then minimal worktree-isolation substrate, then the dependent coordinator cleanup sweep, then the narrow execution-routing slice, then the endpoint-aware native execution extension of that slice, then broader session/runtime adoption. Use upstream commit lift or cherry-pick where clean, preserve local fork behavior by default, and strengthen `driftdriver` compatibility checks after each landed tranche.
 
 **Tech Stack:** Rust (`workgraph` CLI/service), Python (`driftdriver` upstream tracker), pytest for Speedrift contracts, cargo test for `workgraph`, git fork/upstream remotes.
 
@@ -191,7 +191,14 @@ cargo test --test integration_recovery_commands -- --nocapture
 
 Extend the existing Workgraph compatibility section with checks that exercise the landed recovery, worktree-spawn, and worktree-lifecycle behavior, not just wrapper contracts.
 
-- [ ] **Step 2: Run the targeted `driftdriver` tests**
+- [ ] **Step 2: Add endpoint-routing checks once the Tranche 4 extension lands**
+
+Target behavior:
+- spawn-time endpoint routing picks the intended provider/endpoint metadata
+- native execution prefers spawn-resolved env over legacy `[native_executor]`
+- native execution still respects configured endpoint url/key without spawn env
+
+- [ ] **Step 3: Run the targeted `driftdriver` tests**
 
 ```bash
 cd /Users/braydon/projects/experiments/driftdriver
@@ -209,6 +216,8 @@ PYTHONPATH=$PWD pytest tests/test_upstream_tracker.py -q
 cd /Users/braydon/projects/experiments/workgraph
 cargo test --test integration_recovery_commands -- --nocapture
 cargo test --test integration_spawn_worktrees -- --nocapture
+cargo test native_client_config_ -- --nocapture
+cargo test --test integration_native_executor test_native_executor_config_from_toml -- --nocapture
 
 cd /Users/braydon/projects/experiments/driftdriver
 PYTHONPATH=$PWD pytest tests/test_upstream_tracker.py tests/test_executor_shim.py tests/test_handlers.py tests/test_unified_install.py -q
