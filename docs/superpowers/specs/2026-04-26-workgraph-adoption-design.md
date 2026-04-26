@@ -32,29 +32,42 @@ The fork should become thinner over time, but thinning is an outcome of verified
 
 ## Tranche Model
 
-### Tranche 1: Recovery + Worktree Hygiene
+### Tranche 1: Graph-Level Recovery
 
-This is the first adoption tranche because it has the best risk/reward profile.
+This is the first adoption tranche because it composes with the current fork directly and improves operator recovery immediately.
+
+Scope:
+- graph-surgery primitive for inserting first-class follow-up work (`wg insert`)
+- bulk subgraph reset for retry/recovery (`wg reset`)
+- first-class replacement-task recovery (`wg rescue`)
+- provenance coverage and end-to-end recovery contract tests
+
+Why first:
+- improves recovery without forcing the fork onto upstream worktree assumptions it does not yet implement
+- lands real user/operator leverage quickly
+- gives Speedrift a concrete new contract it can run against the adopted line
+
+Primary upstream surfaces:
+- `src/commands/insert.rs`
+- `src/commands/reset.rs`
+- `src/commands/rescue.rs`
+- related CLI and command wiring
+
+### Tranche 2: Worktree Hygiene (Dependent Tranche)
+
+This tranche is explicitly dependent on later worktree-isolation substrate adoption.
 
 Scope:
 - agent liveness invariant (`status AND process alive AND heartbeat fresh`)
 - worktree lifecycle module
 - atomic worktree cleanup sweep from the coordinator tick
 - fallback operator-facing worktree garbage collection
-- recovery-oriented commands that reduce manual cleanup work (`wg rescue`, `wg reset`) if they can be landed cleanly without destabilizing the coordinator
 
-Why first:
-- directly reduces long-running autonomy failure modes
-- narrows leaked worktree / zombie agent / stranded task states
-- improves operator recovery without touching the most fragile session-routing code first
+Why not first:
+- the current adopted line does not yet have the upstream worktree-lifecycle substrate
+- forcing cleanup semantics in early would couple this tranche to a larger execution-model migration
 
-Primary upstream surfaces:
-- `src/commands/service/worktree.rs`
-- `src/service/registry.rs`
-- coordinator integration points in `src/commands/service/coordinator.rs`
-- recovery commands around `src/commands/reset.rs`, `src/commands/rescue.rs`, and related CLI wiring
-
-### Tranche 2: Execution Routing
+### Tranche 3: Execution Routing
 
 Scope:
 - model endpoint support
@@ -68,7 +81,7 @@ Why second:
 - overlaps directly with our forked coordinator/spawn behavior
 - should only move after the recovery surface is stronger and easier to debug
 
-### Tranche 3: Session Runtime
+### Tranche 4: Session Runtime
 
 Scope:
 - session identity and repair
@@ -80,7 +93,7 @@ Why third:
 - highest behavioral coupling to current agent execution flows
 - should only move once recovery and routing are more stable
 
-### Tranche 4: Optional Residual Upstream Convergence
+### Tranche 5: Optional Residual Upstream Convergence
 
 Scope:
 - remaining nonessential churn after the three high-value tranches
@@ -95,15 +108,18 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 ### Tranche 1 Contract
 
 - existing Speedrift wrapper/managed-surface checks stay green
-- `workgraph` unit/integration tests for:
-  - worktree cleanup safety
-  - dead-agent recovery
-  - operation logging for recovery commands
-- one coordinator/service smoke from the local `workgraph` test suite
+- `workgraph` recovery contract passes end to end:
+  - `insert` rewires edges correctly
+  - `rescue` creates first-class replacement work
+  - `reset` resets closure state and strips attached meta tasks
+  - all three record provenance correctly
 
 ### Tranche 2 Contract
 
 - existing Speedrift wrapper/managed-surface checks stay green
+- `workgraph` unit/integration tests for:
+  - worktree cleanup safety
+  - dead-agent recovery
 - one spawn/executor routing smoke
 - one service executor swap / coordinator path smoke
 
@@ -125,12 +141,12 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 
 - Tranche 1 lands on our adopted `workgraph` line with tests and Speedrift contracts passing.
 - `driftdriver` reflects the strengthened adoption checks for the landed tranche.
-- The adopted line is more reliable in long-running cleanup/recovery scenarios.
-- The next tranche boundary is explicit and queued, not hand-waved.
+- The adopted line has first-class graph-level recovery commands instead of only manual cleanup.
+- Worktree lifecycle adoption is explicitly recorded as dependent work, not blurred into the first tranche.
 
 ## Recommended Execution Order
 
 1. Land Tranche 1 in `workgraph`.
 2. Strengthen `driftdriver` compatibility gates to include the new tranche contract.
 3. Re-run upstream tracking and confirm the adopted line remains intentionally diverged but materially improved.
-4. Start a focused Tranche 2 review and lift only the routing changes that survive the stronger contract.
+4. Start the dependent Tranche 2 design only once worktree-isolation substrate adoption is scoped explicitly.

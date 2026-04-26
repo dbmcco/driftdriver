@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Adopt the highest-value upstream `workgraph` changes into our fork in a staged, testable way, starting with recovery and worktree hygiene rather than a blind repo-wide convergence move.
+**Goal:** Adopt the highest-value upstream `workgraph` changes into our fork in a staged, testable way, starting with graph-level recovery rather than a blind repo-wide convergence move.
 
-**Architecture:** Treat the current adopted `workgraph` line as canonical until upstream replacements are proven better under stronger contracts. Land changes by tranche: first recovery and worktree hygiene, then execution routing, then session runtime. Use upstream commit lift or cherry-pick where clean, preserve local fork behavior by default, and strengthen `driftdriver` compatibility checks after each landed tranche.
+**Architecture:** Treat the current adopted `workgraph` line as canonical until upstream replacements are proven better under stronger contracts. Land changes by tranche: first graph-level recovery, then dependent worktree hygiene once the substrate exists locally, then execution routing, then session runtime. Use upstream commit lift or cherry-pick where clean, preserve local fork behavior by default, and strengthen `driftdriver` compatibility checks after each landed tranche.
 
 **Tech Stack:** Rust (`workgraph` CLI/service), Python (`driftdriver` upstream tracker), pytest for Speedrift contracts, cargo test for `workgraph`, git fork/upstream remotes.
 
@@ -16,19 +16,14 @@
 |------|--------|---------|
 | `driftdriver/docs/superpowers/specs/2026-04-26-workgraph-adoption-design.md` | Create | Adoption design and tranche boundaries |
 | `driftdriver/docs/superpowers/plans/2026-04-26-workgraph-adoption.md` | Create | Execution plan for staged adoption |
-| `workgraph/src/service/registry.rs` | Modify | Add stronger agent liveness invariant from upstream |
-| `workgraph/src/commands/service/mod.rs` | Modify | Register worktree lifecycle module and any related service hooks |
-| `workgraph/src/commands/service/coordinator.rs` | Modify | Sweep cleanup-pending worktrees and preserve local coordinator behavior |
-| `workgraph/src/commands/service/worktree.rs` | Create | Upstream worktree lifecycle cleanup module |
-| `workgraph/src/commands/worktree_gc.rs` | Create | Operator-facing fallback GC for orphaned worktrees |
 | `workgraph/src/commands/mod.rs` | Modify | Export newly adopted command modules |
-| `workgraph/src/cli.rs` | Modify | Wire GC/worktree and recovery command surfaces if adopted |
+| `workgraph/src/cli.rs` | Modify | Wire recovery command surfaces |
 | `workgraph/src/main.rs` | Modify | Route new command handlers |
+| `workgraph/src/commands/insert.rs` | Create | Graph-surgery primitive for recovery and follow-up work |
 | `workgraph/src/commands/reset.rs` | Create | Bulk reset recovery command from upstream, if Tranche 1 subset includes it |
 | `workgraph/src/commands/rescue.rs` | Create | First-class rescue command from upstream, if Tranche 1 subset includes it |
-| `workgraph/tests/...` | Modify/Create | Add or lift upstream tests for liveness, worktree cleanup, recovery, and logging |
+| `workgraph/tests/integration_recovery_commands.rs` | Create | End-to-end recovery contract for insert/reset/rescue + provenance |
 | `driftdriver/.driftdriver/upstream-config.toml` | Modify | Strengthen Workgraph compatibility checks after Tranche 1 lands |
-| `driftdriver/tests/test_upstream_tracker.py` | Modify | Verify updated compatibility gate behavior |
 
 ---
 
@@ -61,132 +56,77 @@ git add docs/superpowers/specs/2026-04-26-workgraph-adoption-design.md docs/supe
 git commit -m "docs: add staged workgraph adoption plan"
 ```
 
-## Task 2: Raise the failing Workgraph-side tests for Tranche 1
+## Task 2: Raise the Workgraph-side tests for Tranche 1
 
 **Files:**
-- Modify/Create: `workgraph/src/service/registry.rs`
-- Modify/Create: `workgraph/tests/...`
+- Create: `workgraph/tests/integration_recovery_commands.rs`
 
-- [ ] **Step 1: Add or lift failing tests for the stronger liveness invariant**
-
-Target behaviors:
-- alive status alone is insufficient
-- dead process makes agent non-live
-- stale heartbeat makes agent non-live
-- all three conditions together make agent live
-
-- [ ] **Step 2: Add or lift failing tests for cleanup-pending worktree sweep**
+- [ ] **Step 1: Add end-to-end recovery contract tests**
 
 Target behaviors:
-- marked worktree is removed when agent is not live and task is terminal
-- live agent worktree is preserved
-- non-terminal task worktree is preserved
-- repeated sweep is idempotent
+- `insert` rewires a target slot and records an insert operation
+- `rescue` creates a first-class replacement task and records a rescue operation
+- `reset` clears closure state, strips attached meta tasks, and records a reset operation
 
-- [ ] **Step 3: Add or lift failing tests for recovery command logging if `reset`/`rescue` are included**
-
-Target behaviors:
-- operation log entries recorded
-- rescue creates first-class replacement task
-- reset updates targeted closure without silent mutation outside scope
-
-- [ ] **Step 4: Run the targeted Workgraph tests and confirm they fail for the missing behavior**
+- [ ] **Step 2: Run the targeted Workgraph tests and confirm they fail for the missing behavior**
 
 ```bash
 cd /Users/braydon/projects/experiments/workgraph
-cargo test service::registry -- --nocapture
-cargo test worktree -- --nocapture
+cargo test --test integration_recovery_commands -- --nocapture
 ```
 
-Expected: failures or missing-module/command coverage for the newly introduced behavior.
+Expected: failures or missing command/behavior coverage for the recovery surface before implementation.
 
-## Task 3: Implement Tranche 1 Worktree hygiene
+## Task 3: Implement Tranche 1 graph-level recovery
 
 **Files:**
-- Modify: `workgraph/src/service/registry.rs`
-- Modify: `workgraph/src/commands/service/mod.rs`
-- Modify: `workgraph/src/commands/service/coordinator.rs`
-- Create: `workgraph/src/commands/service/worktree.rs`
-- Create: `workgraph/src/commands/worktree_gc.rs`
 - Modify: `workgraph/src/commands/mod.rs`
 - Modify: `workgraph/src/cli.rs`
 - Modify: `workgraph/src/main.rs`
-
-- [ ] **Step 1: Add `AgentEntry::is_live()` and keep `is_alive()` behavior unchanged**
-
-Adopt the stronger liveness rule from upstream without changing current callers that still need status-only checks.
-
-- [ ] **Step 2: Lift the upstream worktree lifecycle module**
-
-Bring in:
-- cleanup-pending marker semantics
-- orphaned worktree cleanup logic
-- shared removal machinery
-- heartbeat timeout constant
-
-Preserve local project conventions where they differ, but do not re-invent the safety model.
-
-- [ ] **Step 3: Integrate cleanup sweep into coordinator tick**
-
-Add the sweep call in the coordinator path without overwriting our local coordinator-specific deltas.
-
-- [ ] **Step 4: Add operator-facing fallback worktree GC command surface**
-
-Expose safe fallback cleanup for orphaned worktrees. Keep dry-run/default-safe semantics.
-
-- [ ] **Step 5: Run focused `cargo test` slices until Tranche 1 passes**
-
-```bash
-cd /Users/braydon/projects/experiments/workgraph
-cargo test worktree -- --nocapture
-cargo test integration_service -- --nocapture
-cargo test integration_service_coordinator -- --nocapture
-```
-
-## Task 4: Adopt recovery commands if they land cleanly in the same tranche
-
-**Files:**
+- Create: `workgraph/src/commands/insert.rs`
 - Create: `workgraph/src/commands/reset.rs`
 - Create: `workgraph/src/commands/rescue.rs`
-- Modify: `workgraph/src/cli.rs`
-- Modify: `workgraph/src/main.rs`
-- Modify: `workgraph/src/commands/mod.rs`
-- Modify/Create: recovery-related tests
 
-- [ ] **Step 1: Lift `wg rescue` with its tests**
+- [ ] **Step 1: Lift `wg insert` as the graph-surgery primitive**
 
-Bring in the first-class replacement-task recovery path if it composes cleanly with the current graph and logging model.
+Preserve local graph semantics while adopting the upstream insertion behaviors needed for recovery and follow-up work.
 
-- [ ] **Step 2: Lift `wg reset` with its tests**
+- [ ] **Step 2: Lift `wg reset` with local-state adaptation**
 
-Bring in bounded graph reset behavior if it composes cleanly with the current graph model and logging model.
+Adapt upstream reset semantics to the current fork's task model:
+- clear closure status back to `Open`
+- clear stale assignment/failure/wait state
+- preserve history in task logs
+- strip attached system tasks when requested
 
-- [ ] **Step 3: Skip this subtask if the recovery commands create cross-tranche risk**
+- [ ] **Step 3: Lift `wg rescue` on top of `insert`**
 
-If adopting these commands starts coupling Tranche 1 to execution-routing or session-runtime changes, defer them explicitly instead of forcing them in.
+Bring in first-class rescue work while keeping local provenance and log conventions.
 
-## Task 5: Strengthen Speedrift’s Workgraph contract after Tranche 1 lands
+- [ ] **Step 4: Run focused `cargo test` slices until Tranche 1 passes**
+
+```bash
+cd /Users/braydon/projects/experiments/workgraph
+cargo test --test integration_recovery_commands -- --nocapture
+```
+
+## Task 4: Strengthen Speedrift’s Workgraph contract after Tranche 1 lands
 
 **Files:**
 - Modify: `driftdriver/.driftdriver/upstream-config.toml`
-- Modify: `driftdriver/tests/test_upstream_tracker.py`
 
 - [ ] **Step 1: Add a stronger Workgraph compatibility check**
 
-Extend the existing Workgraph compatibility section with a check that exercises the landed Tranche 1 behavior, not just wrapper contracts.
+Extend the existing Workgraph compatibility section with a check that exercises the landed Tranche 1 recovery behavior, not just wrapper contracts.
 
-- [ ] **Step 2: Verify the tracker still reports adopted-vs-upstream honestly**
-
-Update tests so compatibility passing does not imply branch adoption when the adopted line is still intentionally diverged.
-
-- [ ] **Step 3: Run the targeted `driftdriver` tests**
+- [ ] **Step 2: Run the targeted `driftdriver` tests**
 
 ```bash
 cd /Users/braydon/projects/experiments/driftdriver
 PYTHONPATH=$PWD pytest tests/test_upstream_tracker.py -q
 ```
 
-## Task 6: Land, verify, and hand off the next tranche boundary
+## Task 5: Land, verify, and hand off the next tranche boundary
 
 **Files:**
 - Modify: adoption docs if needed for factual updates after implementation
@@ -195,8 +135,7 @@ PYTHONPATH=$PWD pytest tests/test_upstream_tracker.py -q
 
 ```bash
 cd /Users/braydon/projects/experiments/workgraph
-cargo test integration_service -- --nocapture
-cargo test integration_service_coordinator -- --nocapture
+cargo test --test integration_recovery_commands -- --nocapture
 
 cd /Users/braydon/projects/experiments/driftdriver
 PYTHONPATH=$PWD pytest tests/test_upstream_tracker.py tests/test_executor_shim.py tests/test_handlers.py tests/test_unified_install.py -q
@@ -222,8 +161,4 @@ git status -sb
 
 - [ ] **Step 4: Record the next tranche**
 
-Update the adoption plan or create a follow-up issue/task for Tranche 2:
-- execution routing
-- model endpoint
-- service executor swap
-- spawn-task unification
+Update the adoption plan or create a follow-up issue/task for the dependent worktree-lifecycle tranche and the later execution-routing tranche.
