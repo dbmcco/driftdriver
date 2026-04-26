@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -119,7 +119,7 @@ class TestBuildContextPackage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = _make_snapshot_repo(tmp)
             intent = {
-                "set_at": "2026-03-18T14:00:00Z",
+                "set_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "agent_type": "claude-code",
                 "summary": "Resume the handler implementation.",
                 "in_progress_tasks": ["t-1"],
@@ -136,7 +136,7 @@ class TestBuildContextPackage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = _make_snapshot_repo(tmp)
             intent = {
-                "set_at": "2026-03-01T00:00:00Z",
+                "set_at": (datetime.now(timezone.utc) - timedelta(days=8)).isoformat().replace("+00:00", "Z"),
                 "agent_type": "claude-code",
                 "summary": "Old stale intent",
                 "in_progress_tasks": [],

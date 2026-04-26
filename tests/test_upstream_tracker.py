@@ -370,6 +370,16 @@ def test_build_adoption_cycle_summarizes_pass1_results() -> None:
                 "compatibility": {"status": "passed", "checks": [{"name": "wg-cli", "ok": True}]},
             },
             {
+                "repo": "danshapiro/freshell",
+                "branch": "main",
+                "new_sha": "fff11111",
+                "upstream_ref": "origin/main",
+                "adopted_ref": "origin/main",
+                "tracking_status": "tracking-upstream",
+                "action": "auto_adopt",
+                "compatibility": {"status": "passed", "checks": [{"name": "freshell-session-contract", "ok": True}]},
+            },
+            {
                 "repo": "agentbureau/agency",
                 "branch": "main",
                 "new_sha": "def67890",
@@ -385,9 +395,11 @@ def test_build_adoption_cycle_summarizes_pass1_results() -> None:
 
     assert cycle["counts"]["adopted"] == 1
     assert cycle["counts"]["needs_update"] == 1
-    assert cycle["items"][0]["status"] == "adopted"
-    assert cycle["items"][1]["status"] == "needs_update"
-    assert cycle["items"][1]["wg_task_id"] == "upstream-agency-sync"
+    assert cycle["counts"]["tracking"] == 1
+    assert cycle["items"][0]["status"] == "tracking"
+    assert cycle["items"][1]["status"] == "adopted"
+    assert cycle["items"][2]["status"] == "needs_update"
+    assert cycle["items"][2]["wg_task_id"] == "upstream-agency-sync"
 
 
 # --- Pass 2 tests ---

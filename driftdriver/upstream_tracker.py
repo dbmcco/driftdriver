@@ -494,6 +494,8 @@ def _adoption_status(result: dict[str, Any]) -> str:
     if compat_status == "failed" or action == "needs_update":
         return "needs_update"
     if action == "auto_adopt" and compat_status == "passed":
+        if tracking_status == "tracking-adopted-line":
+            return "tracking"
         return "adopted"
     if action == "alert":
         return "review"

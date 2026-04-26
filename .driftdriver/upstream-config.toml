@@ -10,6 +10,10 @@ adopted_ref = "main"
 lag_window_commits = 15
 notes = "Browser terminal multiplexer. We run at port 3550, patch dist/ directly."
 
+[[external_repos.compatibility_checks]]
+name = "freshell-session-contract"
+command = "PYTHONPATH=$PWD pytest tests/test_session_launcher.py tests/test_chat_agent.py -q"
+
 [[external_repos]]
 name = "graphwork/workgraph"
 local_path = "/Users/braydon/projects/experiments/workgraph"
