@@ -72,15 +72,23 @@ Why now:
 
 ### Tranche 3: Worktree Lifecycle Hygiene
 
-Scope:
-- agent liveness invariant (`status AND process alive AND heartbeat fresh`)
-- worktree lifecycle module
-- atomic worktree cleanup sweep from the coordinator tick
-- fallback operator-facing worktree garbage collection
+This tranche is now landed in the adopted line as the narrow coordinator-side
+cleanup sweep that the spawn substrate was designed to support.
 
-Why not first:
-- the current adopted line does not yet have the upstream worktree-lifecycle substrate
-- forcing cleanup semantics in early would couple this tranche to a larger execution-model migration
+Scope:
+- service-side worktree lifecycle module
+- atomic worktree cleanup sweep from the coordinator tick
+- branch/worktree reaping gated by `cleanup_pending marker AND agent not live AND task terminal`
+
+Deferred from the broader upstream tranche:
+- richer heartbeat-freshness liveness invariant
+- operator-facing worktree garbage collection
+- orphaned-worktree scavenging beyond marked happy-path cleanup
+
+Why this shape:
+- it keeps the first lifecycle adoption narrow and testable
+- it composes directly with the existing wrapper marker and dead-agent triage
+- it avoids dragging in the broader upstream service/runtime behavior before execution-routing work
 
 ### Tranche 4: Execution Routing
 
@@ -140,15 +148,17 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 ### Tranche 3 Contract
 
 - existing Speedrift wrapper/managed-surface checks stay green
-- `workgraph` unit/integration tests for:
-  - worktree cleanup safety
-  - dead-agent recovery
-- one spawn/executor routing smoke
-- one service executor swap / coordinator path smoke
+- `workgraph` worktree lifecycle contract passes end to end:
+  - wrapper writes `.wg-cleanup-pending` inside the isolated worktree
+  - `wg service tick` reaps the marked worktree after agent exit
+  - the associated worktree branch is deleted
+- recovery and worktree-spawn contracts remain green
 
 ### Tranche 4 Contract
 
 - existing Speedrift wrapper/managed-surface checks stay green
+- one spawn/executor routing smoke
+- one service executor swap / coordinator path smoke
 - one session resume / reconnect smoke
 - one session repair/doctor smoke
 
@@ -166,12 +176,14 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 - `driftdriver` reflects the strengthened adoption checks for the landed tranche.
 - The adopted line has first-class graph-level recovery commands instead of only manual cleanup.
 - The adopted line has opt-in worktree isolation substrate that later lifecycle cleanup can build on.
-- Worktree lifecycle adoption is explicitly recorded as the next dependent tranche, not blurred into recovery.
+- The adopted line has coordinator-driven worktree lifecycle cleanup for the marked happy path.
+- Execution-routing is explicitly recorded as the next high-value tranche.
 
 ## Recommended Execution Order
 
 1. Land Tranche 1 in `workgraph`.
 2. Land Tranche 2 in `workgraph`.
-3. Strengthen `driftdriver` compatibility gates to include both landed tranche contracts.
-4. Re-run upstream tracking and confirm the adopted line remains intentionally diverged but materially improved.
-5. Start the dependent Tranche 3 worktree-lifecycle design only after the substrate is proven stable.
+3. Land the narrow Tranche 3 coordinator cleanup sweep in `workgraph`.
+4. Strengthen `driftdriver` compatibility gates to include all landed tranche contracts.
+5. Re-run upstream tracking and confirm the adopted line remains intentionally diverged but materially improved.
+6. Start execution-routing design/adoption as the next high-value tranche.
