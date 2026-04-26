@@ -4,7 +4,7 @@
 
 **Goal:** Adopt the highest-value upstream `workgraph` changes into our fork in a staged, testable way, starting with graph-level recovery rather than a blind repo-wide convergence move.
 
-**Architecture:** Treat the current adopted `workgraph` line as canonical until upstream replacements are proven better under stronger contracts. Land changes by tranche: first graph-level recovery, then dependent worktree hygiene once the substrate exists locally, then execution routing, then session runtime. Use upstream commit lift or cherry-pick where clean, preserve local fork behavior by default, and strengthen `driftdriver` compatibility checks after each landed tranche.
+**Architecture:** Treat the current adopted `workgraph` line as canonical until upstream replacements are proven better under stronger contracts. Land changes by tranche: first graph-level recovery, then minimal worktree-isolation substrate, then dependent worktree lifecycle cleanup, then execution routing, then session runtime. Use upstream commit lift or cherry-pick where clean, preserve local fork behavior by default, and strengthen `driftdriver` compatibility checks after each landed tranche.
 
 **Tech Stack:** Rust (`workgraph` CLI/service), Python (`driftdriver` upstream tracker), pytest for Speedrift contracts, cargo test for `workgraph`, git fork/upstream remotes.
 
@@ -23,6 +23,10 @@
 | `workgraph/src/commands/reset.rs` | Create | Bulk reset recovery command from upstream, if Tranche 1 subset includes it |
 | `workgraph/src/commands/rescue.rs` | Create | First-class rescue command from upstream, if Tranche 1 subset includes it |
 | `workgraph/tests/integration_recovery_commands.rs` | Create | End-to-end recovery contract for insert/reset/rescue + provenance |
+| `workgraph/src/commands/spawn/worktree.rs` | Create | Minimal per-agent worktree substrate for isolated spawn execution |
+| `workgraph/src/commands/spawn/execution.rs` | Modify | Opt-in worktree-aware spawn path, metadata, and env propagation |
+| `workgraph/src/config.rs` | Modify | Coordinator-level `worktree_isolation` flag |
+| `workgraph/tests/integration_spawn_worktrees.rs` | Create | End-to-end contract for isolated worktree spawn behavior |
 | `driftdriver/.driftdriver/upstream-config.toml` | Modify | Strengthen Workgraph compatibility checks after Tranche 1 lands |
 
 ---
@@ -110,14 +114,50 @@ cd /Users/braydon/projects/experiments/workgraph
 cargo test --test integration_recovery_commands -- --nocapture
 ```
 
-## Task 4: Strengthen Speedrift’s Workgraph contract after Tranche 1 lands
+## Task 4: Implement the minimal worktree-isolation substrate
+
+**Files:**
+- Create: `workgraph/src/commands/spawn/worktree.rs`
+- Modify: `workgraph/src/commands/spawn/mod.rs`
+- Modify: `workgraph/src/commands/spawn/execution.rs`
+- Modify: `workgraph/src/config.rs`
+- Modify: `workgraph/src/commands/config_cmd.rs`
+- Create: `workgraph/tests/integration_spawn_worktrees.rs`
+
+- [ ] **Step 1: Add an opt-in coordinator worktree flag**
+
+Add `coordinator.worktree_isolation = false` by default, parse it from config, and surface it in config display.
+
+- [ ] **Step 2: Add the minimal spawn-time worktree helper**
+
+Adopt only the narrow upstream helper needed to:
+- create `.wg-worktrees/<agent-id>`
+- branch `wg/<agent-id>/<task-id>`
+- symlink `.workgraph`
+- return worktree metadata
+
+- [ ] **Step 3: Route spawned code-writing agents through the worktree when enabled**
+
+Keep the default shared-root behavior intact. Only opt-in code-writing tasks should:
+- execute from the worktree as `cwd`
+- receive `WG_WORKTREE_PATH`, `WG_BRANCH`, `WG_PROJECT_ROOT`, and `WG_WORKTREE_ACTIVE`
+- persist worktree metadata for later cleanup
+
+- [ ] **Step 4: Add the end-to-end worktree spawn contract**
+
+```bash
+cd /Users/braydon/projects/experiments/workgraph
+cargo test --test integration_spawn_worktrees -- --nocapture
+```
+
+## Task 5: Strengthen Speedrift’s Workgraph contract after landed tranches
 
 **Files:**
 - Modify: `driftdriver/.driftdriver/upstream-config.toml`
 
-- [ ] **Step 1: Add a stronger Workgraph compatibility check**
+- [ ] **Step 1: Add stronger Workgraph compatibility checks**
 
-Extend the existing Workgraph compatibility section with a check that exercises the landed Tranche 1 recovery behavior, not just wrapper contracts.
+Extend the existing Workgraph compatibility section with checks that exercise the landed recovery and worktree-spawn behavior, not just wrapper contracts.
 
 - [ ] **Step 2: Run the targeted `driftdriver` tests**
 
@@ -126,7 +166,7 @@ cd /Users/braydon/projects/experiments/driftdriver
 PYTHONPATH=$PWD pytest tests/test_upstream_tracker.py -q
 ```
 
-## Task 5: Land, verify, and hand off the next tranche boundary
+## Task 6: Land, verify, and hand off the next tranche boundary
 
 **Files:**
 - Modify: adoption docs if needed for factual updates after implementation
@@ -136,6 +176,7 @@ PYTHONPATH=$PWD pytest tests/test_upstream_tracker.py -q
 ```bash
 cd /Users/braydon/projects/experiments/workgraph
 cargo test --test integration_recovery_commands -- --nocapture
+cargo test --test integration_spawn_worktrees -- --nocapture
 
 cd /Users/braydon/projects/experiments/driftdriver
 PYTHONPATH=$PWD pytest tests/test_upstream_tracker.py tests/test_executor_shim.py tests/test_handlers.py tests/test_unified_install.py -q
@@ -161,4 +202,4 @@ git status -sb
 
 - [ ] **Step 4: Record the next tranche**
 
-Update the adoption plan or create a follow-up issue/task for the dependent worktree-lifecycle tranche and the later execution-routing tranche.
+Update the adoption plan or create a follow-up issue/task for the dependent worktree-lifecycle cleanup tranche and the later execution-routing tranche.

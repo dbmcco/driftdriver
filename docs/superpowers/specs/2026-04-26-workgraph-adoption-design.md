@@ -53,9 +53,24 @@ Primary upstream surfaces:
 - `src/commands/rescue.rs`
 - related CLI and command wiring
 
-### Tranche 2: Worktree Hygiene (Dependent Tranche)
+### Tranche 2: Worktree Isolation Substrate
 
-This tranche is explicitly dependent on later worktree-isolation substrate adoption.
+This tranche introduces the minimum viable worktree execution substrate without yet
+pulling in the full upstream cleanup sweep or liveness semantics.
+
+Scope:
+- coordinator-level `worktree_isolation` flag
+- per-agent spawn-time worktree creation under `.wg-worktrees/<agent-id>/`
+- `.workgraph` symlink into the spawned worktree
+- worktree metadata and env propagation for later cleanup
+- end-to-end spawn contract showing writes land in the isolated worktree
+
+Why now:
+- it creates the substrate the later cleanup tranche actually depends on
+- it is narrow enough to land without dragging in the broader session/runtime fork delta
+- it gives Speedrift a concrete second adoption contract beyond recovery
+
+### Tranche 3: Worktree Lifecycle Hygiene
 
 Scope:
 - agent liveness invariant (`status AND process alive AND heartbeat fresh`)
@@ -67,7 +82,7 @@ Why not first:
 - the current adopted line does not yet have the upstream worktree-lifecycle substrate
 - forcing cleanup semantics in early would couple this tranche to a larger execution-model migration
 
-### Tranche 3: Execution Routing
+### Tranche 4: Execution Routing
 
 Scope:
 - model endpoint support
@@ -81,7 +96,7 @@ Why second:
 - overlaps directly with our forked coordinator/spawn behavior
 - should only move after the recovery surface is stronger and easier to debug
 
-### Tranche 4: Session Runtime
+### Tranche 5: Session Runtime
 
 Scope:
 - session identity and repair
@@ -93,7 +108,7 @@ Why third:
 - highest behavioral coupling to current agent execution flows
 - should only move once recovery and routing are more stable
 
-### Tranche 5: Optional Residual Upstream Convergence
+### Tranche 6: Optional Residual Upstream Convergence
 
 Scope:
 - remaining nonessential churn after the three high-value tranches
@@ -117,13 +132,21 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 ### Tranche 2 Contract
 
 - existing Speedrift wrapper/managed-surface checks stay green
+- `workgraph` worktree spawn contract passes end to end:
+  - enabled code-writing tasks spawn inside `.wg-worktrees/<agent-id>/`
+  - worktree metadata is persisted for the spawned agent
+  - repo-root writes stay inside the isolated worktree
+
+### Tranche 3 Contract
+
+- existing Speedrift wrapper/managed-surface checks stay green
 - `workgraph` unit/integration tests for:
   - worktree cleanup safety
   - dead-agent recovery
 - one spawn/executor routing smoke
 - one service executor swap / coordinator path smoke
 
-### Tranche 3 Contract
+### Tranche 4 Contract
 
 - existing Speedrift wrapper/managed-surface checks stay green
 - one session resume / reconnect smoke
@@ -142,11 +165,13 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 - Tranche 1 lands on our adopted `workgraph` line with tests and Speedrift contracts passing.
 - `driftdriver` reflects the strengthened adoption checks for the landed tranche.
 - The adopted line has first-class graph-level recovery commands instead of only manual cleanup.
-- Worktree lifecycle adoption is explicitly recorded as dependent work, not blurred into the first tranche.
+- The adopted line has opt-in worktree isolation substrate that later lifecycle cleanup can build on.
+- Worktree lifecycle adoption is explicitly recorded as the next dependent tranche, not blurred into recovery.
 
 ## Recommended Execution Order
 
 1. Land Tranche 1 in `workgraph`.
-2. Strengthen `driftdriver` compatibility gates to include the new tranche contract.
-3. Re-run upstream tracking and confirm the adopted line remains intentionally diverged but materially improved.
-4. Start the dependent Tranche 2 design only once worktree-isolation substrate adoption is scoped explicitly.
+2. Land Tranche 2 in `workgraph`.
+3. Strengthen `driftdriver` compatibility gates to include both landed tranche contracts.
+4. Re-run upstream tracking and confirm the adopted line remains intentionally diverged but materially improved.
+5. Start the dependent Tranche 3 worktree-lifecycle design only after the substrate is proven stable.

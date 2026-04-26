@@ -35,6 +35,10 @@ command = "PYTHONPATH=$PWD pytest tests/test_handlers.py tests/test_unified_inst
 name = "workgraph-recovery-contract"
 command = "cd /Users/braydon/projects/experiments/workgraph && cargo test --test integration_recovery_commands -- --nocapture"
 
+[[external_repos.compatibility_checks]]
+name = "workgraph-worktree-spawn-contract"
+command = "cd /Users/braydon/projects/experiments/workgraph && cargo test --test integration_spawn_worktrees -- --nocapture"
+
 [[external_repos]]
 name = "agentbureau/agency"
 local_path = "/Users/braydon/projects/experiments/agency"
