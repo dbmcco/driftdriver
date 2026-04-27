@@ -214,6 +214,9 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
   `wg spawn-task` / `wg claude-handler`
 - the handler owns coordinator inbox consumption and cursor advancement on top of
   the current global chat store
+- the current global coordinator chat store is guarded by a real single-owner
+  session lock, so duplicate `claude-handler` ownership is rejected without
+  corrupting the active session
 - handler crash/restart behavior surfaces visible coordinator errors instead of
   silently dropping turns
 
@@ -241,6 +244,8 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
   requiring a second configuration pass.
 - The adopted line pauses killed tasks by default, so operator/runtime recovery
   does not silently re-dispatch interrupted work unless `--redispatch` is explicit.
+- The adopted line enforces single-owner coordinator handler execution on the
+  current global chat store instead of allowing duplicate handler races.
 - Broader execution-routing work is explicitly reduced to the remaining residuals above.
 
 ## Recommended Execution Order
