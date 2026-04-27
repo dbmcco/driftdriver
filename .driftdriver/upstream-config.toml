@@ -53,7 +53,7 @@ command = "cd /Users/braydon/projects/experiments/workgraph && cargo test endpoi
 
 [[external_repos.compatibility_checks]]
 name = "workgraph-endpoint-config-contract"
-command = "cd /Users/braydon/projects/experiments/workgraph && cargo test --test integration_config config_set_endpoint_url_with_model -- --nocapture && cargo test --test integration_config config_models_set_endpoint_and_show_json -- --nocapture"
+command = "cd /Users/braydon/projects/experiments/workgraph && cargo test test_init_writes_model_and_endpoint_config -- --nocapture && cargo test --test integration_config init_with_endpoint_and_model -- --nocapture && cargo test --test integration_config config_set_endpoint_url_with_model -- --nocapture && cargo test --test integration_config config_models_set_endpoint_and_show_json -- --nocapture"
 
 [[external_repos]]
 name = "agentbureau/agency"

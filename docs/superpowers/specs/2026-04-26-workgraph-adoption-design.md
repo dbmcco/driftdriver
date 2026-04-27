@@ -93,8 +93,8 @@ Why this shape:
 ### Tranche 4: Execution Routing
 
 This tranche is now partially landed as the narrow provider-model routing slice,
-extended with endpoint-aware native execution and config-layer endpoint command
-surfaces.
+extended with endpoint-aware native execution, config-layer endpoint command
+surfaces, and bootstrap/init model-endpoint seeding.
 
 Landed scope:
 - `provider:model` parsing for known upstream prefixes
@@ -110,9 +110,11 @@ Landed scope:
   normalization for bare model names
 - `wg config --set-endpoint` binding named endpoints to dispatch roles
 - `wg config --models` reporting resolved endpoint bindings in text and JSON output
+- `wg init --model/--endpoint` seeding the same endpoint/model intent at repo
+  bootstrap time
 
 Deferred from the broader upstream tranche:
-- top-level init/setup endpoint surfaces beyond `wg config`
+- richer setup/onboarding endpoint flows beyond `wg init` / `wg config`
 - `wg service set-executor`
 - spawn-task unification and handler routing
 - tag/model/provider routing behavior
@@ -186,6 +188,8 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
   `local:<model>`
 - `wg config --set-endpoint` persists role-level endpoint bindings
 - `wg config --models` exposes resolved endpoint bindings for operators and tooling
+- `wg init --model/--endpoint` seeds new repos with the same endpoint/model
+  semantics used by `wg config`
 
 ## Operational Rules
 
@@ -207,6 +211,8 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
   `llm_endpoints` and spawn-time env propagation.
 - The adopted line has config-layer endpoint command surfaces that Speedrift can rely
   on when setting repo runtime intent.
+- The adopted line can seed endpoint/model runtime intent during repo init instead of
+  requiring a second configuration pass.
 - Broader execution-routing work is explicitly reduced to the remaining residuals above.
 
 ## Recommended Execution Order
@@ -219,4 +225,5 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 6. Land the narrow Tranche 4 provider-model execution-routing slice.
 7. Extend that slice with endpoint-aware native execution routing.
 8. Extend that slice with config-layer endpoint command surfaces.
-9. Carry the remaining execution-routing and session-runtime work only after stronger service-level contracts exist.
+9. Extend that slice with bootstrap/init endpoint-model seeding.
+10. Carry the remaining execution-routing and session-runtime work only after stronger service-level contracts exist.
