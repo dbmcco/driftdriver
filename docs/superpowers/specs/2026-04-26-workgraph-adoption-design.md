@@ -102,6 +102,7 @@ Landed scope:
 - daemon start / tick / status / reconfigure paths using effective executor
 - coordinator-adjacent command paths using effective executor where raw executor assumptions were still embedded
 - coordinator ready-task spawn promoting default `claude` dispatch to the provider-mapped executor when task provider/model intent demands it
+- agency-level preferred provider/model metadata flowing into ready-task routing when task-local model/provider intent is absent
 - endpoint lookup helpers for configured `llm_endpoints`
 - spawn-time `WG_LLM_PROVIDER` / `WG_ENDPOINT(_NAME)` / `WG_ENDPOINT_URL` / `WG_API_KEY`
   propagation for native execution
@@ -183,6 +184,7 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 - daemon reconfigure from disk infers the correct executor from `coordinator.model`
 - daemon reconfigure with a model-only override infers the correct executor when the executor is not explicitly overridden
 - service/runtime surfaces report the effective executor rather than the raw default field
+- agent-level preferred provider/model metadata can promote default `claude` ready-task routing even when the task itself has no explicit model/provider
 - spawn-time endpoint routing resolves the correct provider and endpoint metadata
 - native executor prefers spawn-resolved endpoint env over legacy `[native_executor]` config
 - native executor honors exact `WG_ENDPOINT` selection before provider/default fallback
