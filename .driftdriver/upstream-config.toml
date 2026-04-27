@@ -57,7 +57,7 @@ command = "cd /Users/braydon/projects/experiments/workgraph && cargo test test_i
 
 [[external_repos.compatibility_checks]]
 name = "workgraph-service-runtime-contract"
-command = "cd /Users/braydon/projects/experiments/workgraph && cargo test reconfigure -- --nocapture && cargo test resolve_daemon_config -- --nocapture"
+command = "cd /Users/braydon/projects/experiments/workgraph && cargo test reconfigure -- --nocapture && cargo test resolve_daemon_config -- --nocapture && cargo test run_set_executor -- --nocapture && cargo test test_append_error_writes_system_error_role -- --nocapture"
 
 [[external_repos]]
 name = "agentbureau/agency"

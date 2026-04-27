@@ -118,7 +118,7 @@ Landed scope:
 
 Deferred from the broader upstream tranche:
 - richer setup/onboarding endpoint flows beyond `wg init` / `wg config`
-- `wg service set-executor`
+- full chat-session-preserving upstream `wg service set-executor` supervisor path
 - spawn-task unification and handler routing
 - tag/model/provider routing behavior
 
@@ -137,6 +137,9 @@ Scope:
 
 Landed precursor:
 - persisted daemon-level executor/model overrides from `wg service reload`
+- primary-coordinator `wg service set-executor` / `wg service switch` command surface
+  layered onto the current reload-override runtime
+- distinct `system-error` chat role for coordinator runtime failures surfaced to users
 - daemon startup resolution that reapplies those overrides after restart
 - status surface exposing the active runtime overrides
 
