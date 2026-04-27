@@ -93,7 +93,8 @@ Why this shape:
 ### Tranche 4: Execution Routing
 
 This tranche is now partially landed as the narrow provider-model routing slice,
-extended with endpoint-aware native execution.
+extended with endpoint-aware native execution and config-layer endpoint command
+surfaces.
 
 Landed scope:
 - `provider:model` parsing for known upstream prefixes
@@ -105,9 +106,13 @@ Landed scope:
   propagation for native execution
 - native executor precedence that favors spawn-resolved endpoint env over legacy
   `[native_executor]` fallback config
+- `wg config --endpoint` writing the default configured endpoint plus `local:` model
+  normalization for bare model names
+- `wg config --set-endpoint` binding named endpoints to dispatch roles
+- `wg config --models` reporting resolved endpoint bindings in text and JSON output
 
 Deferred from the broader upstream tranche:
-- model endpoint support
+- top-level init/setup endpoint surfaces beyond `wg config`
 - `wg service set-executor`
 - spawn-task unification and handler routing
 - tag/model/provider routing behavior
@@ -177,6 +182,10 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 - spawn-time endpoint routing resolves the correct provider and endpoint metadata
 - native executor prefers spawn-resolved endpoint env over legacy `[native_executor]` config
 - native executor still honors configured endpoint url/key when spawn env is absent
+- `wg config --endpoint` writes a default named endpoint and normalizes bare models to
+  `local:<model>`
+- `wg config --set-endpoint` persists role-level endpoint bindings
+- `wg config --models` exposes resolved endpoint bindings for operators and tooling
 
 ## Operational Rules
 
@@ -196,6 +205,8 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 - The adopted line has narrow provider-model execution routing across the service/runtime paths.
 - The adopted line has endpoint-aware native execution routing wired through configured
   `llm_endpoints` and spawn-time env propagation.
+- The adopted line has config-layer endpoint command surfaces that Speedrift can rely
+  on when setting repo runtime intent.
 - Broader execution-routing work is explicitly reduced to the remaining residuals above.
 
 ## Recommended Execution Order
@@ -207,4 +218,5 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 5. Re-run upstream tracking and confirm the adopted line remains intentionally diverged but materially improved.
 6. Land the narrow Tranche 4 provider-model execution-routing slice.
 7. Extend that slice with endpoint-aware native execution routing.
-8. Carry the remaining execution-routing and session-runtime work only after stronger service-level contracts exist.
+8. Extend that slice with config-layer endpoint command surfaces.
+9. Carry the remaining execution-routing and session-runtime work only after stronger service-level contracts exist.

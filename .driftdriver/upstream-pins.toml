@@ -5,7 +5,7 @@
 
 [adopted_shas]
 "danshapiro/freshell:main" = "ce6e1ba487422e38a4ea3fe1b3bd0f0010ed1000"
-"graphwork/workgraph:main" = "0630487d25f178a50f70923322a0ee6f34ecffdb"
+"graphwork/workgraph:main" = "b1bd2fffc94a7cb46deddfbf1474ec0d0e4a406f"
 "agentbureau/agency:main" = "0b90071f422173e5eea990d1ce934222bb2fb990"
 
 [snoozed]
