@@ -106,6 +106,7 @@ Landed scope:
   propagation for native execution
 - native executor precedence that favors spawn-resolved endpoint env over legacy
   `[native_executor]` fallback config
+- exact named endpoint selection via `WG_ENDPOINT` before provider/default fallback
 - `wg config --endpoint` writing the default configured endpoint plus `local:` model
   normalization for bare model names
 - `wg config --set-endpoint` binding named endpoints to dispatch roles
@@ -183,6 +184,7 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 - service/runtime surfaces report the effective executor rather than the raw default field
 - spawn-time endpoint routing resolves the correct provider and endpoint metadata
 - native executor prefers spawn-resolved endpoint env over legacy `[native_executor]` config
+- native executor honors exact `WG_ENDPOINT` selection before provider/default fallback
 - native executor still honors configured endpoint url/key when spawn env is absent
 - `wg config --endpoint` writes a default named endpoint and normalizes bare models to
   `local:<model>`

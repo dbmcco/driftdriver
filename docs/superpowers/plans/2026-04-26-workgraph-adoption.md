@@ -195,6 +195,7 @@ Extend the existing Workgraph compatibility section with checks that exercise th
 
 Target behavior:
 - spawn-time endpoint routing picks the intended provider/endpoint metadata
+- native execution honors exact `WG_ENDPOINT` selection before provider/default fallback
 - native execution prefers spawn-resolved env over legacy `[native_executor]`
 - native execution still respects configured endpoint url/key without spawn env
 - `wg config --endpoint` writes the default named endpoint and normalizes bare models
