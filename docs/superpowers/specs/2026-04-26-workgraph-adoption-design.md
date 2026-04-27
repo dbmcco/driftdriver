@@ -101,6 +101,7 @@ Landed scope:
 - effective executor inference from model prefix
 - daemon start / tick / status / reconfigure paths using effective executor
 - coordinator-adjacent command paths using effective executor where raw executor assumptions were still embedded
+- coordinator ready-task spawn promoting default `claude` dispatch to the provider-mapped executor when task provider/model intent demands it
 - endpoint lookup helpers for configured `llm_endpoints`
 - spawn-time `WG_LLM_PROVIDER` / `WG_ENDPOINT(_NAME)` / `WG_ENDPOINT_URL` / `WG_API_KEY`
   propagation for native execution

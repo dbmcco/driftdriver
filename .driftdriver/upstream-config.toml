@@ -45,7 +45,7 @@ command = "cd /Users/braydon/projects/experiments/workgraph && cargo test --test
 
 [[external_repos.compatibility_checks]]
 name = "workgraph-execution-routing-contract"
-command = "cd /Users/braydon/projects/experiments/workgraph && cargo test handle_reconfigure -- --nocapture && cargo test effective_executor -- --nocapture && cargo test parse_model_spec -- --nocapture"
+command = "cd /Users/braydon/projects/experiments/workgraph && cargo test handle_reconfigure -- --nocapture && cargo test effective_executor -- --nocapture && cargo test parse_model_spec -- --nocapture && cargo test task_route_ -- --nocapture"
 
 [[external_repos.compatibility_checks]]
 name = "workgraph-endpoint-routing-contract"
