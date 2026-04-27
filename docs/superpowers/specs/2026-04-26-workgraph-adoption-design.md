@@ -144,6 +144,9 @@ Landed precursor:
 - status surface exposing the active runtime overrides
 - operator-safe `wg kill` semantics: pause killed tasks by default and require
   explicit `--redispatch` to reopen them for immediate reuse
+- primary-coordinator subprocess runtime via `wg spawn-task .coordinator-0 --role coordinator`
+  and `wg claude-handler`, with the daemon acting as supervisor and the current
+  global `.workgraph/chat/` store remaining the substrate
 
 Why third:
 - highest behavioral coupling to current agent execution flows
@@ -207,6 +210,12 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
   semantics used by `wg config`
 - daemon-level `service reload` executor/model overrides survive daemon restart and
   are visible in `wg service status`
+- the primary coordinator runs across a real subprocess boundary through
+  `wg spawn-task` / `wg claude-handler`
+- the handler owns coordinator inbox consumption and cursor advancement on top of
+  the current global chat store
+- handler crash/restart behavior surfaces visible coordinator errors instead of
+  silently dropping turns
 
 ## Operational Rules
 

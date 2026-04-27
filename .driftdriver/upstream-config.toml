@@ -63,6 +63,10 @@ command = "cd /Users/braydon/projects/experiments/workgraph && cargo test reconf
 name = "workgraph-kill-semantics-contract"
 command = "cd /Users/braydon/projects/experiments/workgraph && cargo test test_unclaim_task -- --nocapture && cargo test test_kill_agent_not_found -- --nocapture"
 
+[[external_repos.compatibility_checks]]
+name = "workgraph-coordinator-subprocess-contract"
+command = "cd /Users/braydon/projects/experiments/workgraph && cargo test --test integration_coordinator_agent -- --nocapture"
+
 [[external_repos]]
 name = "agentbureau/agency"
 local_path = "/Users/braydon/projects/experiments/agency"
