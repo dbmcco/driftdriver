@@ -135,6 +135,11 @@ Scope:
 - resume and handler recovery
 - PTY/session runtime improvements that affect non-TUI execution behavior
 
+Landed precursor:
+- persisted daemon-level executor/model overrides from `wg service reload`
+- daemon startup resolution that reapplies those overrides after restart
+- status surface exposing the active runtime overrides
+
 Why third:
 - highest behavioral coupling to current agent execution flows
 - should only move once recovery and routing are more stable
@@ -195,6 +200,8 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
 - `wg config --models` exposes resolved endpoint bindings for operators and tooling
 - `wg init --model/--endpoint` seeds new repos with the same endpoint/model
   semantics used by `wg config`
+- daemon-level `service reload` executor/model overrides survive daemon restart and
+  are visible in `wg service status`
 
 ## Operational Rules
 
