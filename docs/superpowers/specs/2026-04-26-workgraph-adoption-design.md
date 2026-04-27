@@ -142,6 +142,8 @@ Landed precursor:
 - distinct `system-error` chat role for coordinator runtime failures surfaced to users
 - daemon startup resolution that reapplies those overrides after restart
 - status surface exposing the active runtime overrides
+- operator-safe `wg kill` semantics: pause killed tasks by default and require
+  explicit `--redispatch` to reopen them for immediate reuse
 
 Why third:
 - highest behavioral coupling to current agent execution flows
@@ -228,6 +230,8 @@ Current `driftdriver` upstream compatibility checks are sufficient for tracking,
   on when setting repo runtime intent.
 - The adopted line can seed endpoint/model runtime intent during repo init instead of
   requiring a second configuration pass.
+- The adopted line pauses killed tasks by default, so operator/runtime recovery
+  does not silently re-dispatch interrupted work unless `--redispatch` is explicit.
 - Broader execution-routing work is explicitly reduced to the remaining residuals above.
 
 ## Recommended Execution Order
