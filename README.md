@@ -542,7 +542,17 @@ If you want drift telemetry running continuously while work happens:
 
 ## Ecosystem Hub Daemon + Web Report
 
-Driftdriver now includes an ecosystem hub service that centralizes status across suite repos and serves a local web report.
+Driftdriver includes the Speedrift ecosystem hub service. It centralizes status
+across suite repos, serves the local web report, supervises repo services under
+policy, and runs upstream adoption checks each collector tick.
+
+The live Speedrift setup is launchd-managed:
+
+- launchd label: `com.speedrift.ecosystem-hub`
+- plist: `~/Library/LaunchAgents/com.speedrift.ecosystem-hub.plist`
+- port: `8777`
+- central register: `/Users/braydon/projects/experiments/speedrift-ecosystem/.workgraph/service/ecosystem-central`
+- service contract: `RunAtLoad` + `KeepAlive`
 
 Start unattended automation (daemon + web report + upstream dry-run actions):
 
@@ -642,6 +652,10 @@ ECOSYSTEM_HUB_CENTRAL_REPO=/Users/braydon/projects/experiments/speedrift-ecosyst
 
 # ensure daemon is persistent and healthy (safe to run repeatedly)
 scripts/ecosystem_hub_daemon.sh ensure-running
+
+# verify launchd ownership and restart behavior
+scripts/ecosystem_hub_daemon.sh launchd-status
+scripts/ecosystem_hub_daemon.sh logs
 ```
 
 Daemon configuration knobs (environment variables):
@@ -660,6 +674,18 @@ Daemon configuration knobs (environment variables):
 When `ECOSYSTEM_HUB_SUPERVISE_SERVICES=1`, the central daemon supervises repos in the registry/discovery set:
 - if repo has work underway (`in-progress` or `ready`) and workgraph service is stopped, it attempts restart
 - restart attempts are cooldown-limited per repo and max-limited per cycle
+
+When `.driftdriver/upstream-config.toml` exists, the hub also runs
+`driftdriver upstream-tracker` each collector tick and writes adoption state to
+`.workgraph/service/ecosystem-hub/upstream-adoptions.json`.
+
+Speedrift currently uses this to keep WorkGraph integration current:
+
+- `lag_window_commits = 5`
+- `max_lag_days = 3`
+- schema/API/CLI surface changes create WorkGraph-visible work immediately
+
+Detailed operator notes: [`docs/upstream-adoption-sentinel.md`](docs/upstream-adoption-sentinel.md).
 
 Each candidate packet includes:
 - repo and branch context
