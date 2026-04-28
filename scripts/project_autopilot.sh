@@ -24,7 +24,7 @@ PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
 # Verify workgraph exists
 if [ ! -d "$PROJECT_DIR/.workgraph" ]; then
-    echo "[autopilot] Error: no .workgraph in $PROJECT_DIR. Run 'wg init' first."
+    echo "[autopilot] Error: no .workgraph in $PROJECT_DIR. Run 'wg init --model claude:opus' first."
     exit 1
 fi
 

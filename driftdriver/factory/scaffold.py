@@ -65,7 +65,7 @@ def scaffold_project(
     """Scaffold a new repo for the given project.
 
     Returns ScaffoldResult with success=True or skipped=True if already exists.
-    wg_init is injectable (default calls `wg init` via subprocess).
+    wg_init is injectable (default initializes `.workgraph` via subprocess).
     """
     repo_path = workspace_root / project.name
 
@@ -120,7 +120,7 @@ def _default_wg_init(repo_path: Path) -> None:
     """Run `wg init` in the new repo. Best-effort — fails silently."""
     try:
         subprocess.run(
-            ["wg", "init"],
+            ["wg", "--dir", str(repo_path / ".workgraph"), "init", "--model", "claude:opus"],
             cwd=str(repo_path),
             capture_output=True,
             timeout=15.0,

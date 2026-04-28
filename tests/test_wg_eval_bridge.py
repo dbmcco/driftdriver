@@ -263,10 +263,21 @@ class TestBuildEvaluation:
 # WriteEvaluationTests
 # ---------------------------------------------------------------------------
 def _mock_wg_submit(ev: dict) -> MagicMock:
-    """Return a mock subprocess.CompletedProcess for wg evaluate --submit."""
+    """Return a mock subprocess.CompletedProcess for wg evaluate record."""
     mock = MagicMock()
     mock.returncode = 0
-    mock.stdout = f"Saved evaluation {ev.get('id', 'unknown')} to ..."
+    mock.stdout = json.dumps({
+        "evaluation_id": ev.get("id", "unknown"),
+        "path": f"/tmp/.workgraph/agency/evaluations/{ev.get('id', 'unknown')}.json",
+    })
+    mock.stderr = ""
+    return mock
+
+
+def _mock_wg_record_path(path: str = "/tmp/.workgraph/agency/evaluations/eval-generated.json") -> MagicMock:
+    mock = MagicMock()
+    mock.returncode = 0
+    mock.stdout = json.dumps({"evaluation_id": Path(path).stem, "path": path})
     mock.stderr = ""
     return mock
 
@@ -308,10 +319,13 @@ class TestWriteEvaluation:
             path = write_evaluation(tmp_path, ev)
         # Verify wg was called with correct args
         call_args = mock_run.call_args
-        assert call_args[0][0][0] == "wg"
-        assert call_args[0][0][3] == "--submit"
-        submitted = json.loads(call_args[1]["input"])
-        assert submitted == ev
+        cmd = call_args[0][0]
+        assert cmd[0] == "wg"
+        assert cmd[3] == "--json"
+        assert cmd[4:6] == ["evaluate", "record"]
+        assert "--task" in cmd
+        assert "t2" in cmd
+        assert "--dim" in cmd
         assert path.name == f"{ev['id']}.json"
 
     def test_file_name_contains_eval_id(self, tmp_path):
@@ -352,8 +366,7 @@ class TestBridgeFunction:
                 summary="1 issue",
             )
         ]
-        mock_result = MagicMock()
-        mock_result.returncode = 0
+        mock_result = _mock_wg_record_path()
         with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=mock_result):
             report = bridge_findings_to_evaluations(tmp_path, lane_results)
         assert report.evaluations_written == 1
@@ -397,8 +410,7 @@ class TestBridgeFunction:
             )
         ]
         # min_severity="warning" should exclude info findings
-        mock_result = MagicMock()
-        mock_result.returncode = 0
+        mock_result = _mock_wg_record_path()
         with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=mock_result):
             report = bridge_findings_to_evaluations(
                 tmp_path, lane_results, min_severity="warning"
@@ -462,8 +474,7 @@ class TestBridgeFunction:
                 summary="1 issue",
             ),
         ]
-        mock_result = MagicMock()
-        mock_result.returncode = 0
+        mock_result = _mock_wg_record_path()
         with patch("driftdriver.wg_eval_bridge.subprocess.run", return_value=mock_result):
             report = bridge_findings_to_evaluations(tmp_path, lane_results)
         assert report.evaluations_written == 3
@@ -482,7 +493,30 @@ class TestWgEvaluateSubmitContract:
 
     def _init_wg(self, tmp_path: Path) -> None:
         """Run wg init in tmp_path so .workgraph/agency/ structure exists."""
-        subprocess.run(["wg", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+        subprocess.run(
+            ["wg", "--dir", str(tmp_path / ".workgraph"), "init", "--model", "claude:opus"],
+            cwd=str(tmp_path),
+            check=True,
+            capture_output=True,
+        )
+
+    def _create_task(self, tmp_path: Path) -> None:
+        subprocess.run(
+            [
+                "wg",
+                "--dir",
+                str(tmp_path / ".workgraph"),
+                "add",
+                "contract task",
+                "--id",
+                "contract-task",
+                "--no-place",
+            ],
+            cwd=str(tmp_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     def _build_eval(self, eval_id: str) -> dict:
         return {
@@ -498,58 +532,85 @@ class TestWgEvaluateSubmitContract:
 
     def test_submit_exits_zero(self, tmp_path):
         self._init_wg(tmp_path)
+        self._create_task(tmp_path)
         ev = self._build_eval("eval-contract-001")
         result = subprocess.run(
-            ["wg", "evaluate", ev["id"], "--submit"],
-            input=json.dumps(ev),
+            [
+                "wg",
+                "--dir",
+                str(tmp_path / ".workgraph"),
+                "evaluate",
+                "record",
+                "--task",
+                ev["task_id"],
+                "--score",
+                str(ev["score"]),
+                "--source",
+                ev["evaluator"],
+            ],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
         )
-        assert result.returncode == 0, f"wg evaluate --submit failed: {result.stderr}"
+        assert result.returncode == 0, f"wg evaluate record failed: {result.stderr}"
 
     def test_submit_writes_file(self, tmp_path):
         self._init_wg(tmp_path)
+        self._create_task(tmp_path)
         ev = self._build_eval("eval-contract-002")
-        subprocess.run(
-            ["wg", "evaluate", ev["id"], "--submit"],
-            input=json.dumps(ev),
-            capture_output=True,
-            text=True,
-            cwd=str(tmp_path),
-            check=True,
-        )
-        eval_path = (
-            tmp_path / ".workgraph" / "agency" / "evaluations" / f"{ev['id']}.json"
-        )
+        eval_path = write_evaluation(tmp_path, ev)
         assert eval_path.exists(), f"Evaluation file not written: {eval_path}"
 
     def test_submit_stdout_mentions_eval_id(self, tmp_path):
         self._init_wg(tmp_path)
+        self._create_task(tmp_path)
         ev = self._build_eval("eval-contract-003")
         result = subprocess.run(
-            ["wg", "evaluate", ev["id"], "--submit"],
-            input=json.dumps(ev),
+            [
+                "wg",
+                "--dir",
+                str(tmp_path / ".workgraph"),
+                "evaluate",
+                "record",
+                "--task",
+                ev["task_id"],
+                "--score",
+                str(ev["score"]),
+                "--source",
+                ev["evaluator"],
+            ],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
             check=True,
         )
-        assert ev["id"] in result.stdout, (
-            f"Expected eval id in stdout, got: {result.stdout!r}"
-        )
+        assert "Recorded evaluation" in result.stdout
 
     def test_submit_json_flag_returns_id_and_path(self, tmp_path):
         self._init_wg(tmp_path)
+        self._create_task(tmp_path)
         ev = self._build_eval("eval-contract-004")
         result = subprocess.run(
-            ["wg", "--json", "evaluate", ev["id"], "--submit"],
-            input=json.dumps(ev),
+            [
+                "wg",
+                "--dir",
+                str(tmp_path / ".workgraph"),
+                "--json",
+                "evaluate",
+                "record",
+                "--task",
+                ev["task_id"],
+                "--score",
+                str(ev["score"]),
+                "--source",
+                ev["evaluator"],
+            ],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
             check=True,
         )
         data = json.loads(result.stdout)
-        assert data["id"] == ev["id"]
+        assert data["task_id"] == ev["task_id"]
+        assert "evaluation_id" in data
         assert "path" in data

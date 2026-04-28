@@ -319,7 +319,12 @@ class NorthstarDriftTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "meridian"
             repo.mkdir(parents=True)
-            subprocess.run(["wg", "init"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(
+                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "claude:opus"],
+                cwd=str(repo),
+                check=True,
+                capture_output=True,
+            )
             snapshot["repos"][1]["path"] = str(repo)
             result = emit_northstar_review_tasks(snapshot=snapshot, report=northstar)
             self.assertEqual(result["created"], 1)
@@ -344,7 +349,12 @@ class NorthstarDriftTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "meridian"
             repo.mkdir(parents=True)
-            subprocess.run(["wg", "init"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(
+                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "claude:opus"],
+                cwd=str(repo),
+                check=True,
+                capture_output=True,
+            )
             snapshot["repos"][0]["path"] = str(repo)
             result = emit_northstar_review_tasks(snapshot=snapshot, report=northstar)
             self.assertEqual(result["created"], 0)
@@ -370,7 +380,12 @@ class NorthstarDriftTests(unittest.TestCase):
             subprocess.run(["git", "init"], cwd=str(repo), check=True, capture_output=True)
             (repo / ".gitignore").write_text(".workgraph/\n", encoding="utf-8")
             (repo / "scratch.txt").write_text("dirty\n", encoding="utf-8")
-            subprocess.run(["wg", "init"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(
+                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "claude:opus"],
+                cwd=str(repo),
+                check=True,
+                capture_output=True,
+            )
             snapshot["repos"][0]["path"] = str(repo)
             result = emit_northstar_review_tasks(snapshot=snapshot, report=northstar)
             self.assertEqual(result["created"], 1)

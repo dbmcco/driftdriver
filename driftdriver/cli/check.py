@@ -155,7 +155,10 @@ def _ensure_wg_init(project_dir: Path) -> None:
     wg_dir = project_dir / ".workgraph"
     if (wg_dir / "graph.jsonl").exists():
         return
-    subprocess.check_call(["wg", "init"], cwd=str(project_dir))
+    subprocess.check_call(
+        ["wg", "--dir", str(wg_dir), "init", "--model", "claude:opus"],
+        cwd=str(project_dir),
+    )
 
 
 def _load_task(*, wg_dir: Path, task_id: str) -> dict[str, Any] | None:

@@ -163,16 +163,35 @@ def build_evaluation(
 
 
 def write_evaluation(repo_path: Path, evaluation: dict) -> Path:
-    """Submit an evaluation dict to the wg evaluate --submit CLI.
+    """Submit an evaluation dict to the wg evaluate record CLI.
 
-    Uses `wg evaluate <eval-id> --submit` with the evaluation JSON piped to
-    stdin.  This avoids direct .workgraph/agency/evaluations/ file writes,
+    Uses `wg evaluate record` with explicit fields. This avoids direct
+    .workgraph/agency/evaluations/ file writes,
     keeping the bridge compatible with future wg storage backends.
     """
-    eval_json = json.dumps(evaluation)
+    wg_dir = repo_path / ".workgraph"
+    cmd = [
+        "wg",
+        "--dir",
+        str(wg_dir),
+        "--json",
+        "evaluate",
+        "record",
+        "--task",
+        str(evaluation.get("task_id") or ""),
+        "--score",
+        str(evaluation.get("score") or 0.0),
+        "--source",
+        str(evaluation.get("evaluator") or evaluation.get("source") or "speedrift:unknown"),
+    ]
+    if evaluation.get("notes"):
+        cmd += ["--notes", str(evaluation["notes"])]
+    dimensions = evaluation.get("dimensions")
+    if isinstance(dimensions, dict):
+        for name, score in dimensions.items():
+            cmd += ["--dim", f"{name}={score}"]
     result = subprocess.run(
-        ["wg", "evaluate", evaluation.get("id", "unknown"), "--submit"],
-        input=eval_json,
+        cmd,
         capture_output=True,
         text=True,
         cwd=str(repo_path),
@@ -180,10 +199,16 @@ def write_evaluation(repo_path: Path, evaluation: dict) -> Path:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"wg evaluate --submit failed (exit {result.returncode}): {result.stderr.strip()}"
+            f"wg evaluate record failed (exit {result.returncode}): {result.stderr.strip()}"
         )
-    # Return the expected path (matches wg's save_evaluation naming)
-    return repo_path / ".workgraph" / "agency" / "evaluations" / f"{evaluation['id']}.json"
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"wg evaluate record returned invalid JSON: {result.stdout!r}") from exc
+    path = data.get("path")
+    if not path:
+        raise RuntimeError(f"wg evaluate record did not return an evaluation path: {result.stdout!r}")
+    return Path(str(path))
 
 
 def bridge_findings_to_evaluations(

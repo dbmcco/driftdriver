@@ -131,7 +131,7 @@ class TestExecutorShimLive(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             wg_dir = Path(tmp) / ".workgraph"
             subprocess.run(
-                ["wg", "--dir", str(wg_dir), "init"],
+                ["wg", "--dir", str(wg_dir), "init", "--model", "claude:opus"],
                 capture_output=True, text=True, check=True,
             )
             log = DirectiveLog(wg_dir / "directives")
@@ -150,7 +150,7 @@ class TestExecutorShimLive(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             wg_dir = Path(tmp) / ".workgraph"
             subprocess.run(
-                ["wg", "--dir", str(wg_dir), "init"],
+                ["wg", "--dir", str(wg_dir), "init", "--model", "claude:opus"],
                 capture_output=True, text=True, check=True,
             )
             subprocess.run(

@@ -1055,7 +1055,7 @@ def ensure_amplifier_autostart_hook(project_dir: Path) -> tuple[bool, bool]:
         "cd \"$PROJECT_DIR\" 2>/dev/null || exit 0\n\n"
         "if [[ ! -d \".workgraph\" ]]; then\n"
         "  if command -v wg >/dev/null 2>&1; then\n"
-            "    wg init >/dev/null 2>&1 || true\n"
+            "    wg --dir \"$PROJECT_DIR/.workgraph\" init --model claude:opus >/dev/null 2>&1 || true\n"
         "  else\n"
         "    exit 0\n"
         "  fi\n"

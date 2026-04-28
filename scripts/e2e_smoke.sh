@@ -24,7 +24,7 @@ echo "hi" > src/app.txt
 git add src/app.txt
 git commit -qm "init"
 
-wg init >/dev/null
+wg --dir "$TMPDIR/.workgraph" init --model claude:opus >/dev/null
 
 echo "0) install sets up wrappers + executor guidance"
 mkdir -p "$TMPDIR/.workgraph/executors"
@@ -490,6 +490,8 @@ MD
 wg add "Yagni task" --id yagni-task --no-place -d "$(cat "$YAGNI_DESC_FILE")" >/dev/null
 mkdir -p src/adapters
 echo "x" > src/adapters/http_adapter.py
+mkdir -p tests
+echo "def test_http_adapter_smoke(): assert 'x'" > tests/test_http_adapter.py
 
 rm -f "$COREDRIFT_MARKER" "$SPECDRIFT_MARKER" "$DATADRIFT_MARKER" "$ARCHDRIFT_MARKER" "$DEPSDRIFT_MARKER" "$UXDRIFT_MARKER" "$THERAPYDRIFT_MARKER" "$YAGNIDRIFT_MARKER" "$REDRIFT_MARKER"
 ./.workgraph/drifts check --task yagni-task --write-log --create-followups >/dev/null
@@ -560,7 +562,7 @@ echo "hi" > src/app.txt
 git add src/app.txt
 git commit -qm "init"
 
-wg init >/dev/null
+wg --dir "$TMPDIR2/.workgraph" init --model claude:opus >/dev/null
 
 mkdir -p "$TMPDIR2/.workgraph/executors"
 cat > "$TMPDIR2/.workgraph/executors/custom.toml" <<'TOML'

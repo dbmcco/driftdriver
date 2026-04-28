@@ -6,7 +6,7 @@ description = "Initialize workgraph and install driftdriver in a repo"
 [[tasks]]
 id_template = "{finding_id}-wg-init"
 title_template = "Initialize workgraph in {repo_name}"
-description_template = "Run wg init to create .workgraph/ directory."
+description_template = "Run wg init --model claude:opus to create .workgraph/ directory."
 tags = ["drift", "attractor", "onboarding"]
 
 [[tasks]]

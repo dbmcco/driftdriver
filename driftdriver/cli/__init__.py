@@ -1111,7 +1111,7 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
     project_dir = Path(args.dir) if args.dir else Path.cwd()
     wg_dir = project_dir / ".workgraph"
     if not wg_dir.exists():
-        print("Error: no .workgraph found. Run `wg init` first.", file=sys.stderr)
+        print("Error: no .workgraph found. Run `wg init --model claude:opus` first.", file=sys.stderr)
         return 1
 
     config = AutopilotConfig(
