@@ -1,11 +1,11 @@
 [shas]
 "danshapiro/freshell:main" = "d3124d8a35c1691e37ebd2352cb72e187107f9db"
-"graphwork/workgraph:main" = "9679feee96b02c5f377325c118dd8d43e19b553b"
+"graphwork/workgraph:main" = "8ddfd2a88c5b568ee1aa3e11a4ba1a8ca605b4f7"
 "agentbureau/agency:main" = "0b90071f422173e5eea990d1ce934222bb2fb990"
 
 [adopted_shas]
 "danshapiro/freshell:main" = "ce6e1ba487422e38a4ea3fe1b3bd0f0010ed1000"
-"graphwork/workgraph:main" = "508a9fbfb1cc4c8bab15ecb5db3b252a5074c31d"
+"graphwork/workgraph:main" = "4ec57b910ebfc1a07a96e2dbd98f148508277317"
 "agentbureau/agency:main" = "0b90071f422173e5eea990d1ce934222bb2fb990"
 
 [snoozed]
