@@ -295,6 +295,16 @@ def emit_wg_task(
 
     desc_parts = [f"Upstream {repo_name} has {commit_count} new {noun}."]
     desc_parts.append(f"Category: {category} | Risk: {risk_score:.2f} | Action: {action}")
+    if eval_result.get("adoption_lagging"):
+        age = int(eval_result.get("divergence_age_days") or 0)
+        max_age = int(eval_result.get("max_lag_days") or 0)
+        adoption_commits = int(eval_result.get("adoption_commit_count") or commit_count)
+        desc_parts.append(
+            f"Adoption lag: {adoption_commits} upstream commits not contained in adopted line for {age} day(s)"
+            + (f" (threshold {max_age})." if max_age else ".")
+        )
+    if eval_result.get("critical_change"):
+        desc_parts.append("Critical upstream surface changed: schema/API files or command surface touched.")
     if eval_result.get("value_gained"):
         desc_parts.append(f"Value: {eval_result['value_gained']}")
     if eval_result.get("risk_introduced"):
@@ -381,6 +391,21 @@ def _git_current_sha(repo_path: Path, branch: str) -> str | None:
     return None
 
 
+def _git_is_ancestor(repo_path: Path, ancestor_sha: str, descendant_sha: str) -> bool:
+    """Return True if ancestor_sha is contained in descendant_sha history."""
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor_sha, descendant_sha],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def _resolve_upstream_ref(repo_cfg: dict[str, Any], branch: str, repo_path: Path) -> str:
     """Return the ref that represents the true external upstream line."""
     explicit = str(repo_cfg.get("upstream_ref") or "").strip()
@@ -432,6 +457,19 @@ def _git_commit_subjects(repo_path: Path, old_sha: str, new_sha: str) -> list[st
     except Exception:
         pass
     return []
+
+
+def _divergence_age_days(started_at: str | None, now: datetime) -> int:
+    if not started_at:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    delta = now.astimezone(timezone.utc) - parsed.astimezone(timezone.utc)
+    return max(0, int(delta.total_seconds() // 86400))
 
 
 def _default_compatibility_runner(project_dir: Path, check_name: str, command: str) -> tuple[bool, str]:
@@ -529,6 +567,11 @@ def build_adoption_cycle(results: list[dict[str, Any]]) -> dict[str, Any]:
                 "adopted_ref": str(result.get("adopted_ref") or ""),
                 "new_sha": str(result.get("new_sha") or ""),
                 "adopted_sha": str(result.get("adopted_sha") or ""),
+                "adoption_lagging": bool(result.get("adoption_lagging")),
+                "adoption_commit_count": int(result.get("adoption_commit_count") or 0),
+                "diverged_since": str(result.get("diverged_since") or ""),
+                "divergence_age_days": int(result.get("divergence_age_days") or 0),
+                "max_lag_days": int(result.get("max_lag_days") or 0),
                 "compatibility": result.get("compatibility") if isinstance(result.get("compatibility"), dict) else {"status": "unchecked", "checks": []},
                 "wg_task_id": str(result.get("wg_task_id") or ""),
                 "timestamp": str(result.get("timestamp") or ""),
@@ -566,6 +609,7 @@ def run_pass1(
     project_dir: Path | None = None,
     wg_runner: _WgRunner | None = None,
     compatibility_runner: _CompatibilityRunner | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Evaluate all tracked external repos. Returns list of evaluation results.
 
@@ -574,17 +618,21 @@ def run_pass1(
     """
     from driftdriver.upstream_pins import (
         get_adopted_sha,
+        get_diverged_since,
         get_sha,
         is_snoozed,
         load_pins,
         save_pins,
+        clear_diverged_since,
         set_adopted_sha,
+        set_diverged_since,
         set_sha,
     )
 
     pins = load_pins(pins_path)
     results: list[dict[str, Any]] = []
     pins_updated = False
+    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
 
     for repo_cfg in config.get("external_repos") or []:
         repo_name = str(repo_cfg.get("name") or "")
@@ -614,6 +662,23 @@ def run_pass1(
             upstream_changed = pinned_sha != upstream_sha
             adopted_changed = pinned_adopted_sha != adopted_sha
             adopted_diverged = adopted_sha != upstream_sha
+            adopted_contains_upstream = (
+                _git_is_ancestor(local_path, upstream_sha, adopted_sha)
+                if adopted_diverged
+                else True
+            )
+            adoption_lagging = adopted_diverged and not adopted_contains_upstream
+            diverged_since = get_diverged_since(pins, repo_name, branch)
+            if adoption_lagging:
+                if not diverged_since:
+                    diverged_since = now_dt.isoformat()
+                    pins = set_diverged_since(pins, repo_name, branch, diverged_since)
+                    pins_updated = True
+            elif diverged_since:
+                pins = clear_diverged_since(pins, repo_name, branch)
+                diverged_since = None
+                pins_updated = True
+            divergence_age_days = _divergence_age_days(diverged_since, now_dt)
             should_report = upstream_changed or adopted_diverged
 
             if not should_report and not adopted_changed:
@@ -632,6 +697,11 @@ def run_pass1(
                 changed_files = []
                 subjects = []
                 commit_count = 0
+            adoption_commit_count = (
+                _git_commit_count(local_path, adopted_sha, upstream_sha)
+                if adoption_lagging
+                else 0
+            )
 
             if upstream_changed:
                 category = classify_changes(changed_files, subjects)
@@ -655,8 +725,13 @@ def run_pass1(
                 "adopted_old_sha": pinned_adopted_sha,
                 "adopted_sha": adopted_sha,
                 "adopted_diverged": adopted_diverged,
+                "adopted_contains_upstream": adopted_contains_upstream,
+                "adoption_lagging": adoption_lagging,
+                "adoption_commit_count": adoption_commit_count,
+                "diverged_since": diverged_since,
+                "divergence_age_days": divergence_age_days,
                 "tracking_status": "tracking-adopted-line" if adopted_diverged else "tracking-upstream",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": now_dt.isoformat(),
             }
 
             if upstream_changed and relevance > _RELEVANCE_THRESHOLD:
@@ -682,22 +757,37 @@ def run_pass1(
             )
             eval_result["compatibility"] = compatibility
 
-            if not upstream_changed:
+            max_lag_days = int(repo_cfg.get("max_lag_days") or 0)
+            age_exceeded = (
+                adoption_lagging
+                and max_lag_days > 0
+                and divergence_age_days >= max_lag_days
+            )
+            critical_change = upstream_changed and category in {"schema", "api-surface"}
+            eval_result["max_lag_days"] = max_lag_days
+            eval_result["age_exceeded"] = age_exceeded
+            eval_result["critical_change"] = critical_change
+
+            if not upstream_changed and age_exceeded:
+                eval_result["action"] = "needs_update"
+            elif not upstream_changed:
                 eval_result["action"] = "tracked"
             elif compatibility.get("status") == "failed":
+                eval_result["action"] = "needs_update"
+            elif critical_change:
                 eval_result["action"] = "needs_update"
             else:
                 eval_result["action"] = "alert" if risk_score >= _RISK_ALERT_THRESHOLD else "auto_adopt"
 
             # Emit a wg task when action warrants it or lag window exceeded
-            if project_dir is not None and upstream_changed:
+            if project_dir is not None and (upstream_changed or age_exceeded):
                 action = eval_result.get("recommended_action", "watch")
                 lag_exceeded = lag_threshold > 0 and lag_window_check(commit_count, lag_threshold)
                 compat_failed = compatibility.get("status") == "failed"
-                if action != "ignore" or lag_exceeded or compat_failed:
+                if action != "ignore" or lag_exceeded or compat_failed or age_exceeded or critical_change:
                     task_id = emit_wg_task(
                         repo_name,
-                        commit_count,
+                        commit_count or adoption_commit_count,
                         eval_result,
                         project_dir,
                         wg_runner=wg_runner,

@@ -30,14 +30,15 @@ def load_pins(pins_path: Path) -> dict[str, Any]:
     - ``adopted_shas``: the last observed local/fork line actually adopted per repo+branch
     """
     if not pins_path.exists():
-        return {"shas": {}, "adopted_shas": {}, "snoozed": {}}
+        return {"shas": {}, "adopted_shas": {}, "diverged_since": {}, "snoozed": {}}
     try:
         data = tomllib.loads(pins_path.read_text(encoding="utf-8"))
     except Exception:
-        return {"shas": {}, "adopted_shas": {}, "snoozed": {}}
+        return {"shas": {}, "adopted_shas": {}, "diverged_since": {}, "snoozed": {}}
     return {
         "shas": dict(data.get("shas") or {}),
         "adopted_shas": dict(data.get("adopted_shas") or {}),
+        "diverged_since": dict(data.get("diverged_since") or {}),
         "snoozed": dict(data.get("snoozed") or {}),
     }
 
@@ -54,6 +55,9 @@ def save_pins(pins_path: Path, pins: dict[str, Any]) -> None:
             lines.append(f'"{key}" = "{val}"\n')
         lines.append("\n[adopted_shas]\n")
         for key, val in (pins.get("adopted_shas") or {}).items():
+            lines.append(f'"{key}" = "{val}"\n')
+        lines.append("\n[diverged_since]\n")
+        for key, val in (pins.get("diverged_since") or {}).items():
             lines.append(f'"{key}" = "{val}"\n')
         lines.append("\n[snoozed]\n")
         for key, val in (pins.get("snoozed") or {}).items():
@@ -80,11 +84,17 @@ def get_adopted_sha(pins: dict[str, Any], repo: str, branch: str) -> str | None:
     return (pins.get("adopted_shas") or {}).get(_branch_key(repo, branch))
 
 
+def get_diverged_since(pins: dict[str, Any], repo: str, branch: str) -> str | None:
+    """Return the first timestamp when adopted line stopped containing upstream."""
+    return (pins.get("diverged_since") or {}).get(_branch_key(repo, branch))
+
+
 def set_sha(pins: dict[str, Any], repo: str, branch: str, sha: str) -> dict[str, Any]:
     """Return updated pins dict with new SHA (immutable-style)."""
     updated = {
         "shas": dict(pins.get("shas") or {}),
         "adopted_shas": dict(pins.get("adopted_shas") or {}),
+        "diverged_since": dict(pins.get("diverged_since") or {}),
         "snoozed": dict(pins.get("snoozed") or {}),
     }
     updated["shas"][_branch_key(repo, branch)] = sha
@@ -96,9 +106,34 @@ def set_adopted_sha(pins: dict[str, Any], repo: str, branch: str, sha: str) -> d
     updated = {
         "shas": dict(pins.get("shas") or {}),
         "adopted_shas": dict(pins.get("adopted_shas") or {}),
+        "diverged_since": dict(pins.get("diverged_since") or {}),
         "snoozed": dict(pins.get("snoozed") or {}),
     }
     updated["adopted_shas"][_branch_key(repo, branch)] = sha
+    return updated
+
+
+def set_diverged_since(pins: dict[str, Any], repo: str, branch: str, timestamp: str) -> dict[str, Any]:
+    """Return updated pins dict with adoption-lag start timestamp recorded."""
+    updated = {
+        "shas": dict(pins.get("shas") or {}),
+        "adopted_shas": dict(pins.get("adopted_shas") or {}),
+        "diverged_since": dict(pins.get("diverged_since") or {}),
+        "snoozed": dict(pins.get("snoozed") or {}),
+    }
+    updated["diverged_since"][_branch_key(repo, branch)] = timestamp
+    return updated
+
+
+def clear_diverged_since(pins: dict[str, Any], repo: str, branch: str) -> dict[str, Any]:
+    """Return updated pins dict with any adoption-lag timestamp removed."""
+    updated = {
+        "shas": dict(pins.get("shas") or {}),
+        "adopted_shas": dict(pins.get("adopted_shas") or {}),
+        "diverged_since": dict(pins.get("diverged_since") or {}),
+        "snoozed": dict(pins.get("snoozed") or {}),
+    }
+    updated["diverged_since"].pop(_branch_key(repo, branch), None)
     return updated
 
 
@@ -126,6 +161,7 @@ def snooze_branch(
     updated = {
         "shas": dict(pins.get("shas") or {}),
         "adopted_shas": dict(pins.get("adopted_shas") or {}),
+        "diverged_since": dict(pins.get("diverged_since") or {}),
         "snoozed": dict(pins.get("snoozed") or {}),
     }
     updated["snoozed"][_branch_key(repo, branch)] = {"until": until, "reason": reason}

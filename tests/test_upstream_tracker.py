@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -141,6 +142,33 @@ def _make_git_repo_with_diverged_upstream(path: Path) -> tuple[str, str]:
     return upstream_sha, adopted_sha
 
 
+def _make_git_repo_with_upstream_ahead(path: Path) -> tuple[str, str]:
+    """Create repo where origin/main has one commit not contained in local main."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "branch", "-M", "main"], cwd=path, check=True, capture_output=True)
+    (path / "README.md").write_text("base")
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=path, check=True, capture_output=True)
+    adopted_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    subprocess.run(["git", "checkout", "-b", "upstream"], cwd=path, check=True, capture_output=True)
+    (path / "src").mkdir()
+    (path / "src" / "commands.rs").write_text("pub fn upstream_cmd() {}\n")
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "feat: add upstream command"], cwd=path, check=True, capture_output=True)
+    upstream_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    subprocess.run(["git", "update-ref", "refs/remotes/origin/main", upstream_sha], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "main"], cwd=path, check=True, capture_output=True)
+    return upstream_sha, adopted_sha
+
+
 def test_git_current_sha(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     expected_sha = _make_git_repo(repo)
@@ -222,6 +250,138 @@ def test_run_pass1_separates_upstream_from_adopted_line(tmp_path: Path) -> None:
     pins = load_pins(pins_path)
     assert get_sha(pins, "graphwork/workgraph", "main") == upstream_sha
     assert get_adopted_sha(pins, "graphwork/workgraph", "main") == adopted_sha
+    assert result["adopted_contains_upstream"] is True
+    assert result["adoption_lagging"] is False
+
+
+def test_run_pass1_records_adoption_lag_only_when_upstream_not_contained(tmp_path: Path) -> None:
+    from driftdriver.upstream_pins import get_diverged_since, get_sha, load_pins, save_pins, set_sha
+
+    repo = tmp_path / "wg"
+    upstream_sha, adopted_sha = _make_git_repo_with_upstream_ahead(repo)
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", adopted_sha)
+    save_pins(pins_path, pins)
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+            "max_lag_days": 3,
+        }]
+    }
+
+    now = datetime(2026, 4, 28, tzinfo=timezone.utc)
+    results = run_pass1(
+        config,
+        pins_path,
+        llm_caller=_fake_low_relevance_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+        now=now,
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["new_sha"] == upstream_sha
+    assert result["adopted_sha"] == adopted_sha
+    assert result["adopted_contains_upstream"] is False
+    assert result["adoption_lagging"] is True
+    assert result["adoption_commit_count"] == 1
+    assert result["divergence_age_days"] == 0
+    pins = load_pins(pins_path)
+    assert get_sha(pins, "graphwork/workgraph", "main") == upstream_sha
+    assert get_diverged_since(pins, "graphwork/workgraph", "main") == now.isoformat()
+
+
+def test_run_pass1_emits_task_when_adoption_lag_exceeds_age_threshold(tmp_path: Path) -> None:
+    from driftdriver.upstream_pins import (
+        load_pins,
+        save_pins,
+        set_adopted_sha,
+        set_diverged_since,
+        set_sha,
+    )
+
+    repo = tmp_path / "wg"
+    upstream_sha, adopted_sha = _make_git_repo_with_upstream_ahead(repo)
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", upstream_sha)
+    pins = set_adopted_sha(pins, "graphwork/workgraph", "main", adopted_sha)
+    pins = set_diverged_since(pins, "graphwork/workgraph", "main", "2026-04-20T00:00:00+00:00")
+    save_pins(pins_path, pins)
+
+    def _wg_runner(cmd: list[str]) -> tuple[int, str, str]:
+        return 0, "Added task: sync upstream: graphwork/workgraph (1 commit) (upstream-workgraph-age)\n", ""
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+            "max_lag_days": 3,
+        }]
+    }
+
+    results = run_pass1(
+        config,
+        pins_path,
+        llm_caller=_fake_low_relevance_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+        project_dir=tmp_path,
+        wg_runner=_wg_runner,
+        now=datetime(2026, 4, 28, tzinfo=timezone.utc),
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["age_exceeded"] is True
+    assert result["action"] == "needs_update"
+    assert result["wg_task_id"] == "upstream-workgraph-age"
+
+
+def test_run_pass1_api_surface_change_emits_task_even_below_commit_threshold(tmp_path: Path) -> None:
+    from driftdriver.upstream_pins import load_pins, save_pins, set_sha
+
+    repo = tmp_path / "wg"
+    old_sha = _make_git_repo(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "cli.rs").write_text("pub fn changed_cli() {}\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "feat: add wg flag"], cwd=repo, check=True, capture_output=True)
+
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", old_sha)
+    save_pins(pins_path, pins)
+
+    def _wg_runner(cmd: list[str]) -> tuple[int, str, str]:
+        return 0, "Added task: sync upstream: graphwork/workgraph (1 commit) (upstream-workgraph-api)\n", ""
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+            "lag_window_commits": 20,
+        }]
+    }
+    results = run_pass1(
+        config,
+        pins_path,
+        llm_caller=_fake_low_relevance_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+        project_dir=tmp_path,
+        wg_runner=_wg_runner,
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["critical_change"] is True
+    assert result["action"] == "needs_update"
+    assert result["wg_task_id"] == "upstream-workgraph-api"
 
 
 def test_run_pass1_high_relevance_populates_llm_eval(tmp_path: Path) -> None:

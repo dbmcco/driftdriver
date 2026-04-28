@@ -110,6 +110,69 @@ def cmd_wire_enrich(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_toml_file(path: Path) -> dict[str, Any]:
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def cmd_upstream_tracker(args: argparse.Namespace) -> int:
+    project_dir = Path(args.dir or ".").resolve()
+    config_path = Path(args.config).resolve() if args.config else project_dir / ".driftdriver" / "upstream-config.toml"
+    pins_path = Path(args.pins).resolve() if args.pins else project_dir / ".driftdriver" / "upstream-pins.toml"
+    if not config_path.exists():
+        print(f"error: upstream config not found: {config_path}", file=sys.stderr)
+        return ExitCode.usage
+
+    from driftdriver.upstream_tracker import run_pass1, write_adoption_cycle
+
+    config = _read_toml_file(config_path)
+    emit_tasks = not bool(args.no_tasks)
+    results = run_pass1(
+        config,
+        pins_path,
+        project_dir=project_dir if emit_tasks else None,
+    )
+
+    adoption_cycle = None
+    if not bool(args.no_write_adoptions):
+        adoption_cycle = write_adoption_cycle(
+            project_dir / ".workgraph" / "service" / "ecosystem-hub",
+            results,
+        )
+
+    payload = {
+        "project_dir": str(project_dir),
+        "config": str(config_path),
+        "pins": str(pins_path),
+        "results": results,
+        "adoption_cycle": adoption_cycle,
+        "tasks_emitted": sum(1 for row in results if isinstance(row, dict) and row.get("wg_task_id")),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=False))
+    else:
+        print(
+            "upstream-tracker: "
+            f"{len(results)} result(s), {payload['tasks_emitted']} task(s) emitted"
+        )
+        for row in results:
+            if not isinstance(row, dict):
+                continue
+            repo = row.get("repo")
+            action = row.get("action")
+            age = row.get("divergence_age_days")
+            task = row.get("wg_task_id") or "-"
+            print(f"- {repo}: action={action} divergence_age_days={age} task={task}")
+    return ExitCode.ok
+
+
 def cmd_wire_bridge(args: argparse.Namespace) -> int:
     result = wire.cmd_bridge(Path(args.events_file), args.session_id, args.project)
     print(json.dumps(result))
@@ -1376,6 +1439,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write a markdown review report to this path",
     )
     updates.set_defaults(func=cmd_updates)
+
+    upstream_tracker = sub.add_parser(
+        "upstream-tracker",
+        help="Run one upstream adoption sentinel cycle",
+    )
+    upstream_tracker.add_argument("--json", action="store_true", help="JSON output")
+    upstream_tracker.add_argument(
+        "--config",
+        help="Path to upstream-config.toml (default: .driftdriver/upstream-config.toml)",
+    )
+    upstream_tracker.add_argument(
+        "--pins",
+        help="Path to upstream-pins.toml (default: .driftdriver/upstream-pins.toml)",
+    )
+    upstream_tracker.add_argument(
+        "--no-tasks",
+        action="store_true",
+        help="Do not emit WorkGraph tasks for stale or risky upstream changes",
+    )
+    upstream_tracker.add_argument(
+        "--no-write-adoptions",
+        action="store_true",
+        help="Do not write .workgraph/service/ecosystem-hub/upstream-adoptions.json",
+    )
+    upstream_tracker.set_defaults(func=cmd_upstream_tracker)
 
     queue = sub.add_parser("queue", help="Show ranked ready drift follow-ups and duplicate groups")
     queue.add_argument("--json", action="store_true", help="JSON output")

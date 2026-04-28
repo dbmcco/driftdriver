@@ -8,6 +8,7 @@ branches = ["main"]
 upstream_ref = "origin/main"
 adopted_ref = "main"
 lag_window_commits = 15
+max_lag_days = 7
 notes = "Browser terminal multiplexer. We run at port 3550, patch dist/ directly."
 
 [[external_repos.compatibility_checks]]
@@ -20,7 +21,8 @@ local_path = "/Users/braydon/projects/experiments/workgraph"
 branches = ["main"]
 upstream_ref = "origin/main"
 adopted_ref = "main"
-lag_window_commits = 20
+lag_window_commits = 5
+max_lag_days = 3
 notes = "Task graph spine for speedrift. We have a fork at dbmcco/workgraph."
 
 [[external_repos.compatibility_checks]]
@@ -74,6 +76,7 @@ branches = ["main"]
 upstream_ref = "origin/main"
 adopted_ref = "main"
 lag_window_commits = 5
+max_lag_days = 5
 notes = "Agent composition layer for speedrift execution. Provides agent lifecycle, capability routing, and multi-agent coordination."
 
 [[external_repos.compatibility_checks]]

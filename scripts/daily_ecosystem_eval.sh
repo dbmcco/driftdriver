@@ -23,6 +23,8 @@ if [[ ! -x "$DRIVER_BIN" ]]; then
 fi
 
 # ── 0. Run upstream workgraph monitor + eval chain ──
+echo "Running upstream adoption sentinel..."
+"$DRIVER_BIN" --dir "$APP_DIR" upstream-tracker --json >/dev/null || true
 if [[ -x "$SCRIPT_DIR/monitor_upstream_wg.sh" ]]; then
   echo "Running upstream workgraph monitor..."
   "$SCRIPT_DIR/monitor_upstream_wg.sh" || true

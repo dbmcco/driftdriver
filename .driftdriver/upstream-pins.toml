@@ -5,7 +5,10 @@
 
 [adopted_shas]
 "danshapiro/freshell:main" = "ce6e1ba487422e38a4ea3fe1b3bd0f0010ed1000"
-"graphwork/workgraph:main" = "4ec57b910ebfc1a07a96e2dbd98f148508277317"
+"graphwork/workgraph:main" = "6082e138e780e3c6b292c6c4d5af50c631eb506f"
 "agentbureau/agency:main" = "0b90071f422173e5eea990d1ce934222bb2fb990"
+
+[diverged_since]
+"danshapiro/freshell:main" = "2026-04-28T16:35:49.155181+00:00"
 
 [snoozed]
