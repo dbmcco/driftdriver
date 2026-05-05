@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from driftdriver.llm_meter import extract_usage_from_api_response, record_spend
+from driftdriver.model_routes import model_for_route
 from driftdriver.signal_gate import should_fire as _sg_should_fire, record_fire as _sg_record_fire
 
 # --- Change classifier ---
@@ -73,8 +74,8 @@ def classify_changes(changed_files: list[str], commit_subjects: list[str]) -> st
 
 _ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_API_VERSION = "2023-06-01"
-_HAIKU_MODEL = "claude-haiku-4-5-20251001"
-_SONNET_MODEL = "claude-sonnet-4-6"
+_HAIKU_MODEL = model_for_route("driftdriver.upstream_tracker_triage")
+_SONNET_MODEL = model_for_route("driftdriver.upstream_tracker_deep")
 
 _DRIFTDRIVER_CONTEXT = (
     "driftdriver orchestrates drift checks and factory tasks using workgraph (wg CLI). "
@@ -85,7 +86,11 @@ _DRIFTDRIVER_CONTEXT = (
 
 def _default_llm_caller(model: str, prompt: str) -> dict[str, Any]:
     """Call Anthropic API with a simple text prompt, return parsed JSON from the response."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
+    api_key = (
+        os.environ.get("DRIFTDRIVER_ANTHROPIC_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("CLAUDE_API_KEY")
+    )
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
     payload = {

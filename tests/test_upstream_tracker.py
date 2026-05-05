@@ -2,6 +2,7 @@
 # ABOUTME: LLM caller is injected; git operations use real tmp_path repos.
 from __future__ import annotations
 
+import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,7 +38,7 @@ def test_internals_only() -> None:
 
 # --- LLM evaluation tests ---
 
-from driftdriver.upstream_tracker import deep_eval_change, triage_relevance
+from driftdriver.upstream_tracker import _default_llm_caller, deep_eval_change, triage_relevance
 
 
 def _fake_haiku_caller(model: str, prompt: str) -> dict[str, Any]:
@@ -99,6 +100,35 @@ def test_deep_eval_returns_risk_score() -> None:
     )
     assert "risk_score" in result
     assert result["recommended_action"] in ("adopt", "watch", "ignore")
+
+
+def test_default_llm_caller_prefers_driftdriver_anthropic_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    response_payload = {"content": [{"type": "text", "text": '{"relevance_score": 0.4}'}]}
+
+    class _Response:
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(response_payload).encode("utf-8")
+
+    captured_headers: dict[str, str] = {}
+
+    def _fake_urlopen(request: Any, timeout: int) -> _Response:
+        assert timeout == 60
+        captured_headers.update(dict(request.header_items()))
+        return _Response()
+
+    monkeypatch.setenv("DRIFTDRIVER_ANTHROPIC_API_KEY", "driftdriver-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "legacy-anthropic")
+    monkeypatch.setenv("CLAUDE_API_KEY", "legacy-claude")
+    monkeypatch.setattr("driftdriver.upstream_tracker.urlopen", _fake_urlopen)
+
+    assert _default_llm_caller("claude-haiku", "prompt") == {"relevance_score": 0.4}
+    assert captured_headers["X-api-key"] == "driftdriver-key"
 
 
 # --- Pass 1 tests ---

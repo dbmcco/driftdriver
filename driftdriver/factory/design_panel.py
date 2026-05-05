@@ -10,10 +10,12 @@ from typing import Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from driftdriver.model_routes import model_for_route
+
 _ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_API_VERSION = "2023-06-01"
-_HAIKU_MODEL = "claude-haiku-4-5-20251001"
-_SONNET_MODEL = "claude-sonnet-4-6"
+_HAIKU_MODEL = model_for_route("driftdriver.design_panel_specialist")
+_SONNET_MODEL = model_for_route("driftdriver.design_panel_moderator")
 _MIN_WORDS = 100
 _MAX_RETRIES = 2
 
@@ -69,9 +71,18 @@ def _quality_gate(transcript: str) -> bool:
     return len(transcript.split()) >= _MIN_WORDS
 
 
+def _anthropic_api_key() -> str:
+    return (
+        os.environ.get("DRIFTDRIVER_ANTHROPIC_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("CLAUDE_API_KEY")
+        or ""
+    )
+
+
 def _default_specialist_caller(role: str, north_star: str) -> str:
     """Call Haiku to get a specialist perspective."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
+    api_key = _anthropic_api_key()
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
     system_prompt = _SPECIALIST_PROMPTS.get(role, "You are an expert reviewer.")
@@ -105,7 +116,7 @@ def _default_specialist_caller(role: str, north_star: str) -> str:
 
 def _default_moderator_caller(transcripts: dict[str, str], north_star: str) -> dict:
     """Call Sonnet to synthesize specialist transcripts into a decomposed plan."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
+    api_key = _anthropic_api_key()
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
     specialists_text = "\n\n".join(

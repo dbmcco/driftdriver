@@ -195,6 +195,14 @@ TOOL_DEFINITIONS = [
 ]
 
 
+def _anthropic_api_key() -> str:
+    return (
+        os.environ.get("DRIFTDRIVER_ANTHROPIC_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or ""
+    )
+
+
 def _run_subprocess(cmd: list[str], cwd: str, timeout: int = 30) -> dict:
     try:
         result = subprocess.run(
@@ -225,7 +233,7 @@ class EcosystemAgent:
         self._history_path = Path(history_path) if history_path else None
         self._session_dir = Path(session_dir) if session_dir else None
         self._freshell_base = freshell_base or os.environ.get("FRESHELL_BASE_URL", "http://localhost:3550")
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = _anthropic_api_key()
         if not api_key and self._snapshot_path:
             _key_file = self._snapshot_path.parent / "anthropic_api_key"
             if _key_file.exists():
@@ -528,8 +536,10 @@ class EcosystemAgent:
             tool_calls: list[dict] = []
             current_tool: dict | None = None
 
+            from driftdriver.model_routes import model_for_route
+
             with self._client.messages.stream(
-                model="claude-sonnet-4-6",
+                model=model_for_route("driftdriver.hub_chat"),
                 max_tokens=4096,
                 system=system,
                 messages=messages,

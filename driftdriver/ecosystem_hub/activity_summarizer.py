@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
+from driftdriver.model_routes import model_for_route
+
 _LOG = logging.getLogger(__name__)
-_MODEL = "claude-haiku-4-5-20251001"
+_MODEL = model_for_route("driftdriver.activity_summarizer")
+
+
+def _anthropic_api_key() -> str | None:
+    return os.environ.get("DRIFTDRIVER_ANTHROPIC_API_KEY") or os.environ.get(
+        "ANTHROPIC_API_KEY"
+    )
 
 
 def _build_prompt(digest: dict[str, Any]) -> str:
@@ -47,7 +56,7 @@ def summarize_repo(digest: dict[str, Any], *, client: Any = None) -> dict[str, A
     if client is None:
         try:
             import anthropic
-            client = anthropic.Anthropic()
+            client = anthropic.Anthropic(api_key=_anthropic_api_key())
         except Exception:
             _LOG.debug("anthropic not available, skipping summarization")
             return digest
@@ -71,7 +80,7 @@ def summarize_all(digests: list[dict[str, Any]], *, client: Any = None) -> list[
     if client is None:
         try:
             import anthropic
-            client = anthropic.Anthropic()
+            client = anthropic.Anthropic(api_key=_anthropic_api_key())
         except Exception:
             _LOG.debug("anthropic not available, returning digests unsummarized")
             return digests

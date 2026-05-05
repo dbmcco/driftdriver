@@ -15,7 +15,7 @@ cd "$PROJECT_DIR" 2>/dev/null || exit 0
 
 if [[ ! -d ".workgraph" ]]; then
   if command -v wg >/dev/null 2>&1; then
-    wg init >/dev/null 2>&1 || true
+    wg --dir "$PROJECT_DIR/.workgraph" init --model claude:opus >/dev/null 2>&1 || true
   else
     exit 0
   fi

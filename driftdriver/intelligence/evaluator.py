@@ -20,6 +20,7 @@ from urllib.request import Request, urlopen
 from driftdriver.intelligence.db import PostgresConfig, ensure_database_and_apply_migrations
 from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
 from driftdriver.intelligence.models import Signal
+from driftdriver.model_routes import model_for_route
 from driftdriver.signal_gate import is_gate_enabled, record_fire, should_fire
 from driftdriver.intelligence.store import (
     append_signal_action_log,
@@ -38,7 +39,7 @@ LOG = logging.getLogger(__name__)
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_DECISION_TOOL = "record_decisions"
-DEFAULT_CLASSIFICATION_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_CLASSIFICATION_MODEL = model_for_route("driftdriver.intelligence_classification")
 DEFAULT_BATCH_SIZES: dict[str, int] = {
     "repo_update": 10,
     "new_repo": 1,
@@ -55,14 +56,14 @@ DEFAULT_SIGNAL_MODELS: dict[str, str] = {
     "hot_alert": DEFAULT_CLASSIFICATION_MODEL,
     "activity": DEFAULT_CLASSIFICATION_MODEL,
 }
-DEFAULT_ADOPTION_REVIEW_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_ADOPTION_REVIEW_MODEL = model_for_route("driftdriver.intelligence_adoption_review")
 LEGACY_OPENAI_SIGNAL_MODELS: dict[str, str] = {
-    "repo_update": "gpt-4o-mini",
-    "new_repo": "gpt-4o-mini",
-    "community_mention": "gpt-4o-mini",
-    "trend": "gpt-4o-mini",
-    "hot_alert": "gpt-4o-mini",
-    "activity": "gpt-4o-mini",
+    "repo_update": model_for_route("driftdriver.intelligence_openai_signal"),
+    "new_repo": model_for_route("driftdriver.intelligence_openai_signal"),
+    "community_mention": model_for_route("driftdriver.intelligence_openai_signal"),
+    "trend": model_for_route("driftdriver.intelligence_openai_signal"),
+    "hot_alert": model_for_route("driftdriver.intelligence_openai_signal"),
+    "activity": model_for_route("driftdriver.intelligence_openai_signal"),
 }
 DEFAULT_EVALUATOR_SOURCE_TYPE = "evaluator"
 DEFAULT_WATCHLIST_LIMIT = 100
@@ -145,10 +146,22 @@ def _clean_env() -> dict[str, str]:
 
 
 def _anthropic_api_key() -> str:
-    value = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
+    value = (
+        os.environ.get("DRIFTDRIVER_ANTHROPIC_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("CLAUDE_API_KEY")
+    )
     if value:
         return value
     raise RuntimeError("Anthropic API key not configured. Set ANTHROPIC_API_KEY.")
+
+
+def _has_anthropic_api_key() -> bool:
+    try:
+        _anthropic_api_key()
+    except RuntimeError:
+        return False
+    return True
 
 
 def _extract_anthropic_tool_input(payload: dict[str, Any]) -> dict[str, Any]:
@@ -296,7 +309,7 @@ def default_model_invoker(model: str, system_prompt: str, user_prompt: str, sche
     if not is_claude:
         return _invoke_codex(model, system_prompt, user_prompt, schema)
     # Prefer direct API when key is available; fall back to claude CLI
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"):
+    if _has_anthropic_api_key():
         return _invoke_anthropic_api(model, system_prompt, user_prompt, schema)
     return _invoke_claude_cli(model, system_prompt, user_prompt, schema)
 

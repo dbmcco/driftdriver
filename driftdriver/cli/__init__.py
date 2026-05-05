@@ -672,6 +672,28 @@ def cmd_llm_spend(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_model_route_audit(args: argparse.Namespace) -> int:
+    from driftdriver.model_route_audit import (
+        render_model_route_audit_text,
+        scan_model_route_literals,
+    )
+
+    project_dir = Path(args.dir or ".").resolve()
+    mode = "blocking" if args.blocking else "advisory"
+    report = scan_model_route_literals(
+        project_dir,
+        include_docs=args.include_docs,
+        include_tests=args.include_tests,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(mode=mode), indent=2, sort_keys=True))
+    else:
+        print(render_model_route_audit_text(report, mode=mode))
+    if args.blocking and report.findings:
+        return ExitCode.findings
+    return ExitCode.ok
+
+
 def cmd_watchdog(args: argparse.Namespace) -> int:
     """Run one spend watchdog check cycle."""
     from driftdriver.spend_watchdog import run_watchdog
@@ -1766,6 +1788,33 @@ def _build_parser() -> argparse.ArgumentParser:
     llm_spend_p.add_argument("--by-agent", action="store_true", help="Break down spend by agent")
     llm_spend_p.add_argument("--json", action="store_true", help="JSON output")
     llm_spend_p.set_defaults(func=cmd_llm_spend)
+
+    model_route_audit_p = sub.add_parser(
+        "model-route-audit",
+        help="Audit hardcoded model IDs outside the centralized route registry",
+    )
+    model_route_audit_p.add_argument(
+        "--blocking",
+        action="store_true",
+        help="Return nonzero when hardcoded model literals are found",
+    )
+    model_route_audit_p.add_argument(
+        "--include-docs",
+        action="store_true",
+        help="Scan documentation directories as well as runtime files",
+    )
+    model_route_audit_p.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Scan test directories as well as runtime files",
+    )
+    model_route_audit_p.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="JSON output",
+    )
+    model_route_audit_p.set_defaults(func=cmd_model_route_audit)
 
     watchdog_p = sub.add_parser("watchdog", help="Run spend watchdog check (warn/kill on threshold breach)")
     watchdog_p.add_argument("action", choices=["run"], help="Watchdog action")

@@ -539,6 +539,18 @@ def render_dashboard_html() -> str:
       color: var(--accent);
       border-bottom-color: var(--accent);
     }
+    .hub-link {
+      padding: 0.5rem 1.1rem;
+      font-family: var(--sans);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      text-decoration: none;
+      margin-left: auto;
+    }
+    .hub-link:hover { color: var(--ink); }
     .hub-tab-content { display: none; }
     .hub-tab-content.active { display: block; }
 
@@ -1314,6 +1326,7 @@ def render_dashboard_html() -> str:
       <button class="hub-tab" data-tab="sessions">Sessions</button>
       <button class="hub-tab" data-tab="services">Services</button>
       <button class="hub-tab" data-tab="daily-report">Daily Report</button>
+      <a class="hub-link" href="/models">Model Registry</a>
     </nav>
 
     <!-- Home Tab -->

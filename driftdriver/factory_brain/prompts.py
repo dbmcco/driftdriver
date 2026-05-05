@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from driftdriver.factory_brain.directives import DIRECTIVE_SCHEMA
+from driftdriver.model_routes import model_for_route
 
 ADVERSARY_SYSTEM = (
     "You are the Factory Adversary. Your job is to find what's broken, "
@@ -48,9 +49,9 @@ TIER_ADDITIONS: dict[int, str] = {
 }
 
 TIER_MODELS: dict[int, str] = {
-    1: "claude-haiku-4-5-20251001",
-    2: "claude-sonnet-4-6",
-    3: "claude-opus-4-6",
+    1: model_for_route("driftdriver.factory_brain_tier1"),
+    2: model_for_route("driftdriver.factory_brain_tier2"),
+    3: model_for_route("driftdriver.factory_brain_tier3"),
 }
 
 # Build the action enum from the directive schema keys

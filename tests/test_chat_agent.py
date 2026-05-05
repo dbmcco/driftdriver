@@ -46,6 +46,22 @@ def test_agent_tool_list():
     assert "run_command" in names
 
 
+def test_agent_prefers_driftdriver_anthropic_key(monkeypatch):
+    captured_keys: list[str] = []
+
+    class _FakeAnthropic:
+        def __init__(self, api_key: str) -> None:
+            captured_keys.append(api_key)
+
+    monkeypatch.setenv("DRIFTDRIVER_ANTHROPIC_API_KEY", "driftdriver-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "legacy-anthropic")
+    monkeypatch.setattr("driftdriver.ecosystem_hub.chat_agent.anthropic.Anthropic", _FakeAnthropic)
+
+    EcosystemAgent(snapshot_path=None, history_path=None)
+
+    assert captured_keys == ["driftdriver-key"]
+
+
 def test_tool_definitions_have_required_fields():
     agent = EcosystemAgent(snapshot_path=None, history_path=None)
     for tool in agent.get_tool_definitions():

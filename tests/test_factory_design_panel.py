@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from driftdriver.factory.design_panel import (
     DesignPanelResult,
+    _default_moderator_caller,
+    _default_specialist_caller,
     _quality_gate,
     run_design_panel,
 )
@@ -81,3 +84,50 @@ def test_run_design_panel_quality_gate_triggers_retry(tmp_path: Path) -> None:
     )
     assert result.success
     assert any(count >= 2 for count in call_counts.values())
+
+
+def test_default_callers_prefer_driftdriver_anthropic_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    response_payloads = [
+        {"content": [{"type": "text", "text": _make_long_text(120)}]},
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": '{"plan_summary": "Build carefully.", "tasks": ["Task one"]}',
+                }
+            ]
+        },
+    ]
+    captured_keys: list[str] = []
+
+    class _Response:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self._payload = payload
+
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            import json
+
+            return json.dumps(self._payload).encode("utf-8")
+
+    def _fake_urlopen(request: Any, timeout: int) -> _Response:
+        assert timeout in (90, 180)
+        captured_keys.append(dict(request.header_items())["X-api-key"])
+        return _Response(response_payloads.pop(0))
+
+    monkeypatch.setenv("DRIFTDRIVER_ANTHROPIC_API_KEY", "driftdriver-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "legacy-anthropic")
+    monkeypatch.setenv("CLAUDE_API_KEY", "legacy-claude")
+    monkeypatch.setattr("driftdriver.factory.design_panel.urlopen", _fake_urlopen)
+
+    assert _default_specialist_caller("Architect", "north star").startswith("word ")
+    assert _default_moderator_caller({"Architect": _make_long_text(120)}, "north star") == {
+        "plan_summary": "Build carefully.",
+        "tasks": ["Task one"],
+    }
+    assert captured_keys == ["driftdriver-key", "driftdriver-key"]

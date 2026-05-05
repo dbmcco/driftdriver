@@ -21,9 +21,9 @@ Use `/speedrift` (or `/rifts`) to invoke the full protocol skill.
 # Tailscale: http://100.77.214.44:8777/
 
 # Create tasks with current wg flags
-# `--after` is valid for dependency edges; `--no-place` makes the task dispatchable immediately.
-# Do NOT invent flags like `--immediate`, `--priority`, or `--dep` — they will cause a parse error.
-wg add "Title" --after <dep-id> --no-place --verify "test command"
+# Valid flags only: --id, --description, --cost, --verify
+# --after, --immediate, --priority, --dep do NOT exist — they will cause a parse error
+wg add "Title" --verify "test command"
 
 # Attractor loop — check convergence status or run convergence
 driftdriver attractor status --json
@@ -44,10 +44,6 @@ driftdriver attractor run --json
 - Refresh state: `driftdriver --dir "$PWD" --json speedriftd status --refresh`
 - Arm repo: `driftdriver --dir "$PWD" speedriftd status --set-mode supervise --lease-owner <agent> --reason "reason"`
 - Disarm: `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "done"`
-
-### Model Routing Warning
-- Workspace config may still set `agent.executor`/`coordinator.executor` to `claude`, and lightweight Workgraph calls such as `wg evaluate`, FLIP, triage, and assigner/evaluator dispatch will fall back to the `claude` CLI unless a provider is explicitly configured for that role.
-- If you want evaluator or FLIP work to avoid the Claude CLI, set provider-aware role config in `.workgraph/config.toml` or via `wg config --set-model <role> ... --set-provider <role> ...`; otherwise `wg evaluate run --flip` can fail with a Claude CLI error even when the target product has no Claude dependency.
 
 ### Dark Factory
 This repo is part of a dark factory managed by the **Factory Brain** — a three-tier

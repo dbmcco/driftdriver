@@ -580,6 +580,7 @@ scripts/ecosystem_hub.sh --project-dir . stop
 
 Web report:
 - Dashboard: `http://127.0.0.1:8777/`
+- Model registry board: `http://127.0.0.1:8777/models` (`/api/model-registry` JSON). Operating procedure: [`../paia-agent-runtime/docs/model-route-registry.md`](../paia-agent-runtime/docs/model-route-registry.md).
 - APIs: `/api/status`, `/api/repos`, `/api/next-work`, `/api/updates`, `/api/upstream`, `/api/overview`, `/api/graph`, `/api/repo-dependencies`
 - Live stream (WebSocket): `/ws/status` (dashboard auto-switches to live mode when connected)
 - Tailscale access (when daemon is bound to `0.0.0.0`): `http://<tailscale-ip>:8777/`

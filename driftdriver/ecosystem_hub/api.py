@@ -24,6 +24,8 @@ from .agent_history import build_agent_history as _build_agent_history
 from .operator_home import build_operator_home
 from .dashboard import render_dashboard_html
 from .discovery import _read_json
+from .model_registry_dashboard import render_model_registry_dashboard_html
+from .model_registry_status import build_model_registry_status
 from .services import detect_services as _detect_services, _validate_plist_path
 from .session_launcher import (
     FreshellUnavailableError as _FreshellUnavailableError,
@@ -886,12 +888,22 @@ class _HubHandler(BaseHTTPRequestHandler):
         if route in ("/", "/index.html"):
             self._send_html(render_dashboard_html())
             return
+        if route in ("/models", "/model-registry"):
+            self._send_html(render_model_registry_dashboard_html())
+            return
         if route in ("/ws", "/ws/status"):
             self._serve_websocket()
             return
         snapshot = self._read_snapshot()
         if route == "/api/status":
             self._send_json(snapshot)
+            return
+        if route == "/api/model-registry":
+            try:
+                self._send_json(build_model_registry_status(workspace_root=self.workspace_root))
+            except Exception as exc:
+                logging.getLogger(__name__).debug("model registry status failed", exc_info=True)
+                self._send_json({"error": str(exc)[:200]}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
         if route == "/api/repos":
             self._send_json(snapshot.get("repos") or [])
