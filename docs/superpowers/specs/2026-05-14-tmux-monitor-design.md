@@ -193,7 +193,7 @@ The monitor writes presence records for detected agent sessions into `.workgraph
 
 ### events.jsonl
 
-Lifecycle events (session appeared/disappeared, agent started/stopped) are appended to the repo-local `.workgraph/service/runtime/events.jsonl` if the monitor detects it is running inside a driftdriver-managed repo. This integrates with the factory brain's event pipeline.
+The monitor is not repo-specific — it watches all tmux sessions globally. Lifecycle events for agent panes are forwarded to a repo's `.workgraph/service/runtime/events.jsonl` only when the pane's `cwd` maps to a known driftdriver-enrolled repo. Events that cannot be attributed to a repo remain in the daily log only. This integrates with the factory brain's event pipeline where attribution is possible.
 
 ### Ecosystem Hub
 
