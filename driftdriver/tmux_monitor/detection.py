@@ -1,4 +1,4 @@
-# ABOUTME: Heuristic agent detection — classifies tmux panes by process and content patterns.
+# ABOUTME: Heuristic agent detection — uses tmux pane metadata and content patterns.
 from __future__ import annotations
 
 import re
@@ -12,6 +12,7 @@ class PaneClassification:
     process_name: str
     pid: int
     tty: str
+    title: str
 
     def to_dict(self) -> dict:
         return {
@@ -19,28 +20,35 @@ class PaneClassification:
             "process_name": self.process_name,
             "pid": self.pid,
             "tty": self.tty,
+            "title": self.title,
         }
 
 
-_AGENT_SIGNATURES: list[tuple[str, re.Pattern[str]]] = [
+_COMMAND_MAP: dict[str, str] = {
+    "opencode": "opencode",
+    "codex-aarch64-a": "codex",
+    "codex": "codex",
+    "claude": "claude-code",
+    "kilocode": "kilocode",
+    "pi": "pi-dev",
+    "pi.dev": "pi-dev",
+    "2.1.128": "claude-code",
+    "2.1.129": "claude-code",
+}
+
+_SHELL_NAMES = {"bash", "zsh", "sh", "fish"}
+
+_TITLE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("claude-code", re.compile(r"claude\s*code", re.IGNORECASE)),
+]
+
+_CONTENT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("claude-code", re.compile(r"[╭╰]─", re.MULTILINE)),
-    ("claude-code", re.compile(r"^>", re.MULTILINE)),
     ("codex", re.compile(r"codex\s*>", re.MULTILINE)),
     ("opencode", re.compile(r"opencode", re.IGNORECASE)),
     ("kilocode", re.compile(r"kilocode", re.IGNORECASE)),
     ("pi-dev", re.compile(r"pi\.?dev", re.IGNORECASE)),
 ]
-
-_PROCESS_MAP: dict[str, str] = {
-    "claude": "claude-code",
-    "codex": "codex",
-    "opencode": "opencode",
-    "kilocode": "kilocode",
-    "pi": "pi-dev",
-    "pi.dev": "pi-dev",
-}
-
-_SHELL_NAMES = {"bash", "zsh", "sh", "fish"}
 
 
 def _get_foreground_process(tty: str) -> tuple[str, int]:
@@ -66,55 +74,70 @@ def _get_foreground_process(tty: str) -> tuple[str, int]:
         return ("", 0)
 
 
-def _match_content(content: str) -> str | None:
-    for name, pattern in _AGENT_SIGNATURES:
-        if pattern.search(content):
-            return name
-    return None
-
-
-def classify_pane(pane_content: str, tty: str) -> PaneClassification:
+def classify_pane(
+    pane_content: str,
+    tty: str,
+    current_command: str = "",
+    pane_title: str = "",
+) -> PaneClassification:
     proc_name, pid = _get_foreground_process(tty)
 
-    if proc_name:
-        proc_base = proc_name.rsplit("/", 1)[-1].lower()
-        for key, agent_type in _PROCESS_MAP.items():
-            if key in proc_base:
+    if current_command:
+        cmd_lower = current_command.rsplit("/", 1)[-1].lower()
+        for key, agent_type in _COMMAND_MAP.items():
+            if key in cmd_lower:
                 return PaneClassification(
                     pane_type=agent_type,
-                    process_name=proc_base,
+                    process_name=current_command,
                     pid=pid,
                     tty=tty,
+                    title=pane_title,
                 )
 
-    content_match = _match_content(pane_content)
-    if content_match:
-        return PaneClassification(
-            pane_type=content_match,
-            process_name=proc_name.rsplit("/", 1)[-1] if proc_name else "",
-            pid=pid,
-            tty=tty,
-        )
+    if pane_title:
+        for agent_type, pattern in _TITLE_PATTERNS:
+            if pattern.search(pane_title):
+                return PaneClassification(
+                    pane_type=agent_type,
+                    process_name=current_command or proc_name.rsplit("/", 1)[-1],
+                    pid=pid,
+                    tty=tty,
+                    title=pane_title,
+                )
+
+    if pane_content:
+        for agent_type, pattern in _CONTENT_PATTERNS:
+            if pattern.search(pane_content):
+                return PaneClassification(
+                    pane_type=agent_type,
+                    process_name=current_command or proc_name.rsplit("/", 1)[-1],
+                    pid=pid,
+                    tty=tty,
+                    title=pane_title,
+                )
 
     if proc_name:
         proc_base = proc_name.rsplit("/", 1)[-1].lower()
-        if proc_base in _SHELL_NAMES:
+        if proc_base in _SHELL_NAMES or current_command.lower() in _SHELL_NAMES:
             return PaneClassification(
                 pane_type="shell",
-                process_name=proc_base,
+                process_name=current_command or proc_base,
                 pid=pid,
                 tty=tty,
+                title=pane_title,
             )
         return PaneClassification(
             pane_type="unknown",
-            process_name=proc_base,
+            process_name=current_command or proc_base,
             pid=pid,
             tty=tty,
+            title=pane_title,
         )
 
     return PaneClassification(
         pane_type="idle",
-        process_name="",
+        process_name=current_command,
         pid=0,
         tty=tty,
+        title=pane_title,
     )

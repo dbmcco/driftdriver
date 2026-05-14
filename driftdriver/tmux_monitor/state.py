@@ -52,6 +52,8 @@ def write_status(
                 "pid": cls.pid if cls else 0,
                 "tty": pane.tty,
                 "cwd": pane.cwd,
+                "title": pane.title,
+                "current_command": pane.current_command,
             }
             if qid in active_since:
                 entry["active_since"] = active_since[qid]

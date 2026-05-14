@@ -93,7 +93,11 @@ def run_heartbeat(config: TmuxMonitorConfig) -> dict[str, Any]:
 
             content = capture_pane(pane.pane_id, lines=200)
             prev_cls = known.get("classifications", {}).get(pane.pane_id, {})
-            cls = classify_pane(content, pane.tty)
+            cls = classify_pane(
+                content, pane.tty,
+                current_command=pane.current_command,
+                pane_title=pane.title,
+            )
             classifications[pane.pane_id] = cls
 
             prev_type = prev_cls.get("type", "") if isinstance(prev_cls, dict) else ""
@@ -134,6 +138,24 @@ def run_heartbeat(config: TmuxMonitorConfig) -> dict[str, Any]:
             )
             events_emitted.append(f"pane.destroyed:{old_id}")
 
+    trimmed = trim_all_logs(config)
+    pruned = prune_old_daily(config)
+
+    agent_panes: dict[str, Path] = {}
+    for sess_name, panes in current.items():
+        for pane in panes:
+            cls = classifications.get(pane.pane_id)
+            if cls and cls.pane_type not in ("idle", "shell", "unknown"):
+                log_path = config.panes_dir / pane.log_filename
+                if log_path.exists() and log_path.stat().st_size > 0:
+                    agent_panes[pane.qualified_id] = log_path
+
+    if agent_panes:
+        try:
+            summaries = run_summarization_cycle(config, agent_panes, summaries)
+        except Exception as exc:
+            print(f"tmux-monitor: summarization error: {exc}", file=sys.stderr)
+
     new_known: dict[str, Any] = {
         "sessions": list(current_sessions),
         "panes": current_pane_ids,
@@ -153,22 +175,6 @@ def run_heartbeat(config: TmuxMonitorConfig) -> dict[str, Any]:
         active_since,
         session_created_at=session_created_at,
     )
-
-    trimmed = trim_all_logs(config)
-    pruned = prune_old_daily(config)
-
-    agent_panes: dict[str, Path] = {}
-    for sess_name, panes in current.items():
-        for pane in panes:
-            cls = classifications.get(pane.pane_id)
-            if cls and cls.pane_type not in ("idle", "shell", "unknown"):
-                agent_panes[pane.qualified_id] = config.panes_dir / pane.log_filename
-
-    if agent_panes:
-        try:
-            summaries = run_summarization_cycle(config, agent_panes, summaries)
-        except Exception as exc:
-            print(f"tmux-monitor: summarization error: {exc}", file=sys.stderr)
 
     return {
         "sessions": len(current_sessions),

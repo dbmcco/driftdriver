@@ -14,6 +14,8 @@ class PaneInfo:
     pane_index: int
     tty: str
     cwd: str
+    title: str = ""
+    current_command: str = ""
 
     @property
     def qualified_id(self) -> str:
@@ -42,14 +44,14 @@ def list_sessions() -> list[str]:
 
 
 def list_panes(session: str) -> list[PaneInfo]:
-    fmt = "#{pane_id}:#{session_name}:#{window_index}:#{pane_index}:#{pane_tty}:#{pane_current_path}"
+    fmt = "#{pane_id}:#{session_name}:#{window_index}:#{pane_index}:#{pane_tty}:#{pane_current_path}:#{pane_title}:#{pane_current_command}"
     out = _tmux_out("list-panes", "-t", session, "-F", fmt)
     if not out:
         return []
     panes = []
     for line in out.splitlines():
-        parts = line.split(":", 5)
-        if len(parts) != 6:
+        parts = line.split(":", 7)
+        if len(parts) != 8:
             continue
         panes.append(PaneInfo(
             pane_id=parts[0],
@@ -58,6 +60,8 @@ def list_panes(session: str) -> list[PaneInfo]:
             pane_index=int(parts[3]),
             tty=parts[4],
             cwd=parts[5],
+            title=parts[6],
+            current_command=parts[7],
         ))
     return panes
 

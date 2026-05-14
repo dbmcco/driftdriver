@@ -52,6 +52,7 @@ for sess_name, sess_data in sessions.items():
             "session": sess_name,
             "pane": pane_id,
             "type": pd.get("type", "?"),
+            "title": pd.get("title", ""),
             "tmux_session": _duration(sess_created),
             "agent_duration": _duration(pd.get("active_since")),
             "cwd": pd.get("cwd", "").replace(str(Path.home()), "~"),
@@ -87,6 +88,7 @@ for r in display:
     table_data.append({
         "Session": r["session"],
         "Pane": r["pane"].split(":")[-1] if ":" in r["pane"] else r["pane"],
+        "Title": r["title"],
         "Type": r["type"],
         "tmux uptime": r["tmux_session"],
         "agent uptime": r["agent_duration"],
@@ -97,11 +99,12 @@ for r in display:
 
 st.dataframe(
     table_data,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     column_config={
         "Session": st.column_config.TextColumn(width="medium"),
         "Pane": st.column_config.TextColumn(width="small"),
+        "Title": st.column_config.TextColumn(width="large"),
         "Type": st.column_config.TextColumn(width="small"),
         "tmux uptime": st.column_config.TextColumn(width="small"),
         "agent uptime": st.column_config.TextColumn(width="small"),
