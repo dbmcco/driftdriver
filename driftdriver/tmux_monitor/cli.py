@@ -9,6 +9,10 @@ from pathlib import Path
 
 from driftdriver.tmux_monitor.config import TmuxMonitorConfig
 from driftdriver.tmux_monitor.daemon import run_daemon, run_heartbeat
+from driftdriver.tmux_monitor.relevance import (
+    format_relevant_json,
+    format_relevant_text,
+)
 
 
 def _load_config(args: argparse.Namespace) -> TmuxMonitorConfig:
@@ -20,6 +24,16 @@ def _load_config(args: argparse.Namespace) -> TmuxMonitorConfig:
         return cfg
     default_path = TmuxMonitorConfig().state_dir / "config.json"
     return TmuxMonitorConfig.load(default_path)
+
+
+def _load_status(config: TmuxMonitorConfig) -> dict | None:
+    path = config.status_path
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -43,46 +57,35 @@ def cmd_heartbeat(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     config = _load_config(args)
-    status_path = config.status_path
-    if not status_path.exists():
-        print("No status file found. Is the daemon running?", file=sys.stderr)
+    data = _load_status(config)
+    if data is None:
+        print("No status file found. Run `driftdriver tmux-monitor heartbeat` first.", file=sys.stderr)
         return 1
 
-    data = json.loads(status_path.read_text(encoding="utf-8"))
-    if getattr(args, "json", False):
-        print(json.dumps(data, indent=2))
-        return 0
+    target_path = getattr(args, "cwd", None) or ""
+    target_repo = getattr(args, "repo", None) or ""
+    if not target_path and not target_repo:
+        target_path = str(Path.cwd())
 
-    print(f"Last update: {data['timestamp']}")
-    print(f"Heartbeat:   {data['heartbeat_interval']}s")
-    print()
-    for sess_name, sess_data in data.get("sessions", {}).items():
-        print(f"Session: {sess_name} ({sess_data['windows']} windows)")
-        for pane_id, pane_data in sess_data.get("panes", {}).items():
-            ptype = pane_data.get("type", "?")
-            cwd = pane_data.get("cwd", "")
-            marker = ">>>" if ptype not in ("shell", "idle") else "   "
-            line = f"  {marker} {pane_id:30s} [{ptype}]"
-            if cwd:
-                short_cwd = cwd.replace(str(Path.home()), "~")
-                line += f"  {short_cwd}"
-            print(line)
-            if pane_data.get("summary"):
-                print(f"      {pane_data['summary'][:120]}")
-            if pane_data.get("current_task"):
-                print(f"      task: {pane_data['current_task']}")
-        print()
+    use_json = getattr(args, "json", False)
+    include_all = getattr(args, "all", False)
+
+    if use_json:
+        out = format_relevant_json(data, target_repo=target_repo, target_path=target_path, include_unrelated=include_all)
+        print(json.dumps(out, indent=2))
+    else:
+        text = format_relevant_text(data, target_repo=target_repo, target_path=target_path, include_unrelated=include_all)
+        print(text)
     return 0
 
 
 def cmd_sessions(args: argparse.Namespace) -> int:
     config = _load_config(args)
-    status_path = config.status_path
-    if not status_path.exists():
-        print("No status file found. Is the daemon running?", file=sys.stderr)
+    data = _load_status(config)
+    if data is None:
+        print("No status file found.", file=sys.stderr)
         return 1
 
-    data = json.loads(status_path.read_text(encoding="utf-8"))
     if getattr(args, "json", False):
         sessions = {}
         for s, sd in data.get("sessions", {}).items():
@@ -142,7 +145,6 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
-    state_dir = _load_config(args).state_dir
     try:
         result = subprocess.run(
             ["pgrep", "-f", f"tmux-monitor.*start"],
@@ -183,7 +185,6 @@ def register_tmux_monitor_parser(sub: argparse._SubParsersAction) -> None:
         help="tmux session monitoring daemon",
     )
     p.add_argument("--state-dir", help="Override state directory")
-    p.add_argument("--json", action="store_true", help="JSON output")
 
     tmux_sub = p.add_subparsers(dest="tmux_action", required=True)
 
@@ -193,13 +194,19 @@ def register_tmux_monitor_parser(sub: argparse._SubParsersAction) -> None:
     stop = tmux_sub.add_parser("stop", help="Stop the monitoring daemon")
     stop.set_defaults(func=cmd_stop)
 
-    status = tmux_sub.add_parser("status", help="Show current tmux status")
+    status = tmux_sub.add_parser("status", help="Show agents relevant to a repo (default: cwd)")
+    status.add_argument("--cwd", help="Target directory to find relevant agents for (default: cwd)")
+    status.add_argument("--repo", help="Target repo name to filter by")
+    status.add_argument("--all", action="store_true", help="Include unrelated agents")
+    status.add_argument("--json", action="store_true", help="JSON output")
     status.set_defaults(func=cmd_status)
 
     hb = tmux_sub.add_parser("heartbeat", help="Run a single heartbeat cycle")
+    hb.add_argument("--json", action="store_true", help="JSON output")
     hb.set_defaults(func=cmd_heartbeat)
 
     sessions = tmux_sub.add_parser("sessions", help="List sessions with agent types")
+    sessions.add_argument("--json", action="store_true", help="JSON output")
     sessions.set_defaults(func=cmd_sessions)
 
     logs = tmux_sub.add_parser("logs", help="Show pane logs")

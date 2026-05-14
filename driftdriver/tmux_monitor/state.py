@@ -50,6 +50,7 @@ def write_status(
             entry: dict[str, Any] = {
                 "type": cls.pane_type if cls else "unknown",
                 "pid": cls.pid if cls else 0,
+                "pane_id": pane.pane_id,
                 "tty": pane.tty,
                 "cwd": pane.cwd,
                 "title": pane.title,

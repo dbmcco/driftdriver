@@ -47,10 +47,11 @@ sessions = status.get("sessions", {})
 rows = []
 for sess_name, sess_data in sessions.items():
     sess_created = sess_data.get("created_at", "")
-    for pane_id, pd in sess_data.get("panes", {}).items():
+    for pane_key, pd in sess_data.get("panes", {}).items():
         rows.append({
             "session": sess_name,
-            "pane": pane_id,
+            "pane": pane_key,
+            "pane_id": pd.get("pane_id", ""),
             "type": pd.get("type", "?"),
             "title": pd.get("title", ""),
             "tmux_session": _duration(sess_created),
@@ -72,7 +73,7 @@ with col4:
     ts = status.get("timestamp", "")
     st.metric("Updated", _duration(ts) if ts else "never")
 
-show_filter = st.selectbox("Show", ["all", "agents only"], index=0)
+show_filter = st.selectbox("Show", ["agents only", "all"], index=0)
 
 if show_filter == "agents only":
     display = [r for r in rows if r["type"] not in ("shell", "idle", "unknown")]
@@ -90,11 +91,12 @@ for r in display:
         "Pane": r["pane"].split(":")[-1] if ":" in r["pane"] else r["pane"],
         "Title": r["title"],
         "Type": r["type"],
-        "tmux uptime": r["tmux_session"],
-        "agent uptime": r["agent_duration"],
+        "tmux up": r["tmux_session"],
+        "agent up": r["agent_duration"],
         "CWD": r["cwd"].split("/")[-1] if r["cwd"] else "",
         "Current Task": r["task"],
         "Summary": r["summary"][:200] + ("..." if len(r["summary"]) > 200 else ""),
+        "Control": f'tmux send-keys -t {r["pane_id"]}' if r["pane_id"] else "",
     })
 
 st.dataframe(
@@ -106,11 +108,12 @@ st.dataframe(
         "Pane": st.column_config.TextColumn(width="small"),
         "Title": st.column_config.TextColumn(width="large"),
         "Type": st.column_config.TextColumn(width="small"),
-        "tmux uptime": st.column_config.TextColumn(width="small"),
-        "agent uptime": st.column_config.TextColumn(width="small"),
+        "tmux up": st.column_config.TextColumn(width="small"),
+        "agent up": st.column_config.TextColumn(width="small"),
         "CWD": st.column_config.TextColumn(width="small"),
         "Current Task": st.column_config.TextColumn(width="medium"),
         "Summary": st.column_config.TextColumn(width="large"),
+        "Control": st.column_config.TextColumn(width="medium"),
     },
 )
 

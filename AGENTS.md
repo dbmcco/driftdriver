@@ -32,4 +32,40 @@ Run: `./.workgraph/handlers/agent-error.sh --cli codex`
   - `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "return repo to observation"`
 - To see the broader ecosystem hub and current port 8777 URLs:
   - `cd /Users/braydon/projects/experiments/driftdriver && scripts/ecosystem_hub_daemon.sh url`
+
+## tmux Agent Monitor
+
+A heartbeat daemon watches all tmux panes and tracks running coding agents.
+
+### Check What Agents Are Running
+
+```bash
+# Agents relevant to current repo (default: uses cwd)
+driftdriver tmux-monitor status
+
+# Agents in a specific repo
+driftdriver tmux-monitor status --repo driftdriver
+
+# All agents (including unrelated)
+driftdriver tmux-monitor status --all
+
+# JSON output for programmatic consumption
+driftdriver tmux-monitor status --json
+driftdriver tmux-monitor status --repo paia-program --json
+```
+
+### Output
+
+Each agent shows: session, pane, type (codex/claude-code/opencode), title, current task, summary, cwd, relevance (same_repo/related/unrelated), and the `tmux send-keys` target for control.
+
+Relevant agents (same repo) are marked with `***`. Use `controllable: true` and the `pane_id` field to send commands:
+```bash
+tmux send-keys -t %272 "your command here" Enter
+```
+
+### When to Use
+
+- Before starting work on a repo: check if another agent is already working there
+- Before sending commands to another agent: verify it's running and get its pane_id
+- To coordinate: summarize what other agents are doing and avoid conflicts
 <!-- driftdriver-codex:end -->
