@@ -1884,6 +1884,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_debate_parser(sub)
 
+    from driftdriver.tmux_monitor.cli import register_tmux_monitor_parser
+    register_tmux_monitor_parser(sub)
+
     return p
 
 
