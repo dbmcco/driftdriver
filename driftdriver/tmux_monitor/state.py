@@ -25,6 +25,7 @@ def write_status(
     classifications: dict[str, PaneClassification],
     summaries: dict[str, dict[str, Any]],
     active_since: dict[str, str],
+    session_created_at: dict[str, str] | None = None,
 ) -> None:
     config.state_dir.mkdir(parents=True, exist_ok=True)
 
@@ -35,10 +36,12 @@ def write_status(
         ),
         "sessions": {},
     }
+    session_created = session_created_at or {}
 
     for sess_name, panes in sessions.items():
         session_data: dict[str, Any] = {
             "windows": len({p.window for p in panes}),
+            "created_at": session_created.get(sess_name, ""),
             "panes": {},
         }
         for pane in panes:

@@ -51,19 +51,25 @@ def run_heartbeat(config: TmuxMonitorConfig) -> dict[str, Any]:
     classifications: dict[str, Any] = {}
     summaries: dict[str, dict[str, Any]] = known.get("summaries", {})
     active_since: dict[str, str] = known.get("active_since", {})
+    session_created_at: dict[str, str] = known.get("session_created_at", {})
 
     events_emitted: list[str] = []
 
     known_sessions = set(known.get("sessions", []))
     current_sessions = set(current.keys())
 
+    import datetime as _dt
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
     for sess in current_sessions - known_sessions:
         append_event(config, "session.appeared", session=sess, pane_id="")
         events_emitted.append(f"session.appeared:{sess}")
+        session_created_at[sess] = now_iso
 
     for sess in known_sessions - current_sessions:
         append_event(config, "session.disappeared", session=sess, pane_id="")
         events_emitted.append(f"session.disappeared:{sess}")
+        session_created_at.pop(sess, None)
 
     for sess_name, panes in current.items():
         current_pane_ids[sess_name] = []
@@ -136,6 +142,7 @@ def run_heartbeat(config: TmuxMonitorConfig) -> dict[str, Any]:
         },
         "summaries": summaries,
         "active_since": active_since,
+        "session_created_at": session_created_at,
     }
     save_known_sessions(config, new_known)
 
@@ -144,6 +151,7 @@ def run_heartbeat(config: TmuxMonitorConfig) -> dict[str, Any]:
         {pid: cls for pid, cls in classifications.items()},
         summaries,
         active_since,
+        session_created_at=session_created_at,
     )
 
     trimmed = trim_all_logs(config)
