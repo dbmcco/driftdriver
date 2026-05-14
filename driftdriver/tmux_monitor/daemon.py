@@ -26,6 +26,7 @@ from driftdriver.tmux_monitor.state import (
     save_known_sessions,
     write_status,
 )
+from driftdriver.tmux_monitor.summarizer import run_summarization_cycle
 
 
 _RUNNING = True
@@ -147,6 +148,19 @@ def run_heartbeat(config: TmuxMonitorConfig) -> dict[str, Any]:
 
     trimmed = trim_all_logs(config)
     pruned = prune_old_daily(config)
+
+    agent_panes: dict[str, Path] = {}
+    for sess_name, panes in current.items():
+        for pane in panes:
+            cls = classifications.get(pane.pane_id)
+            if cls and cls.pane_type not in ("idle", "shell", "unknown"):
+                agent_panes[pane.qualified_id] = config.panes_dir / pane.log_filename
+
+    if agent_panes:
+        try:
+            summaries = run_summarization_cycle(config, agent_panes, summaries)
+        except Exception as exc:
+            print(f"tmux-monitor: summarization error: {exc}", file=sys.stderr)
 
     return {
         "sessions": len(current_sessions),

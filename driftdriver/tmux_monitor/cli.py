@@ -165,6 +165,18 @@ def cmd_stop(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_web(args: argparse.Namespace) -> int:
+    import driftdriver.tmux_monitor.web as web_module
+    web_path = Path(web_module.__file__)
+    port = getattr(args, "port", 8501)
+    subprocess.run(
+        [sys.executable, "-m", "streamlit", "run", str(web_path),
+         "--server.port", str(port),
+         "--server.headless", "true"],
+    )
+    return 0
+
+
 def register_tmux_monitor_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "tmux-monitor",
@@ -194,3 +206,7 @@ def register_tmux_monitor_parser(sub: argparse._SubParsersAction) -> None:
     logs.add_argument("pane", nargs="?", help="Pane identifier to tail")
     logs.add_argument("-n", "--lines", type=int, default=50, help="Number of lines")
     logs.set_defaults(func=cmd_logs)
+
+    web = tmux_sub.add_parser("web", help="Launch Streamlit web dashboard")
+    web.add_argument("--port", type=int, default=8501, help="Port (default: 8501)")
+    web.set_defaults(func=cmd_web)
