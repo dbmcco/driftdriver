@@ -57,6 +57,19 @@ def test_find_workgraph_dir_walk_up(tmp_path):
     assert found == wg
 
 
+def test_find_workgraph_dir_does_not_cross_git_root(tmp_path):
+    parent_wg = tmp_path / ".workgraph"
+    parent_wg.mkdir()
+    (parent_wg / "graph.jsonl").touch()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    (repo / ".workgraph" / "service").mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError):
+        find_workgraph_dir(repo)
+
+
 def test_load_workgraph_kind_field(tmp_path):
     """Test that 'kind' field works as alternative to 'type' (wg CLI uses 'kind')."""
     graph = tmp_path / ".workgraph" / "graph.jsonl"

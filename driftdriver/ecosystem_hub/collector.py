@@ -27,7 +27,10 @@ def load_tasks_via_wg_cli(repo_path: Path) -> dict[str, dict[str, Any]]:
     try:
         wg_dir = find_workgraph_dir(repo_path)
     except FileNotFoundError:
-        wg_dir = repo_path / ".workgraph"
+        # A partial .workgraph directory can exist from service artifacts or
+        # failed setup. Do not run wg against it; that emits noisy "not
+        # initialized" errors and can write directive logs during discovery.
+        return {}
     # Primary path: wg list --json
     try:
         result = subprocess.run(

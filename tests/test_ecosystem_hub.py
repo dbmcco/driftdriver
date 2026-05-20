@@ -264,6 +264,28 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertTrue(snap.repo_north_star["present"])
             self.assertEqual(snap.repo_north_star["status"], "present")
 
+    def test_collect_repo_snapshot_ignores_partial_workgraph_without_invoking_wg(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            (repo / ".workgraph" / "service" / "directives").mkdir(parents=True)
+
+            with patch("driftdriver.ecosystem_hub.collector.subprocess.run", wraps=subprocess.run) as run_cmd:
+                snap = collect_repo_snapshot("repo", repo)
+
+            wg_calls = [
+                call
+                for call in run_cmd.call_args_list
+                if call.args and call.args[0] and call.args[0][0] == "wg"
+            ]
+            self.assertEqual(wg_calls, [])
+            self.assertTrue(snap.exists)
+            self.assertFalse(snap.workgraph_exists)
+            self.assertFalse(snap.wg_available)
+            self.assertEqual(snap.ready, [])
+            self.assertEqual(snap.activity_state, "untracked")
+
     def test_collect_repo_snapshot_reads_runtime_supervisor_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
