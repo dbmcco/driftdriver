@@ -78,6 +78,8 @@ def _run(
 
     try:
         proc = _invoke(cmd)
+    except subprocess.TimeoutExpired as exc:
+        return 124, "", f"timeout after {exc.timeout}s"
     except FileNotFoundError as exc:
         if cmd and str(cmd[0]) == "wg":
             candidates = [
@@ -99,6 +101,8 @@ def _run(
                 try:
                     proc = _invoke([candidate, *cmd[1:]])
                     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+                except subprocess.TimeoutExpired as timeout_exc:
+                    return 124, "", f"timeout after {timeout_exc.timeout}s"
                 except FileNotFoundError:
                     continue
         return 127, "", str(exc)

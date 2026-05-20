@@ -58,6 +58,7 @@ from .models import (
 _STALE_OPEN_DAYS = 14.0
 _STALE_IN_PROGRESS_DAYS = 3.0
 _MAX_TASK_GRAPH_NODES = 140
+_REPO_SNAPSHOT_TIMEOUT_SECONDS = 15.0
 _SUPERVISOR_DEFAULT_COOLDOWN_SECONDS = 180
 _SUPERVISOR_DEFAULT_MAX_STARTS = 4
 _SUPERVISOR_LAST_ATTEMPT: dict[str, float] = {}
@@ -803,14 +804,20 @@ def collect_ecosystem_snapshot(
         snap.daemon_posture = meta.get("daemon_posture", "always-on")
         return snap
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        for name, path in sorted(repo_map.items()):
-            future = pool.submit(_collect_one, name, path)
+    pool = ThreadPoolExecutor(max_workers=4)
+    try:
+        submitted = [
+            (name, path, pool.submit(_collect_one, name, path))
+            for name, path in sorted(repo_map.items())
+        ]
+        for name, path, future in submitted:
             try:
-                repo_snap = future.result(timeout=15)
+                repo_snap = future.result(timeout=_REPO_SNAPSHOT_TIMEOUT_SECONDS)
             except _FutTimeout:
                 repo_snap = RepoSnapshot(name=name, path=str(path), exists=path.exists())
-                repo_snap.errors.append("snapshot_timeout: repo scan exceeded 15s")
+                repo_snap.errors.append(
+                    f"snapshot_timeout: repo scan exceeded {_REPO_SNAPSHOT_TIMEOUT_SECONDS:g}s"
+                )
                 repo_snap.source = repo_sources.get(name, "ecosystem-toml")
                 meta = repo_meta.get(name, {})
                 repo_snap.tags = meta.get("tags") or []
@@ -826,6 +833,8 @@ def collect_ecosystem_snapshot(
                 repo_snap.daemon_posture = meta.get("daemon_posture", "always-on")
             repos.append(repo_snap)
             upstream.extend(generate_upstream_candidates(name, path))
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     # Auto-heal: unclaim orphaned tasks and purge dead agents across ecosystem.
     try:
@@ -844,60 +853,6 @@ def collect_ecosystem_snapshot(
                     )
     except Exception:
         pass  # Healing is best-effort — never break the collector
-
-    # Task routing: dispatch tagged tasks to appropriate executors (paia agents, schedules, etc.)
-    # Smart routing: hub config applies to ALL repos — no per-repo config needed.
-    # If a repo has tasks with agent: tags and the hub knows those executors, it routes them.
-    try:
-        from driftdriver.task_router import load_routing_config, route_ready_tasks, check_agent_completions
-        import sys
-
-        hub_policy_path = project_dir / ".workgraph" / "drift-policy.toml"
-        hub_routing = load_routing_config(hub_policy_path)
-        if hub_routing.enabled:
-            for snap in repos:
-                snap_path = Path(snap.path)
-                if not snap.workgraph_exists:
-                    continue
-
-                # Per-repo config takes priority if it exists and is enabled.
-                # Otherwise, fall back to hub-level routing config (smart default).
-                repo_policy = snap_path / ".workgraph" / "drift-policy.toml"
-                if repo_policy.exists():
-                    repo_routing = load_routing_config(repo_policy)
-                    if repo_routing.enabled:
-                        effective_routing = repo_routing
-                    elif repo_routing.executors:
-                        # Has routing section but disabled — respect that
-                        continue
-                    else:
-                        # No routing section — use hub config
-                        effective_routing = hub_routing
-                else:
-                    # No policy file — use hub config
-                    effective_routing = hub_routing
-
-                # Check completions first (mark done before dispatching new work)
-                completions = check_agent_completions(snap_path, effective_routing)
-                completed = [c for c in completions if c.completed]
-                if completed:
-                    print(
-                        f"router: {snap.name}: completed {len(completed)} task(s) "
-                        f"({', '.join(c.task_id for c in completed)})",
-                        file=sys.stderr,
-                    )
-
-                # Then dispatch new ready tasks
-                results = route_ready_tasks(snap_path, effective_routing)
-                dispatched = [r for r in results if r.dispatched]
-                if dispatched:
-                    print(
-                        f"router: {snap.name}: dispatched {len(dispatched)} task(s) "
-                        f"({', '.join(r.executor + ':' + r.task_id for r in dispatched)})",
-                        file=sys.stderr,
-                    )
-    except Exception:
-        pass  # Routing is best-effort — never break the collector
 
     updates: dict[str, Any] = {"has_updates": False, "has_discoveries": False, "summary": ""}
     if include_updates:

@@ -20,6 +20,7 @@ from driftdriver.ecosystem_hub import (
     _SUPERVISOR_LAST_ATTEMPT,
     _compute_ready_tasks,
     _load_ecosystem_repos,
+    RepoSnapshot,
     UpstreamCandidate,
     apply_upstream_automation,
     build_draft_pr_requests,
@@ -527,6 +528,28 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertTrue(candidates[0].working_tree_dirty)
             self.assertTrue(any(name.startswith("src") for name in candidates[0].changed_files))
 
+    def test_generate_upstream_candidates_survives_commit_diff_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True)
+            _init_repo(repo)
+            (repo / "src").mkdir()
+            (repo / "src" / "main.py").write_text("print('x')\n", encoding="utf-8")
+
+            real_run = subprocess.run
+
+            def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+                if [str(part) for part in cmd[:3]] == ["git", "diff", "--name-only"]:
+                    raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
+                return real_run(cmd, **kwargs)
+
+            with patch("driftdriver.ecosystem_hub.discovery.subprocess.run", side_effect=fake_run):
+                candidates = generate_upstream_candidates("repo", repo)
+
+            self.assertEqual(len(candidates), 1)
+            self.assertTrue(candidates[0].working_tree_dirty)
+            self.assertTrue(any(name.startswith("src") for name in candidates[0].changed_files))
+
     @patch("driftdriver.speedriftd_state.load_control_state", return_value={"mode": "supervise"})
     def test_supervise_repo_services_restarts_active_repo_and_applies_cooldown(self, _mock_ctrl: Any) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -592,6 +615,49 @@ class EcosystemHubTests(unittest.TestCase):
             packets = render_upstream_packets([])
             self.assertIn("No upstream contribution candidates detected", packets)
 
+    def test_collect_snapshot_records_timeout_without_waiting_for_slow_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "driftdriver"
+            project.mkdir(parents=True)
+            _init_repo(project)
+            _write_graph(project, [{"id": "a", "title": "A", "status": "open"}])
+
+            slow = root / "slow-repo"
+            slow.mkdir(parents=True)
+            _init_repo(slow)
+            _write_graph(slow, [{"id": "slow", "title": "Slow", "status": "open"}])
+
+            ecosystem_root = root / "speedrift-ecosystem"
+            ecosystem_root.mkdir()
+            (ecosystem_root / "ecosystem.toml").write_text(
+                "schema = 1\n"
+                "[repos.driftdriver]\nrole='orchestrator'\nurl='https://example.com'\n"
+                "[repos.slow-repo]\nrole='slow'\nurl='https://example.com'\n",
+                encoding="utf-8",
+            )
+
+            def fake_collect(name: str, path: Path, **_kwargs: Any) -> RepoSnapshot:
+                if name == "slow-repo":
+                    time.sleep(1.0)
+                return RepoSnapshot(name=name, path=str(path), exists=True)
+
+            started = time.monotonic()
+            with (
+                patch("driftdriver.ecosystem_hub.snapshot._REPO_SNAPSHOT_TIMEOUT_SECONDS", 0.05),
+                patch("driftdriver.ecosystem_hub.snapshot.collect_repo_snapshot", side_effect=fake_collect),
+            ):
+                snapshot = collect_ecosystem_snapshot(
+                    project_dir=project,
+                    workspace_root=root,
+                    include_updates=False,
+                )
+            elapsed = time.monotonic() - started
+
+            self.assertLess(elapsed, 0.5)
+            slow_repo = [row for row in snapshot["repos"] if row["name"] == "slow-repo"][0]
+            self.assertIn("snapshot_timeout: repo scan exceeded 0.05s", slow_repo["errors"])
+
     def test_collect_snapshot_builds_repo_dependency_overview(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -634,6 +700,32 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertTrue(
                 any(row.get("source") == "driftdriver" and row.get("target") == "meridian" for row in edges)
             )
+
+    def test_collect_snapshot_does_not_route_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            project = root / "driftdriver"
+            project.mkdir(parents=True)
+            _init_repo(project)
+            _write_graph(project, [{"id": "a", "title": "A", "status": "open"}])
+            _write_policy(project, "schema = 1\n[routing]\nenabled = true\ndefault_executor = 'claude'\n")
+
+            ecosystem_root = root / "speedrift-ecosystem"
+            ecosystem_root.mkdir()
+            (ecosystem_root / "ecosystem.toml").write_text(
+                "schema = 1\n[repos.driftdriver]\nrole='orchestrator'\nurl='https://example.com'\n",
+                encoding="utf-8",
+            )
+
+            with patch("driftdriver.task_router.route_ready_tasks") as route_ready:
+                snapshot = collect_ecosystem_snapshot(
+                    project_dir=project,
+                    workspace_root=root,
+                    include_updates=False,
+                )
+
+            self.assertEqual(snapshot["repo_count"], 1)
+            route_ready.assert_not_called()
 
     def test_collect_snapshot_includes_central_reports_summary(self) -> None:
         with tempfile.TemporaryDirectory() as td:
