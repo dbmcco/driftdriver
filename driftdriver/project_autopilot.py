@@ -23,6 +23,19 @@ SESSION_DRIVER_GLOB = (
     "~/.claude/plugins/cache/superpowers-marketplace/"
     "claude-session-driver/*/scripts"
 )
+DEFAULT_CLAUDE_WORKER_ARGS = (
+    "--permission-mode",
+    "bypassPermissions",
+    "--allowedTools",
+    "Bash(*)",
+    "Edit",
+    "Write",
+    "Read",
+    "Glob",
+    "Grep",
+    "LS",
+    "TodoWrite",
+)
 
 WORKER_PROMPT_TEMPLATE = """\
 You are working in: {project_dir}
@@ -402,7 +415,7 @@ def launch_worker(
         return None
 
     result = subprocess.run(
-        [str(launch_script), worker_name, str(project_dir)],
+        [str(launch_script), worker_name, str(project_dir), *DEFAULT_CLAUDE_WORKER_ARGS],
         capture_output=True,
         text=True,
         timeout=60,
@@ -730,21 +743,28 @@ def dispatch_task(
 
         ctx.session_id = worker_info.get("session_id")
         prompt = build_worker_prompt(task, project_dir)
-        ctx.response = converse(
-            scripts_dir,
-            worker_name,
-            ctx.session_id,
-            prompt,
-            run.config.worker_timeout,
-        )
-        stop_worker(scripts_dir, worker_name, ctx.session_id)
-        if not ctx.response:
-            ctx.response = "worker conversation returned no output"
-        ctx.status = (
-            "completed"
-            if ctx.response and not ctx.response.lstrip().startswith("Error:")
-            else "failed"
-        )
+        try:
+            ctx.response = converse(
+                scripts_dir,
+                worker_name,
+                ctx.session_id,
+                prompt,
+                run.config.worker_timeout,
+            )
+        except Exception as exc:
+            ctx.response = f"worker conversation failed: {exc}"
+            ctx.status = "failed"
+        finally:
+            if ctx.session_id:
+                stop_worker(scripts_dir, worker_name, ctx.session_id)
+        if ctx.status != "failed":
+            if not ctx.response:
+                ctx.response = "worker conversation returned no output"
+            ctx.status = (
+                "completed"
+                if ctx.response and not ctx.response.lstrip().startswith("Error:")
+                else "failed"
+            )
 
     run.workers[task["id"]] = ctx
     return ctx
@@ -1039,11 +1059,13 @@ def run_milestone_review(
         worker_info = launch_worker(scripts_dir, worker_name, project_dir)
         if worker_info:
             session_id = worker_info.get("session_id")
-            response = converse(
-                scripts_dir, worker_name, session_id, prompt, 600,
-            )
-            stop_worker(scripts_dir, worker_name, session_id)
-            return response
+            try:
+                return converse(
+                    scripts_dir, worker_name, session_id, prompt, 600,
+                )
+            finally:
+                if session_id:
+                    stop_worker(scripts_dir, worker_name, session_id)
 
     # Fallback: direct CLI
     result = _run_command(
@@ -1074,9 +1096,11 @@ def decompose_goal(
         worker_info = launch_worker(scripts_dir, worker_name, project_dir)
         if worker_info:
             session_id = worker_info.get("session_id")
-            response = converse(scripts_dir, worker_name, session_id, prompt, 600)
-            stop_worker(scripts_dir, worker_name, session_id)
-            return response
+            try:
+                return converse(scripts_dir, worker_name, session_id, prompt, 600)
+            finally:
+                if session_id:
+                    stop_worker(scripts_dir, worker_name, session_id)
 
     # Fallback: direct CLI
     result = _run_command(

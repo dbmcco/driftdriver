@@ -102,9 +102,20 @@ if [[ -z "$CSD_SCRIPTS" || ! -d "$CSD_SCRIPTS" ]]; then
 fi
 
 WORKER_NAME="wg-task-${TASK_ID}"
+CLAUDE_WORKER_ARGS=(
+  --permission-mode bypassPermissions
+  --allowedTools "Bash(*)" Edit Write Read Glob Grep LS TodoWrite
+)
+SESSION_ID=""
+
+cleanup_worker() {
+  if [[ -n "${SESSION_ID:-}" ]]; then
+    "$CSD_SCRIPTS/stop-worker.sh" "$WORKER_NAME" "$SESSION_ID" 2>/dev/null || true
+  fi
+}
 
 # Launch worker
-RESULT=$("$CSD_SCRIPTS/launch-worker.sh" "$WORKER_NAME" "$PROJECT_DIR" 2>&1)
+RESULT=$("$CSD_SCRIPTS/launch-worker.sh" "$WORKER_NAME" "$PROJECT_DIR" "${CLAUDE_WORKER_ARGS[@]}" 2>&1)
 SESSION_ID=$(echo "$RESULT" | jq -r '.session_id')
 
 if [[ -z "$SESSION_ID" || "$SESSION_ID" == "null" ]]; then
@@ -112,6 +123,7 @@ if [[ -z "$SESSION_ID" || "$SESSION_ID" == "null" ]]; then
   echo "$RESULT" >&2
   exit 1
 fi
+trap cleanup_worker EXIT
 
 EVENT_FILE="/tmp/claude-workers/${SESSION_ID}.events.jsonl"
 META_FILE="/tmp/claude-workers/${SESSION_ID}.meta"
@@ -178,6 +190,3 @@ if [[ -z "$RESPONSE" || "$RESPONSE" == "null" ]]; then
 fi
 
 echo "$RESPONSE"
-
-# Cleanup
-"$CSD_SCRIPTS/stop-worker.sh" "$WORKER_NAME" "$SESSION_ID" 2>/dev/null || true

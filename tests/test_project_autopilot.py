@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from driftdriver.project_autopilot import (
+    DEFAULT_CLAUDE_WORKER_ARGS,
     _normalize_finding,
     _run_command,
     _assistant_text_message_count,
@@ -23,10 +24,12 @@ from driftdriver.project_autopilot import (
     build_review_prompt,
     build_worker_prompt,
     detect_recurring_findings,
+    dispatch_task,
     discover_session_driver,
     generate_report,
     get_ready_tasks,
     get_wg_eval_scores,
+    launch_worker,
     run_autopilot_loop,
     should_escalate,
     trigger_evolve,
@@ -50,6 +53,55 @@ class TestDiscoverSessionDriver(unittest.TestCase):
             result = discover_session_driver()
             self.assertIsNotNone(result)
             self.assertIn("1.0.1", str(result))
+
+
+class TestSessionDriverLifecycle(unittest.TestCase):
+    @patch("driftdriver.project_autopilot.subprocess.run")
+    def test_launch_worker_passes_noninteractive_claude_args(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            ["launch-worker.sh"],
+            0,
+            stdout='{"session_id":"sess-1","tmux_name":"ap-t1"}\n',
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            scripts_dir = Path(td)
+            (scripts_dir / "launch-worker.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+
+            result = launch_worker(scripts_dir, "ap-t1", Path("/project"))
+
+        self.assertEqual(result, {"session_id": "sess-1", "tmux_name": "ap-t1"})
+        command = mock_run.call_args.args[0]
+        for arg in DEFAULT_CLAUDE_WORKER_ARGS:
+            self.assertIn(arg, command)
+
+    @patch("driftdriver.project_autopilot.ExecutorShim")
+    @patch("driftdriver.project_autopilot.stop_worker")
+    @patch("driftdriver.project_autopilot.converse", side_effect=RuntimeError("boom"))
+    @patch("driftdriver.project_autopilot.launch_worker", return_value={"session_id": "sess-1"})
+    def test_dispatch_stops_worker_when_converse_raises(
+        self,
+        _mock_launch,
+        _mock_converse,
+        mock_stop,
+        mock_shim,
+    ):
+        mock_shim.return_value.execute.return_value = "completed"
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            run = AutopilotRun(config=AutopilotConfig(project_dir=repo))
+
+            ctx = dispatch_task(
+                {"id": "t1", "title": "Task 1", "description": "Do it"},
+                repo,
+                Path("/driver/scripts"),
+                run,
+            )
+
+        self.assertEqual(ctx.status, "failed")
+        self.assertIn("worker conversation failed: boom", ctx.response)
+        mock_stop.assert_called_once_with(Path("/driver/scripts"), "ap-t1", "sess-1")
 
 
 class TestCommandResolution(unittest.TestCase):

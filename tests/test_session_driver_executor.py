@@ -63,6 +63,19 @@ class SessionDriverTemplateTests(unittest.TestCase):
         self.assertIn("wait-for-event.sh", text)
         self.assertIn("stop-worker.sh", text)
 
+    def test_shell_script_passes_noninteractive_claude_permissions(self) -> None:
+        sh_path = _TEMPLATES / "session-driver-run.sh"
+        text = sh_path.read_text(encoding="utf-8")
+        self.assertIn("--permission-mode bypassPermissions", text)
+        self.assertIn("--allowedTools", text)
+        self.assertIn('"Bash(*)"', text)
+
+    def test_shell_script_reaps_worker_on_exit(self) -> None:
+        sh_path = _TEMPLATES / "session-driver-run.sh"
+        text = sh_path.read_text(encoding="utf-8")
+        self.assertIn("cleanup_worker()", text)
+        self.assertIn("trap cleanup_worker EXIT", text)
+
 
 class SessionDriverInstallTests(unittest.TestCase):
     def test_install_copies_toml_and_script(self) -> None:
