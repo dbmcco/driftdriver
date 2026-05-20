@@ -178,6 +178,26 @@ def _parse_schedule_tag(tag: str) -> datetime | None:
     return None
 
 
+def _parse_task_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _not_before_allows_dispatch(task: dict[str, Any]) -> bool:
+    not_before = _parse_task_datetime(task.get("not_before"))
+    if not_before is None:
+        return True
+    return datetime.now(timezone.utc) >= not_before
+
+
 def dispatch_task(
     task: dict, executor: ExecutorConfig, repo_path: Path
 ) -> DispatchResult:
@@ -414,6 +434,8 @@ def _find_ready_tasks(graph_lines: list[dict]) -> list[dict]:
             continue
         if node.get("paused"):
             continue
+        if not _not_before_allows_dispatch(node):
+            continue
         deps = node.get("after", [])
         if all(statuses.get(d, "") in terminal for d in deps):
             ready.append(node)
@@ -559,6 +581,56 @@ class CompletionResult:
     error: str | None = None
 
 
+def _task_tags(task: dict[str, Any]) -> set[str]:
+    return {str(tag) for tag in task.get("tags", [])}
+
+
+def _requires_delivery_evidence(task: dict[str, Any]) -> bool:
+    tags = _task_tags(task)
+    return bool(
+        {"media", "medium:image", "medium:video", "delivery:scheduled"} & tags
+        and {"media", "medium:image", "medium:video"} & tags
+    )
+
+
+def _has_delivery_evidence(data: dict[str, Any]) -> bool:
+    artifacts = data.get("artifacts")
+    if isinstance(artifacts, list) and artifacts:
+        return True
+    packet = data.get("handoff_packet")
+    if not isinstance(packet, dict):
+        return False
+    for key in (
+        "artifacts",
+        "files_changed",
+        "message_to_user",
+        "delivery",
+        "delivered",
+        "completion_ref",
+        "result_url",
+        "asset_id",
+        "asset_ids",
+    ):
+        value = packet.get(key)
+        if value:
+            return True
+    return False
+
+
+def _completion_failure_reason(task: dict[str, Any], data: dict[str, Any]) -> str | None:
+    error = data.get("error")
+    if error:
+        return str(error)[:500]
+    packet = data.get("handoff_packet")
+    if isinstance(packet, dict):
+        verification = packet.get("verification")
+        if isinstance(verification, dict) and verification.get("error"):
+            return str(verification["error"])[:500]
+    if _requires_delivery_evidence(task) and not _has_delivery_evidence(data):
+        return "Agent reported done for a media delivery task with missing delivery evidence"
+    return None
+
+
 def check_agent_completions(
     repo_path: Path, config: RoutingConfig
 ) -> list[CompletionResult]:
@@ -603,6 +675,15 @@ def check_agent_completions(
         summary = data.get("summary", "")
 
         if agent_status == "done":
+            failure_reason = _completion_failure_reason(node, data)
+            if failure_reason is not None:
+                _run_wg(repo_path, "log", task_id,
+                         f"Rejected agent done via router: {failure_reason}")
+                _run_wg(repo_path, "fail", task_id, "--reason", failure_reason)
+                results.append(CompletionResult(
+                    task_id=task_id, completed=True, error=failure_reason,
+                ))
+                continue
             _run_wg(repo_path, "log", task_id,
                      f"Completed by agent via router. Summary: {str(summary)[:200]}")
             _run_wg(repo_path, "done", task_id, "--skip-verify")

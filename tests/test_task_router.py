@@ -324,6 +324,31 @@ class TestFindReadyTasks(unittest.TestCase):
         ready = _find_ready_tasks(tasks)
         self.assertEqual(len(ready), 0)
 
+    def test_future_not_before_is_not_ready(self) -> None:
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "open",
+                "not_before": "2099-01-01T00:00:00+00:00",
+            },
+        ]
+        ready = _find_ready_tasks(tasks)
+        self.assertEqual(ready, [])
+
+    def test_past_not_before_is_ready(self) -> None:
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "open",
+                "not_before": "2000-01-01T00:00:00+00:00",
+            },
+        ]
+        ready = _find_ready_tasks(tasks)
+        self.assertEqual(len(ready), 1)
+        self.assertEqual(ready[0]["id"], "t1")
+
 
 # ---------------------------------------------------------------------------
 # ClaimTests
@@ -536,6 +561,55 @@ class TestCheckAgentCompletions(unittest.TestCase):
             results = check_agent_completions(repo, self._make_config())
 
         self.assertEqual(len(results), 0)
+
+    @patch("driftdriver.task_router.subprocess.run")
+    @patch("driftdriver.task_router.urlopen")
+    def test_done_media_task_without_delivery_evidence_calls_wg_fail(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {
+                "status": "done",
+                "summary": "Media generation requires a conversation_id when running inside an agent session.",
+                "artifacts": [],
+                "handoff_packet": {
+                    "status": "done",
+                    "verification": {"error": None},
+                },
+            }
+        ).encode()
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        tasks = [
+            {
+                "kind": "task",
+                "id": "media-task",
+                "status": "in-progress",
+                "title": "Send image",
+                "tags": ["agent:samantha", "media", "medium:image"],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._setup_repo(td, tasks)
+            results = check_agent_completions(repo, self._make_config())
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].completed)
+        self.assertIn("missing delivery evidence", results[0].error or "")
+        fail_calls = [
+            c for c in mock_run.call_args_list
+            if "fail" in c[0][0]
+        ]
+        done_calls = [
+            c for c in mock_run.call_args_list
+            if "done" in c[0][0]
+        ]
+        self.assertEqual(len(fail_calls), 1)
+        self.assertEqual(done_calls, [])
 
 
 # ---------------------------------------------------------------------------
