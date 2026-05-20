@@ -20,7 +20,7 @@ from driftdriver.upstream_pins import (
 
 def test_load_missing_file_returns_empty(tmp_path: Path) -> None:
     pins = load_pins(tmp_path / "upstream-pins.toml")
-    assert pins == {"shas": {}, "adopted_shas": {}, "snoozed": {}}
+    assert pins == {"shas": {}, "adopted_shas": {}, "diverged_since": {}, "snoozed": {}}
 
 
 def test_set_and_get_sha(tmp_path: Path) -> None:
