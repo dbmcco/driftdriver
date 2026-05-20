@@ -54,18 +54,14 @@ driftdriver tmux-monitor status --json
 driftdriver tmux-monitor status --repo paia-program --json
 ```
 
-### Output
+Each agent shows session, pane, type, title, current task, summary, cwd,
+relevance, and the `tmux send-keys` target for control.
 
-Each agent shows: session, pane, type (codex/claude-code/opencode), title, current task, summary, cwd, relevance (same_repo/related/unrelated), and the `tmux send-keys` target for control.
+Use `controllable: true` and the `pane_id` field to send commands:
 
-Relevant agents (same repo) are marked with `***`. Use `controllable: true` and the `pane_id` field to send commands:
 ```bash
 tmux send-keys -t %272 "your command here" Enter
 ```
 
-### When to Use
-
-- Before starting work on a repo: check if another agent is already working there
-- Before sending commands to another agent: verify it's running and get its pane_id
-- To coordinate: summarize what other agents are doing and avoid conflicts
+Check this before starting repo work so same-repo agents do not conflict.
 <!-- driftdriver-codex:end -->

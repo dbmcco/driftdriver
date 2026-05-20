@@ -93,7 +93,7 @@ max_unresolved_warnings = 10
 
 [routing]
 enabled = true
-default_executor = "claude"
+default_executor = "wg-daemon"
 
 [routing.executors.samantha]
 type = "http"
