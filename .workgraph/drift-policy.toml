@@ -22,7 +22,7 @@ dry_run = true
 [factory]
 enabled = true
 cycle_seconds = 90
-plan_only = false
+plan_only = true
 max_repos_per_cycle = 4
 max_actions_per_cycle = 12
 emit_followups = true

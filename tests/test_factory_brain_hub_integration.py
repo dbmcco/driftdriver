@@ -54,6 +54,10 @@ def test_factory_brain_tick_calls_brain(tmp_path: Path) -> None:
         hub_data_dir=hub_dir,
         workspace_roots=[tmp_path],
         dry_run=True,
+        signal_gate_enabled=True,
+        pending_signals_path=hub_dir / "pending-signals.json",
+        gate_dir=hub_dir / ".signal-gates",
+        gate_dry_run=True,
     )
 
     # Enroll the repo via roster API
@@ -74,6 +78,10 @@ def test_factory_brain_tick_calls_brain(tmp_path: Path) -> None:
     assert len(call_kwargs["roster_repos"]) == 1
     assert call_kwargs["roster_repos"][0] == repo
     assert call_kwargs["dry_run"] is True
+    assert call_kwargs["signal_gate_enabled"] is True
+    assert call_kwargs["pending_signals_path"] == hub_dir / "pending-signals.json"
+    assert call_kwargs["gate_dir"] == hub_dir / ".signal-gates"
+    assert call_kwargs["gate_dry_run"] is True
     assert call_kwargs["snapshot"] == {"repos": []}
 
 

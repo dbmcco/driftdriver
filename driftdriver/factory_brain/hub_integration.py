@@ -31,10 +31,18 @@ class FactoryBrain:
         hub_data_dir: Path,
         workspace_roots: list[Path],
         dry_run: bool = False,
+        signal_gate_enabled: bool = False,
+        pending_signals_path: Path | None = None,
+        gate_dir: Path | None = None,
+        gate_dry_run: bool = False,
     ) -> None:
         self.hub_data_dir = hub_data_dir
         self.workspace_roots = workspace_roots
         self.dry_run = dry_run
+        self.signal_gate_enabled = signal_gate_enabled
+        self.pending_signals_path = pending_signals_path
+        self.gate_dir = gate_dir
+        self.gate_dry_run = gate_dry_run
 
         self.roster_file = hub_data_dir / "roster.json"
         self.roster: Roster = load_roster(self.roster_file)
@@ -76,6 +84,10 @@ class FactoryBrain:
             heuristic_recommendation=heuristic_recommendation,
             log_dir=self.log_dir,
             dry_run=self.dry_run,
+            signal_gate_enabled=self.signal_gate_enabled,
+            pending_signals_path=self.pending_signals_path,
+            gate_dir=self.gate_dir,
+            gate_dry_run=self.gate_dry_run,
         )
 
         # Process enrollment/unenrollment directives from results

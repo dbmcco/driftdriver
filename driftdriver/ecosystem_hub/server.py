@@ -341,12 +341,23 @@ def run_service_foreground(
 
             brain_data_dir = Path.home() / ".config" / "workgraph" / "factory-brain"
             brain_data_dir.mkdir(parents=True, exist_ok=True)
+            brain_dry_run = bool(_brain_policy.get("dry_run", True))
+            brain_signal_gate_enabled = bool(_brain_policy.get("signal_gate_enabled", True))
             _factory_brain = FactoryBrain(
                 hub_data_dir=brain_data_dir,
                 workspace_roots=[workspace_root],
-                dry_run=False,
+                dry_run=brain_dry_run,
+                signal_gate_enabled=brain_signal_gate_enabled,
+                pending_signals_path=wg_dir_for_notify / "service" / "factory-brain" / "pending-signals.json",
+                gate_dir=wg_dir_for_notify / ".signal-gates",
+                gate_dry_run=bool(_brain_policy.get("gate_dry_run", False)),
             )
-            _log.info("Factory brain initialized (roster: %s)", _factory_brain.roster_file)
+            _log.info(
+                "Factory brain initialized (roster: %s, dry_run=%s, signal_gate_enabled=%s)",
+                _factory_brain.roster_file,
+                brain_dry_run,
+                brain_signal_gate_enabled,
+            )
         except Exception:
             _log.debug("Factory brain not available — skipping", exc_info=True)
     else:
