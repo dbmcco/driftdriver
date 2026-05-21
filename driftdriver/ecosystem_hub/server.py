@@ -141,6 +141,61 @@ def _run_upstream_pass1(project_dir: Path) -> None:
         )
 
 
+def _factory_execution_gate(
+    project_dir: Path,
+    *,
+    requested: bool,
+    policy_plan_only: bool,
+) -> dict[str, Any]:
+    """Return the effective hub factory execution gate.
+
+    The ecosystem hub may always collect snapshots and build factory plans.
+    Executing those plans is a separate control surface that requires both an
+    explicit hub opt-in and an active autonomous runtime lease.
+    """
+    gate: dict[str, Any] = {
+        "enabled": False,
+        "requested": bool(requested),
+        "policy_plan_only": bool(policy_plan_only),
+        "control_mode": "unknown",
+        "lease_active": False,
+        "lease_owner": "",
+        "reason": "",
+    }
+    if bool(policy_plan_only):
+        gate["reason"] = "factory policy is plan_only"
+        return gate
+    if not bool(requested):
+        gate["reason"] = "explicit hub factory execution opt-in missing"
+        return gate
+
+    try:
+        from driftdriver.speedriftd_state import load_control_state
+
+        control = load_control_state(project_dir)
+    except Exception as exc:
+        gate["reason"] = f"runtime control unavailable: {exc}"
+        return gate
+
+    mode = str(control.get("mode") or "observe").strip().lower()
+    lease_active = bool(control.get("lease_active"))
+    lease_owner = str(control.get("lease_owner") or "").strip()
+    gate["control_mode"] = mode
+    gate["lease_active"] = lease_active
+    gate["lease_owner"] = lease_owner
+
+    if mode != "autonomous":
+        gate["reason"] = f"runtime control mode {mode} does not allow factory execution"
+        return gate
+    if not lease_active:
+        gate["reason"] = "autonomous mode requires an active lease"
+        return gate
+
+    gate["enabled"] = True
+    gate["reason"] = "explicit opt-in with autonomous runtime lease"
+    return gate
+
+
 def _port_is_available(host: str, port: int) -> bool:
     """Check whether *port* can be bound. Returns False if already in use."""
     try:
@@ -168,6 +223,8 @@ def start_service_process(
     supervise_services: bool = True,
     supervise_cooldown_seconds: int = _SUPERVISOR_DEFAULT_COOLDOWN_SECONDS,
     supervise_max_starts: int = _SUPERVISOR_DEFAULT_MAX_STARTS,
+    enable_factory_brain: bool = False,
+    execute_factory_actions: bool = False,
 ) -> dict[str, Any]:
     status = read_service_status(project_dir)
     if status.get("running"):
@@ -214,6 +271,10 @@ def start_service_process(
         cmd.extend(["--ecosystem-toml", str(ecosystem_toml)])
     if execute_draft_prs:
         cmd.append("--execute-draft-prs")
+    if enable_factory_brain:
+        cmd.append("--enable-factory-brain")
+    if execute_factory_actions:
+        cmd.append("--execute-factory-actions")
     env = os.environ.copy()
     package_root = str(Path(__file__).resolve().parents[2])
     existing_pp = env.get("PYTHONPATH", "")
@@ -285,6 +346,8 @@ def run_service_foreground(
     supervise_services: bool,
     supervise_cooldown_seconds: int,
     supervise_max_starts: int,
+    enable_factory_brain: bool,
+    execute_factory_actions: bool,
 ) -> None:
     paths = service_paths(project_dir)
     paths["dir"].mkdir(parents=True, exist_ok=True)
@@ -304,6 +367,8 @@ def run_service_foreground(
             "supervise_services": supervise_services,
             "supervise_cooldown_seconds": max(1, int(supervise_cooldown_seconds)),
             "supervise_max_starts": max(1, int(supervise_max_starts)),
+            "enable_factory_brain": enable_factory_brain,
+            "execute_factory_actions": execute_factory_actions,
         },
     )
 
@@ -335,7 +400,7 @@ def run_service_foreground(
             _brain_policy = _tomllib.loads(policy_toml_path.read_text(encoding="utf-8")).get("factory_brain", {})
         except Exception:
             pass
-    if bool(_brain_policy.get("enabled", False)):
+    if bool(_brain_policy.get("enabled", False)) and bool(enable_factory_brain):
         try:
             from driftdriver.factory_brain.hub_integration import FactoryBrain
 
@@ -361,7 +426,10 @@ def run_service_foreground(
         except Exception:
             _log.debug("Factory brain not available — skipping", exc_info=True)
     else:
-        _log.info("Factory brain disabled via drift-policy.toml [factory_brain] enabled = false")
+        if bool(_brain_policy.get("enabled", False)):
+            _log.info("Factory brain policy enabled but hub planning opt-in was not requested")
+        else:
+            _log.info("Factory brain disabled via drift-policy.toml [factory_brain] enabled = false")
 
     # Auto-restart: track source file timestamps at startup.
     # If any driftdriver source changes, the hub restarts itself.
@@ -476,13 +544,21 @@ def run_service_foreground(
 
                 factory_enabled = bool(factory_cfg.get("enabled", False))
                 if factory_enabled and policy is not None:
+                    policy_plan_only = bool(factory_cfg.get("plan_only", True))
+                    execution_gate = _factory_execution_gate(
+                        project_dir,
+                        requested=bool(execute_factory_actions),
+                        policy_plan_only=policy_plan_only,
+                    )
                     cycle = build_factory_cycle(
                         snapshot=snapshot,
                         policy=policy,
                         project_name=project_dir.name,
+                        plan_only_override=not bool(execution_gate.get("enabled")),
                     )
                     execution_mode = str(cycle.get("execution_mode") or "plan_only")
-                    emit_followups = bool(factory_cfg.get("emit_followups", False))
+                    configured_emit_followups = bool(factory_cfg.get("emit_followups", False))
+                    emit_followups = configured_emit_followups and bool(execution_gate.get("enabled"))
                     execution = {
                         "attempted": 0,
                         "executed": 0,
@@ -497,6 +573,8 @@ def run_service_foreground(
                     }
                     followups = {
                         "enabled": emit_followups,
+                        "configured": configured_emit_followups,
+                        "blocked_reason": "" if emit_followups or not configured_emit_followups else str(execution_gate.get("reason") or ""),
                         "attempted": 0,
                         "created": 0,
                         "existing": 0,
@@ -508,6 +586,7 @@ def run_service_foreground(
                         "enabled": True,
                         "summary": summarize_factory_cycle(cycle),
                         "action_plan": cycle.get("action_plan") if isinstance(cycle.get("action_plan"), list) else [],
+                        "execution_gate": execution_gate,
                         "execution": {
                             **execution,
                             "phase": "executing" if execution_mode != "plan_only" else "planned",
@@ -553,6 +632,7 @@ def run_service_foreground(
                         "enabled": True,
                         "summary": summarize_factory_cycle(cycle),
                         "action_plan": cycle.get("action_plan") if isinstance(cycle.get("action_plan"), list) else [],
+                        "execution_gate": execution_gate,
                         "execution": {
                             **execution,
                             "phase": "completed",
@@ -763,6 +843,16 @@ def _build_parser() -> argparse.ArgumentParser:
     start.add_argument("--skip-updates", action="store_true", help="Skip remote update checks while running")
     start.add_argument("--max-next", type=int, default=5, help="Max next-work items per repo")
     start.add_argument("--execute-draft-prs", action="store_true", help="Execute draft PR creation each cycle")
+    start.add_argument(
+        "--enable-factory-brain",
+        action="store_true",
+        help="Allow model-mediated factory brain planning ticks while the hub runs",
+    )
+    start.add_argument(
+        "--execute-factory-actions",
+        action="store_true",
+        help="Allow deterministic factory action execution when runtime control is autonomous with an active lease",
+    )
     start.add_argument("--title-prefix", default="speedrift", help="Title prefix for draft PR automation")
     start.add_argument(
         "--no-supervise-services",
@@ -789,6 +879,16 @@ def _build_parser() -> argparse.ArgumentParser:
     run_service.add_argument("--skip-updates", action="store_true", help="Skip remote update checks while running")
     run_service.add_argument("--max-next", type=int, default=5, help="Max next-work items per repo")
     run_service.add_argument("--execute-draft-prs", action="store_true", help="Execute draft PR creation each cycle")
+    run_service.add_argument(
+        "--enable-factory-brain",
+        action="store_true",
+        help="Allow model-mediated factory brain planning ticks while the hub runs",
+    )
+    run_service.add_argument(
+        "--execute-factory-actions",
+        action="store_true",
+        help="Allow deterministic factory action execution when runtime control is autonomous with an active lease",
+    )
     run_service.add_argument("--title-prefix", default="speedrift", help="Title prefix for draft PR automation")
     run_service.add_argument(
         "--no-supervise-services",
@@ -815,6 +915,16 @@ def _build_parser() -> argparse.ArgumentParser:
     automate.add_argument("--skip-updates", action="store_true", help="Skip remote update checks while running")
     automate.add_argument("--max-next", type=int, default=5, help="Max next-work items per repo")
     automate.add_argument("--execute-draft-prs", action="store_true", help="Execute draft PR creation each cycle")
+    automate.add_argument(
+        "--enable-factory-brain",
+        action="store_true",
+        help="Allow model-mediated factory brain planning ticks while the hub runs",
+    )
+    automate.add_argument(
+        "--execute-factory-actions",
+        action="store_true",
+        help="Allow deterministic factory action execution when runtime control is autonomous with an active lease",
+    )
     automate.add_argument("--title-prefix", default="speedrift", help="Title prefix for draft PR automation")
     automate.add_argument(
         "--no-supervise-services",
@@ -897,6 +1007,8 @@ def main(argv: list[str] | None = None) -> int:
             supervise_services=not bool(args.no_supervise_services),
             supervise_cooldown_seconds=max(1, int(args.supervise_cooldown_seconds)),
             supervise_max_starts=max(1, int(args.supervise_max_starts)),
+            enable_factory_brain=bool(args.enable_factory_brain),
+            execute_factory_actions=bool(args.execute_factory_actions),
         )
         print(json.dumps(status, indent=2, sort_keys=False))
         return 0
@@ -917,6 +1029,8 @@ def main(argv: list[str] | None = None) -> int:
             supervise_services=not bool(args.no_supervise_services),
             supervise_cooldown_seconds=max(1, int(args.supervise_cooldown_seconds)),
             supervise_max_starts=max(1, int(args.supervise_max_starts)),
+            enable_factory_brain=bool(args.enable_factory_brain),
+            execute_factory_actions=bool(args.execute_factory_actions),
         )
         return 0
 
@@ -936,6 +1050,8 @@ def main(argv: list[str] | None = None) -> int:
             supervise_services=not bool(args.no_supervise_services),
             supervise_cooldown_seconds=max(1, int(args.supervise_cooldown_seconds)),
             supervise_max_starts=max(1, int(args.supervise_max_starts)),
+            enable_factory_brain=bool(args.enable_factory_brain),
+            execute_factory_actions=bool(args.execute_factory_actions),
         )
         print(json.dumps({"automated": True, "status": status}, indent=2, sort_keys=False))
         return 0

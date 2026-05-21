@@ -176,6 +176,83 @@ class SubpackageBoundaryTests(unittest.TestCase):
 
 
 class EcosystemHubTests(unittest.TestCase):
+    def test_factory_execution_gate_requires_explicit_request(self) -> None:
+        from driftdriver.ecosystem_hub.server import _factory_execution_gate
+
+        with tempfile.TemporaryDirectory() as td:
+            gate = _factory_execution_gate(Path(td), requested=False, policy_plan_only=False)
+
+        self.assertFalse(gate["enabled"])
+        self.assertEqual(gate["reason"], "explicit hub factory execution opt-in missing")
+
+    def test_factory_execution_gate_respects_policy_plan_only(self) -> None:
+        from driftdriver.ecosystem_hub.server import _factory_execution_gate
+
+        with tempfile.TemporaryDirectory() as td:
+            gate = _factory_execution_gate(Path(td), requested=True, policy_plan_only=True)
+
+        self.assertFalse(gate["enabled"])
+        self.assertEqual(gate["reason"], "factory policy is plan_only")
+
+    def test_factory_execution_gate_requires_autonomous_lease(self) -> None:
+        from driftdriver.ecosystem_hub.server import _factory_execution_gate
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "driftdriver.speedriftd_state.load_control_state",
+                return_value={"mode": "supervise", "lease_active": True, "lease_owner": "hub"},
+            ):
+                gate = _factory_execution_gate(Path(td), requested=True, policy_plan_only=False)
+
+        self.assertFalse(gate["enabled"])
+        self.assertEqual(gate["control_mode"], "supervise")
+        self.assertIn("does not allow factory execution", gate["reason"])
+
+    def test_factory_execution_gate_allows_autonomous_active_lease(self) -> None:
+        from driftdriver.ecosystem_hub.server import _factory_execution_gate
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "driftdriver.speedriftd_state.load_control_state",
+                return_value={"mode": "autonomous", "lease_active": True, "lease_owner": "ecosystem-hub"},
+            ):
+                gate = _factory_execution_gate(Path(td), requested=True, policy_plan_only=False)
+
+        self.assertTrue(gate["enabled"])
+        self.assertEqual(gate["lease_owner"], "ecosystem-hub")
+
+    def test_hub_start_defaults_to_no_brain_or_factory_execution(self) -> None:
+        from driftdriver.ecosystem_hub import server
+
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / "driftdriver"
+            project.mkdir()
+            with patch.object(server, "start_service_process", return_value={"running": False}) as mock_start:
+                rc = server.main(["--project-dir", str(project), "start"])
+
+        self.assertEqual(rc, 0)
+        self.assertFalse(mock_start.call_args.kwargs["enable_factory_brain"])
+        self.assertFalse(mock_start.call_args.kwargs["execute_factory_actions"])
+
+    def test_hub_start_forwards_explicit_brain_and_execution_flags(self) -> None:
+        from driftdriver.ecosystem_hub import server
+
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / "driftdriver"
+            project.mkdir()
+            with patch.object(server, "start_service_process", return_value={"running": False}) as mock_start:
+                rc = server.main([
+                    "--project-dir",
+                    str(project),
+                    "start",
+                    "--enable-factory-brain",
+                    "--execute-factory-actions",
+                ])
+
+        self.assertEqual(rc, 0)
+        self.assertTrue(mock_start.call_args.kwargs["enable_factory_brain"])
+        self.assertTrue(mock_start.call_args.kwargs["execute_factory_actions"])
+
     def test_load_ecosystem_repos_from_toml(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

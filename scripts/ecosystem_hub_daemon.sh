@@ -40,6 +40,8 @@ MAX_NEXT="${ECOSYSTEM_HUB_MAX_NEXT:-5}"
 TITLE_PREFIX="${ECOSYSTEM_HUB_TITLE_PREFIX:-speedrift}"
 CENTRAL_REPO="${ECOSYSTEM_HUB_CENTRAL_REPO:-}"
 EXECUTE_DRAFT_PRS="${ECOSYSTEM_HUB_EXECUTE_DRAFT_PRS:-0}"
+ENABLE_FACTORY_BRAIN="${ECOSYSTEM_HUB_ENABLE_FACTORY_BRAIN:-0}"
+EXECUTE_FACTORY_ACTIONS="${ECOSYSTEM_HUB_EXECUTE_FACTORY_ACTIONS:-0}"
 SKIP_UPDATES="${ECOSYSTEM_HUB_SKIP_UPDATES:-1}"
 SUPERVISE_SERVICES="${ECOSYSTEM_HUB_SUPERVISE_SERVICES:-1}"
 SUPERVISE_COOLDOWN_SECONDS="${ECOSYSTEM_HUB_SUPERVISE_COOLDOWN_SECONDS:-180}"
@@ -94,6 +96,12 @@ start_hub() {
   if [[ "$EXECUTE_DRAFT_PRS" == "1" ]]; then
     args+=("--execute-draft-prs")
   fi
+  if [[ "$ENABLE_FACTORY_BRAIN" == "1" ]]; then
+    args+=("--enable-factory-brain")
+  fi
+  if [[ "$EXECUTE_FACTORY_ACTIONS" == "1" ]]; then
+    args+=("--execute-factory-actions")
+  fi
   if [[ "$SUPERVISE_SERVICES" == "0" ]]; then
     args+=("--no-supervise-services")
   fi
@@ -121,6 +129,12 @@ run_foreground() {
   fi
   if [[ "$EXECUTE_DRAFT_PRS" == "1" ]]; then
     args+=("--execute-draft-prs")
+  fi
+  if [[ "$ENABLE_FACTORY_BRAIN" == "1" ]]; then
+    args+=("--enable-factory-brain")
+  fi
+  if [[ "$EXECUTE_FACTORY_ACTIONS" == "1" ]]; then
+    args+=("--execute-factory-actions")
   fi
   if [[ "$SUPERVISE_SERVICES" == "0" ]]; then
     args+=("--no-supervise-services")
@@ -165,6 +179,10 @@ install_launchd() {
     <string>${TITLE_PREFIX}</string>
     <key>ECOSYSTEM_HUB_EXECUTE_DRAFT_PRS</key>
     <string>${EXECUTE_DRAFT_PRS}</string>
+    <key>ECOSYSTEM_HUB_ENABLE_FACTORY_BRAIN</key>
+    <string>${ENABLE_FACTORY_BRAIN}</string>
+    <key>ECOSYSTEM_HUB_EXECUTE_FACTORY_ACTIONS</key>
+    <string>${EXECUTE_FACTORY_ACTIONS}</string>
     <key>ECOSYSTEM_HUB_SKIP_UPDATES</key>
     <string>${SKIP_UPDATES}</string>
     <key>ECOSYSTEM_HUB_SUPERVISE_SERVICES</key>

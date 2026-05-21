@@ -560,6 +560,13 @@ Start unattended automation (daemon + web report + upstream dry-run actions):
 scripts/ecosystem_hub.sh --project-dir . automate --host 127.0.0.1 --port 8777 --interval-seconds 60
 ```
 
+By default the hub is observe/plan-only: it collects snapshots, serves the
+dashboard, writes ledgers, and prepares action plans without running the Factory
+Brain model loop or dispatching workers. Model-mediated planning requires
+`--enable-factory-brain`. Deterministic factory execution requires
+`--execute-factory-actions` and is still blocked unless `speedriftd` runtime
+control is in `autonomous` mode with an active lease.
+
 Equivalent explicit daemon start command:
 
 ```bash
@@ -666,6 +673,8 @@ Daemon configuration knobs (environment variables):
 - `ECOSYSTEM_HUB_MAX_NEXT` (default `5`)
 - `ECOSYSTEM_HUB_CENTRAL_REPO` (default empty: auto-resolve from drift-policy)
 - `ECOSYSTEM_HUB_EXECUTE_DRAFT_PRS` (`0`/`1`, default `0`)
+- `ECOSYSTEM_HUB_ENABLE_FACTORY_BRAIN` (`0`/`1`, default `0`; enables model-mediated factory planning ticks)
+- `ECOSYSTEM_HUB_EXECUTE_FACTORY_ACTIONS` (`0`/`1`, default `0`; additionally requires autonomous runtime control with an active lease)
 - `ECOSYSTEM_HUB_SKIP_UPDATES` (`0`/`1`, default `1`)
 - `ECOSYSTEM_HUB_SUPERVISE_SERVICES` (`0`/`1`, default `1`)
 - `ECOSYSTEM_HUB_SUPERVISE_COOLDOWN_SECONDS` (default `180`)
