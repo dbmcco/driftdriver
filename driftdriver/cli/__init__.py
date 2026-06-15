@@ -140,6 +140,7 @@ def cmd_upstream_tracker(args: argparse.Namespace) -> int:
         project_dir=project_dir if emit_tasks else None,
         write_pins=not bool(args.no_write_pins),
         write_state=not bool(args.no_write_state),
+        run_compatibility_checks=not bool(args.no_compatibility_checks),
     )
 
     adoption_cycle = None
@@ -1502,6 +1503,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-write-state",
         action="store_true",
         help="Do not write .driftdriver/upstream-tracker-last.json",
+    )
+    upstream_tracker.add_argument(
+        "--no-compatibility-checks",
+        action="store_true",
+        help="Skip configured compatibility commands; useful for quick SHA-only audits",
     )
     upstream_tracker.set_defaults(func=cmd_upstream_tracker)
 

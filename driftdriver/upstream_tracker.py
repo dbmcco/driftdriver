@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -514,7 +515,14 @@ def _run_compatibility_checks(
         command = str(raw.get("command") or "").strip()
         if not command:
             continue
+        print(f"upstream-tracker: compatibility {name} starting", file=sys.stderr, flush=True)
         ok, detail = effective_runner(project_dir, name, command)
+        status = "passed" if ok else "failed"
+        print(
+            f"upstream-tracker: compatibility {name} {status}",
+            file=sys.stderr,
+            flush=True,
+        )
         checks.append({"name": name, "command": command, "ok": bool(ok), "detail": detail})
 
     if not checks:
@@ -614,6 +622,7 @@ def run_pass1(
     project_dir: Path | None = None,
     wg_runner: _WgRunner | None = None,
     compatibility_runner: _CompatibilityRunner | None = None,
+    run_compatibility_checks: bool = True,
     now: datetime | None = None,
     write_pins: bool = True,
     write_state: bool = True,
@@ -759,7 +768,7 @@ def run_pass1(
 
             compatibility = (
                 _run_compatibility_checks(project_dir, repo_cfg, runner=compatibility_runner)
-                if upstream_changed
+                if upstream_changed and run_compatibility_checks
                 else {"status": "unchecked", "checks": []}
             )
             eval_result["compatibility"] = compatibility

@@ -76,11 +76,13 @@ def test_upstream_tracker_accepts_no_write_flags_and_run_compatibility():
         "--no-write-adoptions",
         "--no-write-pins",
         "--no-write-state",
+        "--no-compatibility-checks",
     ])
     assert direct.no_tasks is True
     assert direct.no_write_adoptions is True
     assert direct.no_write_pins is True
     assert direct.no_write_state is True
+    assert direct.no_compatibility_checks is True
     assert direct.action is None
 
     legacy = p.parse_args([

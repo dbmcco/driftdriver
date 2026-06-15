@@ -497,6 +497,52 @@ def test_run_pass1_records_compatibility_success_for_upstream_change(tmp_path: P
     assert calls == [("wg-cli", "pytest tests/test_executor_shim.py -q")]
 
 
+def test_run_pass1_can_skip_compatibility_checks_for_quick_audit(tmp_path: Path) -> None:
+    from driftdriver.upstream_pins import load_pins, save_pins, set_sha
+
+    repo = tmp_path / "wg"
+    old_sha = _make_git_repo(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "commands.rs").write_text("pub fn new_cmd() {}\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "feat: add new-cmd"], cwd=repo, check=True, capture_output=True)
+
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", old_sha)
+    save_pins(pins_path, pins)
+
+    calls: list[tuple[str, str]] = []
+
+    def _compat_runner(project_dir: Path, check_name: str, command: str) -> tuple[bool, str]:
+        calls.append((check_name, command))
+        return False, "should not run"
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+            "compatibility_checks": [{"name": "wg-cli", "command": "pytest tests/test_executor_shim.py -q"}],
+        }]
+    }
+
+    results = run_pass1(
+        config,
+        pins_path,
+        llm_caller=_fake_haiku_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+        project_dir=tmp_path,
+        compatibility_runner=_compat_runner,
+        run_compatibility_checks=False,
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["compatibility"] == {"status": "unchecked", "checks": []}
+    assert calls == []
+
+
 def test_run_pass1_emits_task_when_compatibility_fails_even_if_llm_would_ignore(tmp_path: Path) -> None:
     from driftdriver.upstream_pins import load_pins, save_pins, set_sha
 
