@@ -36,11 +36,24 @@ Run one sentinel pass:
 driftdriver --dir /Users/braydon/projects/experiments/driftdriver upstream-tracker --json
 ```
 
-Use `--no-tasks` for a read-only operator check that updates local adoption state
-but does not emit WorkGraph tasks:
+Use `--no-tasks` for an operator check that updates local adoption state but does
+not emit WorkGraph tasks:
 
 ```bash
 uv run driftdriver --dir /Users/braydon/projects/experiments/driftdriver upstream-tracker --json --no-tasks
+```
+
+Use the no-write flags together for a fully read-only audit:
+
+```bash
+uv run driftdriver --dir /Users/braydon/projects/experiments/driftdriver upstream-tracker --json --no-tasks --no-write-adoptions --no-write-pins --no-write-state
+```
+
+The optional `run` action is accepted for compatibility with older operator muscle
+memory:
+
+```bash
+driftdriver --dir /Users/braydon/projects/experiments/driftdriver upstream-tracker --json run
 ```
 
 The ecosystem hub also runs this pass every collector tick when `upstream-config.toml`

@@ -544,6 +544,44 @@ def test_run_pass1_emits_task_when_compatibility_fails_even_if_llm_would_ignore(
     assert result["wg_task_id"] == "upstream-workgraph-sync"
 
 
+def test_run_pass1_can_skip_writing_pins_and_state(tmp_path: Path) -> None:
+    from driftdriver.upstream_pins import load_pins, save_pins, set_sha
+
+    repo = tmp_path / "wg"
+    old_sha = _make_git_repo(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "commands.rs").write_text("pub fn new_cmd() {}\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "feat: add new-cmd"], cwd=repo, check=True, capture_output=True)
+
+    pins_path = tmp_path / ".driftdriver" / "upstream-pins.toml"
+    pins = load_pins(pins_path)
+    pins = set_sha(pins, "graphwork/workgraph", "main", old_sha)
+    save_pins(pins_path, pins)
+    original_pins_text = pins_path.read_text(encoding="utf-8")
+
+    config = {
+        "external_repos": [{
+            "name": "graphwork/workgraph",
+            "local_path": str(repo),
+            "branches": ["main"],
+        }]
+    }
+
+    results = run_pass1(
+        config,
+        pins_path,
+        llm_caller=_fake_low_relevance_caller,
+        deep_eval_caller=_fake_sonnet_caller,
+        write_pins=False,
+        write_state=False,
+    )
+
+    assert len(results) == 1
+    assert pins_path.read_text(encoding="utf-8") == original_pins_text
+    assert not (pins_path.parent / "upstream-tracker-last.json").exists()
+
+
 def test_build_adoption_cycle_summarizes_pass1_results() -> None:
     from driftdriver.upstream_tracker import build_adoption_cycle
 

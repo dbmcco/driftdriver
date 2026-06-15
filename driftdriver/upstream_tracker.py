@@ -615,6 +615,8 @@ def run_pass1(
     wg_runner: _WgRunner | None = None,
     compatibility_runner: _CompatibilityRunner | None = None,
     now: datetime | None = None,
+    write_pins: bool = True,
+    write_state: bool = True,
 ) -> list[dict[str, Any]]:
     """Evaluate all tracked external repos. Returns list of evaluation results.
 
@@ -806,22 +808,23 @@ def run_pass1(
             pins_updated = True
             results.append(eval_result)
 
-    if pins_updated:
+    if pins_updated and write_pins:
         save_pins(pins_path, pins)
 
     # Persist state for snapshot reads
     state_path = pins_path.parent / _STATE_FILENAME
-    try:
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(
-            json.dumps({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "results": results,
-            }, indent=2),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
+    if write_state:
+        try:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "results": results,
+                }, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     return results
 

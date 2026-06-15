@@ -138,6 +138,8 @@ def cmd_upstream_tracker(args: argparse.Namespace) -> int:
         config,
         pins_path,
         project_dir=project_dir if emit_tasks else None,
+        write_pins=not bool(args.no_write_pins),
+        write_state=not bool(args.no_write_state),
     )
 
     adoption_cycle = None
@@ -1466,6 +1468,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "upstream-tracker",
         help="Run one upstream adoption sentinel cycle",
     )
+    upstream_tracker.add_argument(
+        "action",
+        nargs="?",
+        choices=("run",),
+        help="Compatibility action. Omit it for the current direct invocation form.",
+    )
     upstream_tracker.add_argument("--json", action="store_true", help="JSON output")
     upstream_tracker.add_argument(
         "--config",
@@ -1484,6 +1492,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-write-adoptions",
         action="store_true",
         help="Do not write .workgraph/service/ecosystem-hub/upstream-adoptions.json",
+    )
+    upstream_tracker.add_argument(
+        "--no-write-pins",
+        action="store_true",
+        help="Do not write .driftdriver/upstream-pins.toml",
+    )
+    upstream_tracker.add_argument(
+        "--no-write-state",
+        action="store_true",
+        help="Do not write .driftdriver/upstream-tracker-last.json",
     )
     upstream_tracker.set_defaults(func=cmd_upstream_tracker)
 
