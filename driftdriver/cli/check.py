@@ -30,6 +30,7 @@ from driftdriver.policy import load_drift_policy
 from driftdriver.policy_enforcement import collect_enforcement_findings, evaluate_enforcement
 from driftdriver.routing_models import rule_based_routing
 from driftdriver.smart_routing import gather_evidence
+from driftdriver.speedrift_auto_update import auto_update_for_repo_changes
 from driftdriver.updates import (
     ECOSYSTEM_REPOS,
     check_ecosystem_updates,
@@ -645,6 +646,15 @@ def cmd_check(args: argparse.Namespace) -> int:
     task_id = str(args.task)
     policy = load_drift_policy(wg_dir)
     ordered_plugins = _ordered_optional_plugins(policy.order)
+    try:
+        repo_auto_update = auto_update_for_repo_changes(project_dir, wg_dir)
+    except Exception as exc:
+        repo_auto_update = {
+            "enabled": True,
+            "changed": False,
+            "refreshed": False,
+            "error": str(exc),
+        }
 
     coredrift = wg_dir / "coredrift"
     if not coredrift.exists():
@@ -804,6 +814,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             "mode": mode,
             "effective_mode": effective_mode,
             "contract_auto_ensure": contract_ensure,
+            "repo_auto_update": repo_auto_update,
             "loop_safety": loop_safety,
             "update_preflight": update_preflight,
             "lane_strategy": lane_plan["strategy"],
@@ -835,6 +846,11 @@ def cmd_check(args: argparse.Namespace) -> int:
             pass
         print(json.dumps(combined, indent=2, sort_keys=False))
         return final_rc
+
+    if repo_auto_update.get("refreshed"):
+        print("note: refreshed Speedrift-managed repo guidance after repo change", file=sys.stderr)
+    elif repo_auto_update.get("error"):
+        print(f"note: Speedrift repo auto-update failed: {repo_auto_update['error']}", file=sys.stderr)
 
     speed_rc = _run(speed_cmd)
     if speed_rc not in (0, ExitCode.findings):

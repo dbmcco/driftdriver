@@ -18,11 +18,13 @@ Run: `./.workgraph/handlers/agent-error.sh --cli codex`
 ### Drift Protocol
 - Pre-check: `./.workgraph/drifts check --task <TASK_ID> --write-log`
 - Post-check: `./.workgraph/drifts check --task <TASK_ID> --write-log --create-followups`
+- Speedrift checks auto-refresh existing Driftdriver-managed repo guidance when repo state changes. Disable only for emergencies with `DRIFTDRIVER_DISABLE_SPEEDRIFT_AUTO_UPDATE=1`.
 
 ## Speedrift Ecosystem Protocol
 
 - Workgraph is the source of truth for tasks and dependencies.
 - `speedriftd` is the repo-local runtime supervisor. Interactive sessions do not own dispatch by default.
+- PlanForge handoffs should include unit tests, integration tests, UX tests or waivers, Agency usage, roborev/review obligations, bounded adversarial review, and detailed small-model-ready implementation steps.
 - Default posture is `observe`. Do not use `wg service start` as a generic way to kick off autonomous work.
 - Refresh repo runtime state before acting: `driftdriver --dir "$PWD" --json speedriftd status --refresh`
 - If the user wants background execution in this repo, arm it explicitly:
@@ -64,4 +66,37 @@ tmux send-keys -t %272 "your command here" Enter
 ```
 
 Check this before starting repo work so same-repo agents do not conflict.
+
+## Always-On Ecosystem Hub
+
+- LaunchAgent label: `com.speedrift.ecosystem-hub`
+- Plist: `~/Library/LaunchAgents/com.speedrift.ecosystem-hub.plist`
+- Verify: `cd /Users/braydon/projects/experiments/driftdriver && scripts/ecosystem_hub_daemon.sh launchd-status`
+- Repair: `cd /Users/braydon/projects/experiments/driftdriver && scripts/ecosystem_hub_daemon.sh ensure-running`
+
+## Upstream Adoption Sentinel
+
+- Driftdriver tracks upstream/adopted/diverged SHAs for Workgraph and other ecosystem dependencies.
+- WorkGraph policy: `lag_window_commits = 5`, `max_lag_days = 3`.
+- API/schema surface changes create WorkGraph-visible work immediately, even when commit count is small.
+- One-shot check: `cd /Users/braydon/projects/experiments/driftdriver && uv run driftdriver --dir "$PWD" upstream-tracker --json`
+
+## Attractor Loop
+
+- Each repo declares a target attractor in `drift-policy.toml`: `onboarded` -> `production-ready` -> `hardened`.
+- The loop runs diagnose -> plan -> execute -> re-diagnose until convergence or circuit breaker.
+- Circuit breakers: max 3 passes, plateau detection, task budget cap 30.
+- Bundles are matched to findings automatically; unmatched findings escalate.
+- Check status: `driftdriver attractor status --json`
+- Run convergence: `driftdriver attractor run --json`
+
+## Automatic Loops
+
+- Speedrift check auto-refresh: existing managed repo guidance is refreshed when repo state changes.
+- Drift task guard: follow-up tasks are deduped and capped at 3 per lane per repo.
+- Attractor convergence: repos are driven toward declared target state via the attractor loop.
+- Upstream adoption checks: hub/daily eval emit tasks for lag, compatibility failures, and API/schema changes.
+- Notifications: significant findings alert via terminal/webhook/wg-notify.
+- Prompt evolution: recurring drift patterns trigger `wg evolve` to teach agents.
+- Outcome learning: resolution rates feed back into notification significance scoring.
 <!-- driftdriver-codex:end -->

@@ -13,6 +13,7 @@ Use `/speedrift` (or `/rifts`) to invoke the full protocol skill.
 ```bash
 # Drift-check a task (run at start + before completion)
 ./.workgraph/drifts check --task <id> --write-log --create-followups
+# Speedrift checks auto-refresh existing managed guidance after repo changes
 
 # Ecosystem dashboard (40+ repos, pressure scores, action queue)
 # Local:     http://127.0.0.1:8777/
@@ -34,6 +35,9 @@ driftdriver attractor run --json
   the protocol envelope (wg-contract, drift checks, executor guidance).
 - Agency is always-on launchd. If unreachable, dispatch continues with generic prompts.
 - Check: `curl -s http://localhost:8000/health`
+- PlanForge handoffs must include unit tests, integration tests, UX tests or waivers,
+  Agency usage, roborev/review obligations, bounded adversarial review, and
+  detailed small-model-ready steps.
 
 ### Runtime Authority
 - Workgraph is the task/dependency source of truth. `speedriftd` is the repo-local supervisor.
