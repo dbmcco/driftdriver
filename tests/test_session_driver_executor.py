@@ -10,7 +10,7 @@ from pathlib import Path
 
 import tomllib
 
-from driftdriver.install import install_session_driver_executor
+from driftdriver.install import ensure_executor_guidance, install_session_driver_executor
 
 _TEMPLATES = Path(__file__).parent.parent / "driftdriver" / "templates" / "executors"
 
@@ -47,6 +47,15 @@ class SessionDriverTemplateTests(unittest.TestCase):
         self.assertIn("TDD", text)
         self.assertIn("wg done", text)
         self.assertIn("drifts check", text)
+
+    def test_toml_prompt_template_contains_speedrift_vnext_envelope(self) -> None:
+        toml_path = _TEMPLATES / "session-driver.toml"
+        text = toml_path.read_text(encoding="utf-8")
+
+        self.assertIn("Speedrift vNext Envelope", text)
+        self.assertIn("Small Model Ready", text)
+        self.assertIn("Unit tests, integration tests, and UX/e2e tests", text)
+        self.assertIn("Run roborev", text)
 
     def test_shell_script_has_required_env_vars(self) -> None:
         sh_path = _TEMPLATES / "session-driver-run.sh"
@@ -122,6 +131,27 @@ class SessionDriverInstallTests(unittest.TestCase):
             self.assertFalse((wg_dir / "executors").exists())
             install_session_driver_executor(wg_dir)
             self.assertTrue((wg_dir / "executors").is_dir())
+
+    def test_executor_guidance_preserves_speedrift_vnext_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            wg_dir = Path(td) / ".workgraph"
+            wg_dir.mkdir(parents=True, exist_ok=True)
+
+            install_session_driver_executor(wg_dir)
+            ensure_executor_guidance(
+                wg_dir,
+                include_archdrift=True,
+                include_uxdrift=False,
+                include_therapydrift=False,
+                include_fixdrift=False,
+                include_yagnidrift=False,
+                include_redrift=False,
+            )
+
+            text = (wg_dir / "executors" / "session-driver.toml").read_text(encoding="utf-8")
+            self.assertIn("Speedrift vNext Envelope", text)
+            self.assertIn("Coredrift Protocol", text)
+            self.assertIn("archdrift Protocol", text)
 
 
 if __name__ == "__main__":
