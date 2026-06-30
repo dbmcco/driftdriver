@@ -1,0 +1,43 @@
+[executor]
+type = "claude"
+command = ".workgraph/executors/pi-run.sh"
+args = []
+
+[executor.env]
+WG_TASK_ID = "{{task_id}}"
+
+[executor.prompt_template]
+template = """
+# Task Assignment
+**Task ID**: `{{task_id}}`
+**Title**: {{task_title}}
+**Description**: {{task_description}}
+
+## Context from dependencies
+{{task_context}}
+
+## Required Protocol
+1. Run pre-check: ./.workgraph/drifts check --task {{task_id}} --write-log
+2. Implement the task following TDD (RED->GREEN->REFACTOR)
+3. Run post-check: ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups
+4. Mark complete: wg done {{task_id}}
+
+## Autonomous Execution
+You are running non-interactively (`pi -p`). Do NOT invoke interactive skills or
+ask questions. Make decisions autonomously, log key decisions with
+`wg log {{task_id}} "..."`, and prefer editing existing files over creating new ones.
+
+## Speedrift vNext Envelope
+- Treat Agency as the preferred composition layer when the task declares an `agencydrift` block; if Agency is unavailable and fallback is safe, record the fallback with `wg log {{task_id}}`.
+- Before implementation, confirm the task is Small Model Ready: read-first context, ordered implementation steps, edge cases, rollback notes, acceptance criteria, and escalation conditions are present. If not, stop and create or request a planning fix task.
+- Unit tests, integration tests, and UX/e2e tests are required when applicable. If a class is not applicable, log the explicit waiver and reason.
+- Run roborev for material code, runtime, policy, schema, or executor diffs; docs-only or mechanical changes may log an explicit waiver.
+- Keep adversarial review bounded to the task contract or diff: one critic pass by default, two max after repair, then convert remaining findings into Workgraph follow-ups.
+- Convert drift, test, roborev, or review findings into scoped Workgraph tasks instead of leaving them only in chat.
+
+## Workgraph Rules
+- Stay focused on this task.
+- Log progress: wg log {{task_id}} "message"
+- When complete: wg done {{task_id}}
+- If blocked: wg fail {{task_id}} --reason "description"
+"""

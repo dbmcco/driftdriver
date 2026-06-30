@@ -89,10 +89,10 @@ driftdriver attractor run --json
 ```
 
 ### Lifecycle Hooks
-- Session start: `./.workgraph/handlers/session-start.sh --cli codex`
-- Task claimed: `./.workgraph/handlers/task-claimed.sh --cli codex`
-- Before completion: `./.workgraph/handlers/task-completing.sh --cli codex`
-- On error: `./.workgraph/handlers/agent-error.sh --cli codex`
+- Session start: `./.workgraph/handlers/session-start.sh --cli pi`
+- Task claimed: `./.workgraph/handlers/task-claimed.sh --cli pi`
+- Before completion: `./.workgraph/handlers/task-completing.sh --cli pi`
+- On error: `./.workgraph/handlers/agent-error.sh --cli pi`
 
 ### Runtime Authority
 - Workgraph is the task/dependency source of truth. `speedriftd` is the repo-local supervisor.

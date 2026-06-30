@@ -755,6 +755,7 @@ def ensure_executor_guidance(
     executors_dir = wg_dir / "executors"
     executors_dir.mkdir(parents=True, exist_ok=True)
     install_claude_executor_support(wg_dir)
+    install_pi_executor_support(wg_dir)
 
     created = False
     claude_path = executors_dir / "claude.toml"
@@ -772,6 +773,15 @@ def ensure_executor_guidance(
             encoding="utf-8",
         )
         created = True
+
+    # Install the pi executor TOML if missing so pi is a selectable executor.
+    # Presence does not make pi the default; the default is resolved by the
+    # workgraph binary's default_executor() / repo config. This only ensures
+    # the pi-run.sh wrapper + pi.toml envelope exist wherever workgraph runs.
+    pi_path = executors_dir / "pi.toml"
+    if not pi_path.exists():
+        pi_path.write_text(_template_text("executors", "pi.toml"), encoding="utf-8")
+        created = created or True
 
     patched: list[str] = []
     for p in sorted(executors_dir.glob("*.toml")):
@@ -930,6 +940,24 @@ def install_claude_executor_support(wg_dir: Path) -> tuple[bool, bool]:
     _make_executable(wg_guard_dst)
 
     return (wrote_runner, wrote_timeout)
+
+
+def install_pi_executor_support(wg_dir: Path) -> bool:
+    """
+    Install the repo-local pi (pi-coding-agent) executor wrapper.
+
+    Returns True when the runner was written or changed. The wrapper drives
+    `pi -p` in non-interactive print mode and suppresses the Avery persona
+    (PAIA_AVERY=0) so autonomous runs stay lean. Peer of
+    install_claude_executor_support; pi.toml is created separately in
+    ensure_executor_guidance so it receives the same protocol-block injection.
+    """
+    executors_dir = wg_dir / "executors"
+    executors_dir.mkdir(parents=True, exist_ok=True)
+    runner_dst = executors_dir / "pi-run.sh"
+    wrote_runner = _write_text_if_changed(runner_dst, _template_text("executors", "pi-run.sh"))
+    _make_executable(runner_dst)
+    return wrote_runner
 
 
 def ensure_amplifier_executor(wg_dir: Path, *, bundle_name: str = "speedrift") -> tuple[bool, bool]:
