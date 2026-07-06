@@ -24,6 +24,10 @@ where = ["."]
 include = ["driftdriver*"]
 
 [tool.setuptools.package-data]
+# Ship the entire templates tree so every executor, handler, hook, and bin
+# shim resolves at install time. Extensionless files (agency-assign-workgraph,
+# bin/timeout, bin/wg) are missed by extension-specific globs, so include all.
+"driftdriver" = ["templates/**/*"]
 "driftdriver.intelligence" = ["migrations/*.sql"]
 
 [tool.pytest.ini_options]
