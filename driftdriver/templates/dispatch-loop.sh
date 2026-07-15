@@ -6,7 +6,7 @@ set -euo pipefail
 
 MAX_AGENTS="${WG_MAX_AGENTS:-2}"
 POLL_INTERVAL="${WG_POLL_INTERVAL:-30}"
-EXECUTOR="${WG_EXECUTOR:-claude}"
+EXECUTOR="${WG_EXECUTOR:-pi}"
 REPO_NAME="$(basename "$(pwd)")"
 NOTIFY_SCRIPT="${WG_NOTIFY_SCRIPT:-/Users/braydon/projects/experiments/driftdriver/scripts/notify-macos.sh}"
 
