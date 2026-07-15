@@ -22,7 +22,7 @@ class ExecutorConfig:
     """Configuration for a single task executor."""
 
     name: str
-    type: str  # "http", "schedule", "claude", "wg-daemon"
+    type: str  # "http", "schedule", "claude", "pi", "wg-daemon"
     endpoint: str  # URL for http type
     tag_match: str  # pattern like "agent:samantha" or "schedule:*"
 
@@ -204,7 +204,8 @@ def dispatch_task(
     """Dispatch a task to the given executor.
 
     For type "http":     POST to endpoint with task payload.
-    For type "claude":   Spawn claude subprocess.
+    For type "claude":   Spawn claude subprocess via `wg spawn`.
+    For type "pi":       Spawn pi subprocess via `wg spawn --executor pi`.
     For type "schedule": Check if time has arrived, dispatch if so.
     For type "wg-daemon": Return skip (let the daemon handle it).
     """
@@ -223,6 +224,9 @@ def dispatch_task(
 
     if executor.type == "claude":
         return _dispatch_claude(task, executor, repo_path)
+
+    if executor.type == "pi":
+        return _dispatch_pi(task, executor, repo_path)
 
     if executor.type == "schedule":
         return _dispatch_schedule(task, executor, repo_path)
@@ -311,13 +315,15 @@ def _dispatch_http(
         )
 
 
-def _dispatch_claude(
-    task: dict, executor: ExecutorConfig, repo_path: Path
+def _dispatch_wg_spawn(
+    task: dict, executor: ExecutorConfig, repo_path: Path, wg_executor: str
 ) -> DispatchResult:
-    """Spawn a full wg agent via `wg spawn` for proper context, lifecycle, and registration.
+    """Spawn a full wg agent via `wg spawn --executor <wg_executor>`.
 
-    Uses wg's executor pipeline (prompt assembly, agent registration, output logging)
-    without the coordinator LLM that hangs. Clears stale graph locks before spawning.
+    Shared by the claude and pi routing types — both resolve to a `wg spawn` with
+    proper context, lifecycle, and registration, without the coordinator LLM that
+    hangs. Clears stale graph locks before spawning. The task model (when set) is
+    forwarded so the executor runs with the PlanForge-assigned model.
     """
     task_id = str(task.get("id", "unknown"))
     wg_dir = repo_path / ".workgraph"
@@ -330,7 +336,7 @@ def _dispatch_claude(
         except OSError:
             pass
 
-    cmd = ["wg", "--dir", str(wg_dir), "spawn", task_id, "--executor", "claude"]
+    cmd = ["wg", "--dir", str(wg_dir), "spawn", task_id, "--executor", wg_executor]
 
     # Use task model if specified, otherwise let wg resolve
     model = task.get("model")
@@ -373,6 +379,24 @@ def _dispatch_claude(
             executor=executor.name,
             error=str(exc),
         )
+
+
+def _dispatch_claude(
+    task: dict, executor: ExecutorConfig, repo_path: Path
+) -> DispatchResult:
+    """Spawn the claude executor via `wg spawn --executor claude`."""
+    return _dispatch_wg_spawn(task, executor, repo_path, "claude")
+
+
+def _dispatch_pi(
+    task: dict, executor: ExecutorConfig, repo_path: Path
+) -> DispatchResult:
+    """Spawn the pi executor via `wg spawn --executor pi`.
+
+    Pi is the default runtime; this makes `type = "pi"` a first-class routing
+    target so a repo can configure `[routing.executors.pi] type = "pi"`.
+    """
+    return _dispatch_wg_spawn(task, executor, repo_path, "pi")
 
 
 def _dispatch_schedule(

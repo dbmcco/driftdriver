@@ -741,6 +741,51 @@ class TestDispatchTask(unittest.TestCase):
         self.assertEqual(result.executor, "claude-runner")
         mock_subprocess.run.assert_called_once()
 
+    @patch("driftdriver.task_router.subprocess")
+    def test_pi_dispatch(self, mock_subprocess: MagicMock) -> None:
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stdout="Spawned agent-1", stderr="")
+
+        executor = ExecutorConfig(
+            name="pi-runner",
+            type="pi",
+            endpoint="",
+            tag_match="executor:pi",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            result = dispatch_task(self._make_task(), executor, repo)
+
+        self.assertTrue(result.dispatched)
+        self.assertEqual(result.executor, "pi-runner")
+        mock_subprocess.run.assert_called_once()
+        # Confirm the spawn targets the pi executor specifically.
+        spawn_cmd = mock_subprocess.run.call_args[0][0]
+        self.assertIn("--executor", spawn_cmd)
+        executor_idx = spawn_cmd.index("--executor")
+        self.assertEqual(spawn_cmd[executor_idx + 1], "pi")
+
+    @patch("driftdriver.task_router.subprocess")
+    def test_pi_dispatch_forwards_task_model(self, mock_subprocess: MagicMock) -> None:
+        mock_subprocess.run.return_value = MagicMock(returncode=0, stdout="Spawned agent-1", stderr="")
+
+        executor = ExecutorConfig(
+            name="pi-runner",
+            type="pi",
+            endpoint="",
+            tag_match="executor:pi",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            dispatch_task(self._make_task(model="zai/glm-5.2"), executor, repo)
+
+        spawn_cmd = mock_subprocess.run.call_args[0][0]
+        # PlanForge-assigned model must flow through to `wg spawn --model`.
+        self.assertIn("--model", spawn_cmd)
+        model_idx = spawn_cmd.index("--model")
+        self.assertEqual(spawn_cmd[model_idx + 1], "zai/glm-5.2")
+
     def test_unknown_executor_type(self) -> None:
         executor = ExecutorConfig(
             name="mystery",
