@@ -21,6 +21,7 @@ from driftdriver.speedriftd_state import (
     write_control_state,
 )
 from driftdriver.cli.debate_cmd import register_debate_parser
+from driftdriver.cli.graph_dir_cmd import register_graph_dir_parser
 from driftdriver.workgraph import find_workgraph_dir
 
 # -- Re-export everything that was previously importable from driftdriver.cli --
@@ -1523,6 +1524,7 @@ def _build_parser() -> argparse.ArgumentParser:
     decisions_answer_p.set_defaults(func=cmd_decisions)
 
     register_debate_parser(sub)
+    register_graph_dir_parser(sub)
 
     from driftdriver.tmux_monitor.cli import register_tmux_monitor_parser
     register_tmux_monitor_parser(sub)
