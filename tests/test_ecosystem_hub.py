@@ -738,7 +738,7 @@ class EcosystemHubTests(unittest.TestCase):
 
             def fake_collect(name: str, path: Path, **_kwargs: Any) -> RepoSnapshot:
                 if name == "slow-repo":
-                    time.sleep(1.0)
+                    time.sleep(3.0)
                 return RepoSnapshot(name=name, path=str(path), exists=True)
 
             started = time.monotonic()
@@ -753,7 +753,11 @@ class EcosystemHubTests(unittest.TestCase):
                 )
             elapsed = time.monotonic() - started
 
-            self.assertLess(elapsed, 0.5)
+            # Aggregation (governance/north-star/etc.) spawns real git subprocesses
+            # whose cost is variable (~0.1-0.5s) and independent of the per-repo
+            # timeout, so the budget must sit comfortably above that floor yet well
+            # below the slow repo's sleep to prove the cutoff happened.
+            self.assertLess(elapsed, 1.5)
             slow_repo = [row for row in snapshot["repos"] if row["name"] == "slow-repo"][0]
             self.assertIn("snapshot_timeout: repo scan exceeded 0.05s", slow_repo["errors"])
 

@@ -788,7 +788,7 @@ def collect_ecosystem_snapshot(
     # Per-repo timeout: prevent one stuck daemon from blocking the entire collector.
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutTimeout
 
-    def _collect_one(name: str, path: Path) -> RepoSnapshot:
+    def _collect_one(name: str, path: Path) -> tuple[RepoSnapshot, list[UpstreamCandidate]]:
         snap = collect_repo_snapshot(
             name,
             path,
@@ -802,7 +802,11 @@ def collect_ecosystem_snapshot(
         snap.tags = meta.get("tags") or []
         snap.lifecycle = meta.get("lifecycle", "active")
         snap.daemon_posture = meta.get("daemon_posture", "always-on")
-        return snap
+        # Upstream-candidate discovery is part of the per-repo collection cost, so it
+        # runs inside the timeout-bounded pool: a repo whose scan OR upstream discovery
+        # hangs gets cut off, and timed-out/erroring repos skip discovery entirely.
+        candidates = generate_upstream_candidates(name, path)
+        return snap, candidates
 
     pool = ThreadPoolExecutor(max_workers=4)
     try:
@@ -812,7 +816,8 @@ def collect_ecosystem_snapshot(
         ]
         for name, path, future in submitted:
             try:
-                repo_snap = future.result(timeout=_REPO_SNAPSHOT_TIMEOUT_SECONDS)
+                repo_snap, candidates = future.result(timeout=_REPO_SNAPSHOT_TIMEOUT_SECONDS)
+                upstream.extend(candidates)
             except _FutTimeout:
                 repo_snap = RepoSnapshot(name=name, path=str(path), exists=path.exists())
                 repo_snap.errors.append(
@@ -832,7 +837,6 @@ def collect_ecosystem_snapshot(
                 repo_snap.lifecycle = meta.get("lifecycle", "active")
                 repo_snap.daemon_posture = meta.get("daemon_posture", "always-on")
             repos.append(repo_snap)
-            upstream.extend(generate_upstream_candidates(name, path))
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
