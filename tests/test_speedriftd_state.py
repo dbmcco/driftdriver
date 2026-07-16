@@ -277,6 +277,15 @@ class TestRuntimePaths:
         assert paths["heartbeats_dir"] == base / "heartbeats"
         assert paths["results_dir"] == base / "results"
 
+    def test_runtime_paths_supports_initialized_wg(self, tmp_path: Path) -> None:
+        repo = tmp_path / "test-repo"
+        graph = repo / ".wg"
+        graph.mkdir(parents=True)
+        (graph / "graph.jsonl").write_text("", encoding="utf-8")
+        paths = runtime_paths(repo)
+        assert paths["wg_dir"] == graph.resolve()
+        assert paths["dir"] == graph.resolve() / "service" / "runtime"
+
 
 # ---------------------------------------------------------------------------
 # _default_control

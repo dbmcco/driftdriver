@@ -19,7 +19,7 @@ from driftdriver.dispatch import (
 )
 from driftdriver.policy import DriftPolicy, load_drift_policy
 from driftdriver.project_autopilot import get_ready_tasks
-from driftdriver.workgraph import load_workgraph
+from driftdriver.workgraph import load_workgraph, resolve_workgraph_dir
 
 from driftdriver.speedriftd_state import (
     _iso_now,
@@ -33,8 +33,14 @@ from driftdriver.speedriftd_state import (
 
 
 def _autopilot_dir(project_dir: Path) -> Path:
-    """Get the autopilot state directory."""
-    return project_dir / ".workgraph" / ".autopilot"
+    """Get the autopilot state directory.
+
+    Resolves the initialized graph directory (``.workgraph`` or ``.wg``) via
+    the canonical workgraph resolver, so the autopilot state lives under the
+    same graph that the rest of speedriftd operates on. A repository with two
+    initialized graph directories raises ``WorkgraphDirectoryConflictError``.
+    """
+    return resolve_workgraph_dir(project_dir).path / ".autopilot"
 
 
 def load_run_state(project_dir: Path) -> dict | None:

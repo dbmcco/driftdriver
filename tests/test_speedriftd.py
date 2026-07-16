@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from driftdriver.project_autopilot import AutopilotConfig, AutopilotRun, WorkerContext
+import driftdriver.speedriftd as speedriftd
 from driftdriver.speedriftd import (
     collect_runtime_snapshot,
     handle_lease_expiry,
@@ -27,6 +28,7 @@ from driftdriver.speedriftd_state import (
     runtime_paths,
     write_control_state,
 )
+from driftdriver.workgraph import WorkgraphDirectoryConflictError
 
 
 def _write_graph(repo: Path, tasks: list[dict]) -> None:
@@ -306,6 +308,26 @@ class SpeedriftdTests(unittest.TestCase):
 
             self.assertEqual(result["cycles_completed"], 2)
             self.assertEqual(fake_sleep.call_count, 1)
+
+    def test_autopilot_dir_uses_initialized_wg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            graph = repo / ".wg"
+            graph.mkdir()
+            (graph / "graph.jsonl").write_text("", encoding="utf-8")
+            self.assertEqual(
+                speedriftd._autopilot_dir(repo), graph.resolve() / ".autopilot"
+            )
+
+    def test_autopilot_dir_rejects_dual_initialized_graphs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for name in (".workgraph", ".wg"):
+                graph = repo / name
+                graph.mkdir()
+                (graph / "graph.jsonl").write_text("", encoding="utf-8")
+            with self.assertRaises(WorkgraphDirectoryConflictError):
+                speedriftd._autopilot_dir(repo)
 
 
 def _expire_active_lease(repo: Path) -> None:
