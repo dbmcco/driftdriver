@@ -26,6 +26,7 @@ from driftdriver.task_router import (
     _find_ready_tasks,
     _parse_schedule_tag,
 )
+from driftdriver.workgraph import WorkgraphDirectoryConflictError
 
 
 def _grant_active_lease(repo: Path, *, owner: str = "test-suite") -> None:
@@ -819,6 +820,35 @@ class TestDispatchTask(unittest.TestCase):
         model_idx = spawn_cmd.index("--model")
         self.assertEqual(spawn_cmd[model_idx + 1], "zai/glm-5.2")
 
+    @patch("driftdriver.task_router.subprocess")
+    def test_pi_dispatch_uses_wg_dir_when_only_wg_initialized(
+        self, mock_subprocess: MagicMock
+    ) -> None:
+        """A repo with only .wg/graph.jsonl must dispatch via --dir <repo>/.wg."""
+        mock_subprocess.run.return_value = MagicMock(
+            returncode=0, stdout="Spawned agent-1", stderr=""
+        )
+
+        executor = ExecutorConfig(
+            name="pi-runner",
+            type="pi",
+            endpoint="",
+            tag_match="executor:pi",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            wg_dir = repo / ".wg"
+            wg_dir.mkdir()
+            (wg_dir / "graph.jsonl").write_text("", encoding="utf-8")
+            dispatch_task(self._make_task(), executor, repo)
+
+        spawn_cmd = mock_subprocess.run.call_args[0][0]
+        # Command must target the canonical .wg directory.
+        self.assertEqual(spawn_cmd[0], "wg")
+        dir_idx = spawn_cmd.index("--dir")
+        self.assertEqual(spawn_cmd[dir_idx + 1], str((repo / ".wg").resolve()))
+        self.assertIn("spawn", spawn_cmd)
+
     def test_unknown_executor_type(self) -> None:
         executor = ExecutorConfig(
             name="mystery",
@@ -1101,6 +1131,83 @@ manual_owner_policy = "assist"
         self.assertEqual(results[0].executor, "claude")
         mock_subprocess.run.assert_called_once()
 
+    @patch("driftdriver.task_router.subprocess.run")
+    @patch("driftdriver.task_router.urlopen")
+    def test_routes_ready_task_when_graph_under_wg(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """A repo whose graph and policy live under .wg must route ready tasks."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b'{"ok": true}'
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "open",
+                "title": "Samantha task",
+                "description": "Do stuff",
+                "tags": ["agent:samantha"],
+            },
+        ]
+        toml = b"""
+[routing]
+enabled = true
+default_executor = "wg-daemon"
+
+[routing.executors.samantha]
+type = "http"
+endpoint = "http://localhost:3530/api/agent/task"
+tag_match = "agent:samantha"
+"""
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "my-repo"
+            wg_dir = repo / ".wg"
+            wg_dir.mkdir(parents=True)
+            (wg_dir / "graph.jsonl").write_text(
+                "\n".join(json.dumps(t) for t in tasks) + "\n",
+                encoding="utf-8",
+            )
+            (wg_dir / "drift-policy.toml").write_bytes(toml)
+            config = load_routing_config(wg_dir / "drift-policy.toml")
+            results = route_ready_tasks(repo, config)
+
+        dispatched = [r for r in results if r.dispatched]
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(dispatched[0].task_id, "t1")
+        self.assertEqual(dispatched[0].executor, "samantha")
+
+    def test_route_ready_tasks_raises_on_dual_initialized_graphs(self) -> None:
+        """Dual initialized graph directories must fail before mutation."""
+        tasks = [
+            {
+                "kind": "task",
+                "id": "t1",
+                "status": "open",
+                "title": "Task",
+                "tags": [],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "my-repo"
+            for name in (".workgraph", ".wg"):
+                d = repo / name
+                d.mkdir(parents=True)
+                (d / "graph.jsonl").write_text(
+                    "\n".join(json.dumps(t) for t in tasks) + "\n",
+                    encoding="utf-8",
+                )
+            config = RoutingConfig(
+                enabled=True, default_executor="wg-daemon", executors={}
+            )
+            with self.assertRaises(WorkgraphDirectoryConflictError):
+                route_ready_tasks(repo, config)
+
 
 # ---------------------------------------------------------------------------
 # RouteEcosystemTests
@@ -1175,6 +1282,55 @@ tag_match = "agent:samantha"
             )
 
         self.assertEqual(summary.get("no-wg-repo", {}).get("skipped"), True)
+
+    @patch("driftdriver.task_router.subprocess.run")
+    @patch("driftdriver.task_router.urlopen")
+    def test_includes_repos_with_wg_graph(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock
+    ) -> None:
+        """A repo whose only initialized graph is .wg must be discovered."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b'{"ok": true}'
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+
+        toml = b"""
+[routing]
+enabled = true
+default_executor = "wg-daemon"
+
+[routing.executors.samantha]
+type = "http"
+endpoint = "http://localhost:3530/api/agent/task"
+tag_match = "agent:samantha"
+"""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            # A repo with only .wg/graph.jsonl (no .workgraph).
+            wg_dir = workspace / "wg-repo" / ".wg"
+            wg_dir.mkdir(parents=True)
+            (wg_dir / "graph.jsonl").write_text(
+                json.dumps({
+                    "kind": "task",
+                    "id": "wg-repo-t1",
+                    "status": "open",
+                    "title": "Task",
+                    "tags": ["agent:samantha"],
+                }) + "\n"
+            )
+            (wg_dir / "drift-policy.toml").write_bytes(toml)
+            # A truly uninitialized candidate dir with no graph at all.
+            (workspace / "empty-repo").mkdir()
+
+            config = load_routing_config(wg_dir / "drift-policy.toml")
+            summary = route_ecosystem(workspace, config)
+
+        self.assertIn("wg-repo", summary)
+        self.assertEqual(summary["wg-repo"]["dispatched"], 1)
+        self.assertNotIn("empty-repo", summary)
 
 
 class TestDispatchLeaseGate(unittest.TestCase):

@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from driftdriver.manual_owner import apply_manual_owner_policy
 from driftdriver.policy import load_drift_policy
 from driftdriver.speedriftd_state import load_dispatch_authority
+from driftdriver.workgraph import resolve_workgraph_dir
 
 
 @dataclass
@@ -335,7 +336,7 @@ def _dispatch_wg_spawn(
             executor=executor.name,
             skipped_reason=f"dispatch admission denied: {reason}",
         )
-    wg_dir = repo_path / ".workgraph"
+    wg_dir = resolve_workgraph_dir(repo_path).path
 
     # Clear stale graph lock (crashed processes leave empty lock files)
     lock_path = wg_dir / "graph.lock"
@@ -496,7 +497,7 @@ def _run_wg(repo_path: Path, *args: str, timeout: int = 15) -> subprocess.Comple
 
     Uses wg's flock-based concurrency instead of direct graph.jsonl writes.
     """
-    wg_dir = repo_path / ".workgraph"
+    wg_dir = resolve_workgraph_dir(repo_path).path
     cmd = ["wg", "--dir", str(wg_dir)] + list(args)
     return subprocess.run(
         cmd,
@@ -552,10 +553,11 @@ def route_ready_tasks(
     admitted, reason = _dispatch_admission(repo_path)
     if not admitted:
         return []
-    graph_path = repo_path / ".workgraph" / "graph.jsonl"
+    wg_dir = resolve_workgraph_dir(repo_path).path
+    graph_path = wg_dir / "graph.jsonl"
     nodes = _read_graph_lines(graph_path)
     ready = _find_ready_tasks(nodes)
-    policy = load_drift_policy(repo_path / ".workgraph")
+    policy = load_drift_policy(wg_dir)
 
     results: list[DispatchResult] = []
     for raw_task in ready:
@@ -695,7 +697,7 @@ def check_agent_completions(
     3. If status is "done", mark the wg task as done via ``wg done`` (flock-safe)
     4. If status is "failed", mark the wg task as failed via ``wg fail`` (flock-safe)
     """
-    graph_path = repo_path / ".workgraph" / "graph.jsonl"
+    graph_path = resolve_workgraph_dir(repo_path).path / "graph.jsonl"
     nodes = _read_graph_lines(graph_path)
     results: list[CompletionResult] = []
 
@@ -768,16 +770,26 @@ def route_ecosystem(
     Returns a summary dict keyed by repo name.
     """
     if repo_names is None:
-        repo_names = [
-            d.name
-            for d in workspace_root.iterdir()
-            if d.is_dir() and (d / ".workgraph" / "graph.jsonl").exists()
-        ]
+        repos: list[Path] = []
+        for candidate in workspace_root.iterdir():
+            if not candidate.is_dir():
+                continue
+            try:
+                resolution = resolve_workgraph_dir(candidate)
+            except FileNotFoundError:
+                continue
+            if resolution.initialized:
+                repos.append(candidate)
+        repo_names = [r.name for r in repos]
 
     summary: dict[str, Any] = {}
     for name in repo_names:
         repo_path = workspace_root / name
-        wg_dir = repo_path / ".workgraph"
+        try:
+            wg_dir = resolve_workgraph_dir(repo_path).path
+        except FileNotFoundError:
+            summary[name] = {"skipped": True, "reason": "no workgraph"}
+            continue
 
         if not (wg_dir / "graph.jsonl").exists():
             summary[name] = {"skipped": True, "reason": "no workgraph"}
