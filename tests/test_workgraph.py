@@ -2,9 +2,19 @@
 # ABOUTME: Covers happy path, filtering, and missing-id guard.
 from __future__ import annotations
 
+import tempfile
+import unittest
+from pathlib import Path
+
 import pytest
 
-from driftdriver.workgraph import find_workgraph_dir, load_workgraph, parse_workgraph_status
+from driftdriver.workgraph import (
+    WorkgraphDirectoryConflictError,
+    find_workgraph_dir,
+    load_workgraph,
+    parse_workgraph_status,
+    resolve_workgraph_dir,
+)
 
 
 def test_parse_workgraph_status_requires_expected_section_types():
@@ -130,3 +140,59 @@ def test_load_workgraph_malformed_json(tmp_path):
     result = load_workgraph(tmp_path / ".workgraph")
     assert "t1" in result.tasks
     assert len(result.tasks) == 1
+
+
+class GraphDirectoryResolutionTests(unittest.TestCase):
+    def test_resolves_initialized_legacy_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            graph = repo / ".workgraph"
+            graph.mkdir()
+            (graph / "graph.jsonl").write_text("", encoding="utf-8")
+            result = resolve_workgraph_dir(repo)
+            self.assertEqual(result.path, graph)
+            self.assertTrue(result.initialized)
+            self.assertEqual(result.source, "legacy")
+
+    def test_resolves_initialized_current_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            graph = repo / ".wg"
+            graph.mkdir()
+            (graph / "graph.jsonl").write_text("", encoding="utf-8")
+            result = resolve_workgraph_dir(repo)
+            self.assertEqual(result.path, graph)
+            self.assertTrue(result.initialized)
+            self.assertEqual(result.source, "current")
+
+    def test_rejects_two_initialized_graphs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            for name in (".workgraph", ".wg"):
+                graph = repo / name
+                graph.mkdir()
+                (graph / "graph.jsonl").write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(
+                WorkgraphDirectoryConflictError,
+                r"\.workgraph.*\.wg",
+            ):
+                resolve_workgraph_dir(repo)
+
+    def test_partial_legacy_directory_is_not_initialized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            graph = repo / ".workgraph"
+            graph.mkdir()
+            (graph / "drift-policy.toml").write_text("", encoding="utf-8")
+            result = resolve_workgraph_dir(repo)
+            self.assertEqual(result.path, graph)
+            self.assertFalse(result.initialized)
+            self.assertEqual(result.source, "existing")
+
+    def test_new_speedrift_repo_uses_legacy_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            result = resolve_workgraph_dir(repo)
+            self.assertEqual(result.path, repo / ".workgraph")
+            self.assertFalse(result.initialized)
+            self.assertEqual(result.source, "default")

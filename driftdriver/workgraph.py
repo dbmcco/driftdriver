@@ -82,6 +82,18 @@ def validate_pi_model_spec(model_spec: str) -> str:
     if base not in ALLOWED_PI_MODEL_IDS:
         raise ValueError(f"model is not an allowed Pi model: {model_spec!r}")
     return value
+GRAPH_DIR_NAMES = (".workgraph", ".wg")
+
+
+class WorkgraphDirectoryConflictError(RuntimeError):
+    """Raised when a repository has two initialized Workgraph directories."""
+
+
+@dataclass(frozen=True)
+class GraphDirectoryResolution:
+    path: Path
+    initialized: bool
+    source: str
 
 
 @dataclass(frozen=True)
@@ -91,36 +103,70 @@ class Workgraph:
     tasks: dict[str, dict[str, Any]]
 
 
+def _is_initialized_graph(path: Path) -> bool:
+    return (path / "graph.jsonl").is_file()
+
+
+def resolve_workgraph_dir(
+    project_dir: Path,
+    explicit: Path | None = None,
+) -> GraphDirectoryResolution:
+    project_dir = project_dir.resolve()
+    if explicit is not None:
+        candidate = explicit.resolve()
+        if candidate.name not in GRAPH_DIR_NAMES:
+            candidate = candidate / ".workgraph"
+        return GraphDirectoryResolution(
+            path=candidate,
+            initialized=_is_initialized_graph(candidate),
+            source="explicit",
+        )
+
+    legacy = project_dir / ".workgraph"
+    current = project_dir / ".wg"
+    legacy_initialized = _is_initialized_graph(legacy)
+    current_initialized = _is_initialized_graph(current)
+    if legacy_initialized and current_initialized:
+        raise WorkgraphDirectoryConflictError(
+            "Two initialized Workgraph directories found: "
+            f"{legacy} and {current}. Choose one graph before continuing."
+        )
+    if legacy_initialized:
+        return GraphDirectoryResolution(legacy, True, "legacy")
+    if current_initialized:
+        return GraphDirectoryResolution(current, True, "current")
+    if legacy.exists() and current.exists():
+        raise WorkgraphDirectoryConflictError(
+            "Two uninitialized Workgraph directories found: "
+            f"{legacy} and {current}. Remove or archive the unintended directory."
+        )
+    if legacy.exists():
+        return GraphDirectoryResolution(legacy, False, "existing")
+    if current.exists():
+        return GraphDirectoryResolution(current, False, "existing")
+    return GraphDirectoryResolution(legacy, False, "default")
+
+
 def find_workgraph_dir(explicit: Path | None) -> Path:
-    """
-    Locate the .workgraph directory.
+    """Locate an initialized Workgraph directory."""
 
-    `explicit` may be either a project root or the .workgraph directory.
-    """
+    if explicit is not None and explicit.name in GRAPH_DIR_NAMES:
+        direct = resolve_workgraph_dir(explicit.parent, explicit=explicit)
+        if direct.initialized:
+            return direct.path
+        start = explicit.parent
+    else:
+        start = explicit if explicit is not None else Path.cwd()
 
-    if explicit:
-        p = explicit
-        if p.name != ".workgraph":
-            p = p / ".workgraph"
-        if (p / "graph.jsonl").exists():
-            return p
-
-        start = explicit.parent if explicit.name == ".workgraph" else explicit
-        for parent in [start, *start.parents]:
-            candidate = parent / ".workgraph"
-            if (candidate / "graph.jsonl").exists():
-                return candidate
-            if (parent / ".git").exists():
-                break
-        raise FileNotFoundError(f"Workgraph not found from: {explicit}")
-
-    cur = Path.cwd()
-    for p in [cur, *cur.parents]:
-        candidate = p / ".workgraph" / "graph.jsonl"
-        if candidate.exists():
-            return candidate.parent
-        if (p / ".git").exists():
+    for project_dir in [start, *start.parents]:
+        resolution = resolve_workgraph_dir(project_dir)
+        if resolution.initialized:
+            return resolution.path
+        if (project_dir / ".git").exists():
             break
+
+    if explicit is not None:
+        raise FileNotFoundError(f"Workgraph not found from: {explicit}")
     raise FileNotFoundError("Could not find .workgraph/graph.jsonl; pass --dir.")
 
 
