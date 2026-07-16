@@ -645,6 +645,15 @@ def cmd_check(args: argparse.Namespace) -> int:
     project_dir = wg_dir.parent
     task_id = str(args.task)
     policy = load_drift_policy(wg_dir)
+    # Repeat-ignoring escalation: surface findings flagged+ignored repeatedly as
+    # follow-up tasks so they inform the next graph work instead of accumulating
+    # silently in the outcome ledger. Advisory only; never blocks the check.
+    try:
+        from driftdriver.drift_task_guard import escalate_repeated_findings
+
+        escalate_repeated_findings(wg_dir=wg_dir, enforcement_cfg=policy.enforcement)
+    except Exception:
+        pass
     ordered_plugins = _ordered_optional_plugins(policy.order)
     try:
         repo_auto_update = auto_update_for_repo_changes(project_dir, wg_dir)

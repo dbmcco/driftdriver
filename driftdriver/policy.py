@@ -142,6 +142,12 @@ def _default_enforcement_cfg() -> dict[str, Any]:
         "warn_on_error": True,
         "max_unresolved_warnings": 10,
         "severity_order": ["info", "warning", "error", "critical"],
+        # Repeat-ignoring escalation: promote an advisory finding to a follow-up
+        # task after it has been classified 'ignored' this many times. 0 disables.
+        # Independent of `enabled` (the hard-enforcement gate) so advisory
+        # escalation can run without turning on blocking.
+        "escalate_after_ignores": 3,
+        "escalate_task_prefix": "escalate",
     }
 
 
@@ -1057,6 +1063,11 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     enforcement["max_unresolved_warnings"] = max(
         0, int(enforcement_raw.get("max_unresolved_warnings", enforcement["max_unresolved_warnings"]))
     )
+    enforcement["escalate_after_ignores"] = max(
+        0, int(enforcement_raw.get("escalate_after_ignores", enforcement["escalate_after_ignores"]))
+    )
+    _prefix = str(enforcement_raw.get("escalate_task_prefix", enforcement["escalate_task_prefix"])).strip()
+    enforcement["escalate_task_prefix"] = _prefix or "escalate"
 
     autonomy_raw = data.get("autonomy") if isinstance(data.get("autonomy"), dict) else {}
     autonomy_default_raw = autonomy_raw.get("default") if isinstance(autonomy_raw.get("default"), dict) else {}

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -351,6 +352,92 @@ def guarded_add_drift_task(
         detail=task_id,
     )
     return "created"
+
+
+def escalate_repeated_findings(
+    *,
+    wg_dir: Path,
+    enforcement_cfg: dict[str, Any] | None = None,
+    cwd: Path | None = None,
+) -> list[str]:
+    """Promote repeatedly-ignored drift findings to follow-up tasks.
+
+    Reads the drift-outcomes ledger, counts ``ignored`` outcomes per
+    ``(lane, finding_key)``, and creates a follow-up task for any finding
+    ignored at least ``escalate_after_ignores`` times (default 3) that does
+    not already exist.
+
+    This closes the dead-end where advisory findings (e.g. churn_loc,
+    hardening_in_core, spec_not_updated) are flagged at task completion,
+    classified 'ignored', and accumulate in the ledger without ever becoming
+    actionable work. The escalation surfaces them as next graph tasks.
+
+    Controlled by ``[enforcement].escalate_after_ignores`` (0 disables),
+    independent of the blocking ``enabled`` gate so advisory escalation can
+    run without turning on hard enforcement. Advisory only: it creates tasks,
+    it never blocks task completion.
+
+    Returns the list of newly-created task ids.
+    """
+    cfg = enforcement_cfg or {}
+    threshold = int(cfg.get("escalate_after_ignores", 3))
+    if threshold <= 0:
+        return []
+    prefix = str(cfg.get("escalate_task_prefix", "escalate") or "escalate").strip() or "escalate"
+
+    ledger = wg_dir / "drift-outcomes.jsonl"
+    if not ledger.exists():
+        return []
+
+    ignored_counts: dict[tuple[str, str], int] = {}
+    try:
+        with open(ledger, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if row.get("outcome") != "ignored":
+                    continue
+                lane = str(row.get("lane", "")).strip()
+                fkey = str(row.get("finding_key", "")).strip()
+                if not lane or not fkey:
+                    continue
+                ignored_counts[(lane, fkey)] = ignored_counts.get((lane, fkey), 0) + 1
+    except OSError:
+        return []
+
+    def _safe(text: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9_-]+", "-", text).strip("-")
+
+    created: list[str] = []
+    for (lane, fkey), count in ignored_counts.items():
+        if count < threshold:
+            continue
+        task_id = f"{prefix}-{_safe(lane)}-{_safe(fkey)}"
+        title = f"escalate: {lane} finding '{fkey}' ignored {count}x"
+        description = (
+            f"Drift lane `{lane}` has flagged finding `{fkey}` and it has been "
+            f"classified 'ignored' {count} times (escalation threshold={threshold}). "
+            f"This task surfaces it as actionable work so it stops accumulating "
+            f"silently in the outcome ledger. Decide: resolve the drift, suppress "
+            f"the finding explicitly, or accept it with a recorded reason."
+        )
+        result = guarded_add_drift_task(
+            wg_dir=wg_dir,
+            task_id=task_id,
+            title=title,
+            description=description,
+            lane_tag=lane,
+            extra_tags=["escalation"],
+            cwd=cwd,
+        )
+        if result == "created":
+            created.append(task_id)
+    return created
 
 
 def record_finding_ledger(
