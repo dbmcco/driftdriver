@@ -465,14 +465,15 @@ Expected: current `_ensure_wg_init` invokes `wg init` directly against the exist
 
 When the selected candidate exists but lacks `graph.jsonl`:
 
-1. Create a temporary sibling path with `tempfile.mkdtemp(prefix=f"{target.name}.init-", dir=target.parent)`.
-2. Run `wg --dir "$TEMP_GRAPH_DIR" init` against that exact temporary path.
-3. Move each initialized Workgraph entry into the existing target only when the destination does not exist.
-4. Preserve `drift-policy.toml`, `usage.log`, and all other existing files.
-5. Remove only the temporary directory created by this function.
-6. Return the target path.
+1. Create a separate temporary project with `tempfile.mkdtemp(prefix="speedrift-wg-init-")`.
+2. Set `temporary_graph = Path(temporary_project) / target.name`; do not pre-create `temporary_graph`.
+3. Run `wg --dir str(temporary_graph) init` with `cwd=temporary_project`. Current Workgraph rejects initialization anywhere inside a repository that already contains a partial `.workgraph`, so a sibling path is not sufficient.
+4. Move each initialized Workgraph entry from `temporary_graph` into the existing target only when the destination does not exist.
+5. Preserve `drift-policy.toml`, `usage.log`, telemetry, and every other existing target file.
+6. Remove only the temporary project created by this function, including generic top-level guidance files that Workgraph generated inside that temporary project.
+7. Return the target path.
 
-Do not pass a model to `wg init`; current Workgraph initialization is graph-only.
+Do not pass a model to `wg init`; current Workgraph initialization is graph-only. Add a regression assertion that the mocked subprocess receives `cwd=temporary_project` and that `temporary_graph` did not exist before the call.
 
 - [ ] **Step 4: Make cmd_install consume the returned path**
 
