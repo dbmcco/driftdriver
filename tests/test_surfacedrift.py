@@ -241,3 +241,69 @@ def test_syntax_error_file_skipped(tmp_path: Path) -> None:
            "class Broken(:\n    error: str\n")  # malformed
     res = surfacedrift.run_as_lane(tmp_path)
     assert res.findings == []
+
+
+# --- Layer 2: Instructor-mediated guidance-adequacy judgment (opt-in) ---------
+
+def _compliant_class(repo: Path, rel: str = "src/tool.py", name: str = "ToolError") -> Path:
+    fields = "\n".join(f"    {f}: object" for f in REQUIRED_FIELDS)
+    return _write(repo, rel,
+                  "from driftdriver.contracts import model_operable\n\n\n"
+                  "@model_operable\n"
+                  f"class {name}:\n{fields}\n")
+
+
+def test_layer2_dormant_by_default(tmp_path: Path, monkeypatch) -> None:
+    # No env var set: Layer 2 must not run and no LLM call is attempted.
+    monkeypatch.delenv("DRIFTDRIVER_SURFACEDRIFT_LAYER2", raising=False)
+    _compliant_class(tmp_path)
+    res = surfacedrift.run_as_lane(tmp_path)
+    assert res.findings == []
+
+
+def test_layer2_inadequate_guidance_flagged(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DRIFTDRIVER_SURFACEDRIFT_LAYER2", "1")
+    _compliant_class(tmp_path, name="VagueError")
+    monkeypatch.setattr(surfacedrift, "_judge_guidance",
+                        lambda src: (False, "message is generic", ["message too vague"]))
+    res = surfacedrift.run_as_lane(tmp_path)
+    hits = [f for f in res.findings if "inadequate-guidance" in f.tags]
+    assert len(hits) == 1
+    assert hits[0].severity == "warning"
+    assert "VagueError" in hits[0].message
+    # Structure-complete surface judged inadequate -> no missing-fields finding.
+    assert not any("missing-fields" in f.tags for f in res.findings)
+
+
+def test_layer2_adequate_guidance_no_finding(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DRIFTDRIVER_SURFACEDRIFT_LAYER2", "1")
+    _compliant_class(tmp_path)
+    monkeypatch.setattr(surfacedrift, "_judge_guidance",
+                        lambda src: (True, "guidance is specific and actionable", []))
+    res = surfacedrift.run_as_lane(tmp_path)
+    assert not any("inadequate-guidance" in f.tags for f in res.findings)
+
+
+def test_layer2_judge_failure_does_not_crash_and_notes_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DRIFTDRIVER_SURFACEDRIFT_LAYER2", "1")
+    _compliant_class(tmp_path)
+    # Simulates instructor/route/api-key unavailable or call failed.
+    monkeypatch.setattr(surfacedrift, "_judge_guidance", lambda src: None)
+    res = surfacedrift.run_as_lane(tmp_path)
+    assert not any("inadequate-guidance" in f.tags for f in res.findings)
+    # Enabled with a candidate but nothing judged -> single info note surfaces.
+    notes = [f for f in res.findings if "layer2-unavailable" in f.tags]
+    assert len(notes) == 1
+    assert notes[0].severity == "info"
+
+
+def test_layer2_deviation_suppresses_inadequate_finding(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DRIFTDRIVER_SURFACEDRIFT_LAYER2", "1")
+    _compliant_class(tmp_path, "src/tool.py", "DevError")  # class at line 5
+    _deviation_register(tmp_path, ["src/tool.py:5-5"])
+    monkeypatch.setattr(surfacedrift, "_judge_guidance",
+                        lambda src: (False, "bad", ["x"]))
+    res = surfacedrift.run_as_lane(tmp_path)
+    assert not any("inadequate-guidance" in f.tags for f in res.findings)
