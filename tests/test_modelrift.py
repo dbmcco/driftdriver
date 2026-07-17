@@ -137,6 +137,15 @@ def test_ignores_venv_and_build_dirs(tmp_path: Path) -> None:
     assert res.findings == []
 
 
+def test_test_directories_are_skipped(tmp_path: Path) -> None:
+    # Test code is definitionally out of model-agency scope — deterministic
+    # assertions are the point. Keyword-gates/thresholds in tests are noise.
+    _write(tmp_path, "tests/test_gate.py", '_INTENT = ("go",)\n')
+    _write(tmp_path, "src/test/helpers.py", "if score >= 0.7:\n    pass\n")
+    res = modelrift.run_as_lane(tmp_path)
+    assert res.findings == []
+
+
 # --- Working-copy boundary (isolation, not elimination) -----------------------
 
 def test_nested_linked_worktree_is_not_scanned(tmp_path: Path) -> None:

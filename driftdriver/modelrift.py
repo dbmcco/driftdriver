@@ -48,9 +48,16 @@ _MARKER_SUFFIX_RE = re.compile(
     re.IGNORECASE,
 )
 _STRING_LITERAL_RE = re.compile(r"""(['"][^'"]{1,80}['"])""")
-# Names that are clearly positional/data, not semantic gates — exclude even if
-# the suffix matches. (e.g. POSITION_MARKERS = [(1,2), ...] has no strings.)
-# (Detection is suffix + string-literal; no exclusion list needed beyond that.)
+# Test code is definitionally out of model-agency scope: deterministic
+# assertions are the *point* of tests, so flagging keyword-gates or numeric
+# thresholds there is pure noise. Skip test trees at scan time (not via the
+# per-site deviation register, which is for reviewed production exceptions).
+_TEST_DIR_NAMES = {"tests", "test"}
+
+
+def _is_test_path(rel_posix: str) -> bool:
+    """True if ``rel_posix`` sits under a test directory."""
+    return any(part in _TEST_DIR_NAMES for part in rel_posix.split("/"))
 
 # --- Detector B: hardcoded semantic thresholds --------------------------------
 # A float-literal comparison against a variable whose name carries a semantic
@@ -74,10 +81,12 @@ def run_as_lane(project_dir: Path) -> LaneResult:
     findings: list[LaneFinding] = []
 
     for path in walk_py_files(project_dir):
+        rel = path.relative_to(project_dir).as_posix()
+        if _is_test_path(rel):
+            continue
         text = read_py_source(path)
         if text is None:
             continue
-        rel = path.relative_to(project_dir).as_posix()
         for idx, line in enumerate(text.splitlines(), start=1):
             for subkind, message in _scan_line(line):
                 if covered(rel, idx, deviations):
