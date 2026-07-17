@@ -1426,6 +1426,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Gate mode: exit non-zero only on warning+ findings (passes advisory info). Forces --json; use as a graph gate-node verify.",
     )
+    check.add_argument(
+        "--gate-max-failures",
+        type=int,
+        default=3,
+        dest="gate_max_failures",
+        help="In --gate mode, degrade to advisory after this many consecutive failures (default 3) to prevent graph deadlock. Must be <= the gate task's wg --max-retries (else wg parks the task in Failed before the degrade fires and dependents deadlock).",
+    )
     check.set_defaults(func=cmd_check)
 
     updates = sub.add_parser("updates", help="Check Speedrift ecosystem repos for upstream updates")

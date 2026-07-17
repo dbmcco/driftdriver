@@ -636,6 +636,45 @@ def _ensure_breaker_task(*, wg_dir: Path, task_id: str, actor: Any = None) -> st
     return breaker_id
 
 
+def _ensure_gate_waived_followup(
+    *,
+    wg_dir: Path,
+    task_id: str,
+    blocking_count: int,
+    consecutive: int,
+    actor: Any = None,
+) -> str:
+    """Create a followup task when a gate is degraded to advisory after repeated failures."""
+    from driftdriver.drift_task_guard import guarded_add_drift_task
+
+    waived_id = f"gate-waived-{task_id}"
+    ts = datetime.now(timezone.utc).isoformat()
+    desc = (
+        "Enforcement gate degraded to advisory after repeated failures.\n\n"
+        f"Origin task: {task_id}\n"
+        f"Triggered at: {ts}\n"
+        f"Consecutive failures: {consecutive}\n"
+        f"Blocking findings waived: {blocking_count}\n\n"
+        "The graph gate was waived to prevent deadlock. Review and address the "
+        "outstanding drift, then re-run the gate to confirm it passes:\n"
+        "- review the blocking findings in the gate check output\n"
+        "- fix the drift or explicitly accept the risk\n"
+        "- re-run `./.workgraph/drifts check --task "
+        + task_id
+        + " --gate --json` to reset the failure counter\n"
+    )
+    guarded_add_drift_task(
+        wg_dir=wg_dir,
+        task_id=waived_id,
+        title=f"gate waived: {task_id}",
+        description=desc,
+        lane_tag="gate",
+        after=task_id,
+        actor=actor,
+    )
+    return waived_id
+
+
 _GATE_BLOCK_RANK = SEVERITY_RANK["warning"]
 _SEVERITY_ALIASES = {
     "warn": "warning",
@@ -675,6 +714,126 @@ def _gate_blocks(plugins_json: dict[str, Any] | None) -> tuple[bool, int]:
             if SEVERITY_RANK.get(sev, 0) >= _GATE_BLOCK_RANK:
                 blocking += 1
     return (blocking > 0), blocking
+
+
+def _gate_failures_path(wg_dir: Path, task_id: str) -> Path:
+    """Path to the per-task consecutive-failure counter file."""
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in str(task_id))
+    return wg_dir / ".gate-failures" / f"{safe or 'unknown'}.json"
+
+
+def _read_gate_failures(wg_dir: Path, task_id: str) -> int:
+    """Read the consecutive-failure count, failing open (0) on any error.
+
+    A corrupt or unreadable state file returns 0 rather than raising, so a
+    bad state file cannot itself deadlock the gate (it just grants a fresh
+    budget of attempts). Counter integrity is best-effort by design.
+    """
+    path = _gate_failures_path(wg_dir, task_id)
+    if not path.exists():
+        return 0
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return int(data.get("consecutive_failures", 0))
+    except Exception:
+        return 0
+
+
+def _write_gate_failures(wg_dir: Path, task_id: str, n: int) -> None:
+    """Atomically persist the consecutive-failure count for a task."""
+    d = wg_dir / ".gate-failures"
+    d.mkdir(parents=True, exist_ok=True)
+    path = _gate_failures_path(wg_dir, task_id)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps({"task_id": task_id, "consecutive_failures": int(n)}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _reset_gate_failures(wg_dir: Path, task_id: str) -> None:
+    """Delete the failure counter (called on gate pass)."""
+    try:
+        _gate_failures_path(wg_dir, task_id).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _apply_gate_with_escape(
+    *,
+    wg_dir: Path,
+    task_id: str | None,
+    blocks: bool,
+    blocking_count: int,
+    max_failures: int,
+    actor: Any = None,
+) -> dict[str, Any]:
+    """Apply the gate escape-hatch logic and return the outcome.
+
+    Returns a dict with ``degraded`` (bool), ``consecutive_failures`` (int), and
+    ``exit_code`` (int). On a blocking finding below the threshold the gate
+    fails (non-zero); at/above the threshold it degrades to advisory (exit 0)
+    so ``--after`` dependents are unblocked. The degrade is loud: it logs and
+    creates a followup task so waived drift is tracked. A gate pass resets the
+    counter.
+    """
+    if not task_id:
+        return {
+            "degraded": False,
+            "consecutive_failures": 0,
+            "exit_code": ExitCode.findings if blocks else ExitCode.ok,
+            "waived_followup": None,
+        }
+
+    if not blocks:
+        _reset_gate_failures(wg_dir, task_id)
+        return {
+            "degraded": False,
+            "consecutive_failures": 0,
+            "exit_code": ExitCode.ok,
+            "waived_followup": None,
+        }
+
+    n = _read_gate_failures(wg_dir, task_id) + 1
+    _write_gate_failures(wg_dir, task_id, n)
+
+    if n >= max_failures:
+        waived_id = None
+        # Side-effects fire only on the threshold crossing (not every
+        # subsequent degraded run) to avoid log spam; the followup task is
+        # idempotent regardless. They are best-effort: if logging or followup
+        # creation throws, we MUST still return exit 0 — otherwise the escape
+        # hatch would deadlock the graph via its own "loud" side-effect.
+        if n == max_failures:
+            try:
+                _wg_log_message(
+                    wg_dir=wg_dir,
+                    task_id=task_id,
+                    message=f"gate degraded to advisory after {n} consecutive failures: {blocking_count} blocking finding(s)",
+                )
+                waived_id = _ensure_gate_waived_followup(
+                    wg_dir=wg_dir,
+                    task_id=task_id,
+                    blocking_count=blocking_count,
+                    consecutive=n,
+                    actor=actor,
+                )
+            except Exception:
+                waived_id = None
+        return {
+            "degraded": True,
+            "consecutive_failures": n,
+            "exit_code": ExitCode.ok,
+            "waived_followup": waived_id,
+        }
+
+    return {
+        "degraded": False,
+        "consecutive_failures": n,
+        "exit_code": ExitCode.findings,
+        "waived_followup": None,
+    }
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -866,16 +1025,39 @@ def cmd_check(args: argparse.Namespace) -> int:
             final_rc = 1  # warnings only (no lane findings)
 
         # Gate mode: pass unless a warning+ finding is present, so a graph gate
-        # node's --verify fails only on substantive drift, not advisory info.
+        # node's --exec fails only on substantive drift, not advisory info.
+        # The escape hatch degrades to advisory after N consecutive failures so
+        # a perpetually-failing gate cannot deadlock downstream tasks.
+        _g_degraded = False
+        _g_consecutive = 0
+        _g_waived = None
         if gate_mode:
             _g_blocks, _g_n = _gate_blocks(plugins_json)
-            final_rc = ExitCode.findings if _g_blocks else ExitCode.ok
+            _gate_result = _apply_gate_with_escape(
+                wg_dir=wg_dir,
+                task_id=task_id,
+                blocks=_g_blocks,
+                blocking_count=_g_n,
+                max_failures=max(1, getattr(args, "gate_max_failures", 3) or 3),
+                actor=check_actor,
+            )
+            _g_degraded = _gate_result["degraded"]
+            _g_consecutive = _gate_result["consecutive_failures"]
+            _g_waived = _gate_result.get("waived_followup")
+            final_rc = _gate_result["exit_code"]
         else:
             _g_blocks, _g_n = False, 0
 
         combined = {
             "task_id": task_id,
-            "gate": {"enabled": gate_mode, "blocking": _g_blocks, "blocking_count": _g_n},
+            "gate": {
+                "enabled": gate_mode,
+                "blocking": _g_blocks,
+                "blocking_count": _g_n,
+                "degraded": _g_degraded,
+                "consecutive_failures": _g_consecutive,
+                "waived_followup": _g_waived,
+            },
             "exit_code": final_rc,
             "mode": mode,
             "effective_mode": effective_mode,
@@ -911,8 +1093,14 @@ def cmd_check(args: argparse.Namespace) -> int:
         except Exception:
             pass
         if gate_mode and not explicit_json:
-            verdict = "FAIL" if _g_blocks else "pass"
-            print(f"gate: {verdict} — {_g_n} blocking finding(s)")
+            if _g_degraded:
+                print(
+                    f"gate: waived — {_g_n} blocking finding(s) degraded to advisory "
+                    f"after {_g_consecutive} consecutive failures"
+                )
+            else:
+                verdict = "FAIL" if _g_blocks else "pass"
+                print(f"gate: {verdict} — {_g_n} blocking finding(s)")
         else:
             print(json.dumps(combined, indent=2, sort_keys=False))
         return final_rc
