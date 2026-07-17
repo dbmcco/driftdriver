@@ -41,7 +41,9 @@ from driftdriver.install import (
     resolve_bin,
     write_archdrift_wrapper,
     write_debatedrift_wrapper,
+    write_modelrift_wrapper,
     write_qadrift_wrapper,
+    write_surfacedrift_wrapper,
     write_datadrift_wrapper,
     write_depsdrift_wrapper,
     write_drifts_wrapper,
@@ -264,6 +266,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         )
     wrote_qadrift = write_qadrift_wrapper(wg_dir)
     wrote_debatedrift = write_debatedrift_wrapper(wg_dir)
+    wrote_modelrift = write_modelrift_wrapper(wg_dir)
+    wrote_surfacedrift = write_surfacedrift_wrapper(wg_dir)
 
     wrote_amplifier_executor = False
     wrote_amplifier_runner = False
@@ -383,6 +387,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         wrote_redrift=wrote_redrift,
         wrote_qadrift=wrote_qadrift,
         wrote_debatedrift=wrote_debatedrift,
+        wrote_modelrift=wrote_modelrift,
+        wrote_surfacedrift=wrote_surfacedrift,
         wrote_handlers=handler_written,
         wrote_amplifier_executor=wrote_amplifier_executor,
         wrote_amplifier_runner=wrote_amplifier_runner,

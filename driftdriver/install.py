@@ -122,6 +122,8 @@ class InstallResult:
     wrote_redrift: bool
     wrote_qadrift: bool
     wrote_debatedrift: bool
+    wrote_modelrift: bool
+    wrote_surfacedrift: bool
     wrote_handlers: bool
     wrote_amplifier_executor: bool
     wrote_amplifier_runner: bool
@@ -320,6 +322,44 @@ def write_debatedrift_wrapper(wg_dir: Path) -> bool:
         "python3 -m driftdriver.debatedrift \"$@\"\n"
     )
     wrapper = wg_dir / "debatedrift"
+    existing = wrapper.read_text(encoding="utf-8") if wrapper.exists() else None
+    changed = existing != content
+    if changed:
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_text(content, encoding="utf-8")
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return changed
+
+
+def write_modelrift_wrapper(wg_dir: Path) -> bool:
+    """Writes .workgraph/modelrift wrapper (invokes modelrift via python3 -m)."""
+    content = (
+        "#!/usr/bin/env bash\n"
+        "# ABOUTME: Modelrift lane wrapper for speedrift\n"
+        "# ABOUTME: Runs model-agency-violation drift detection (advisory findings)\n"
+        "set -euo pipefail\n"
+        "python3 -m driftdriver.modelrift \"$@\"\n"
+    )
+    wrapper = wg_dir / "modelrift"
+    existing = wrapper.read_text(encoding="utf-8") if wrapper.exists() else None
+    changed = existing != content
+    if changed:
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_text(content, encoding="utf-8")
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return changed
+
+
+def write_surfacedrift_wrapper(wg_dir: Path) -> bool:
+    """Writes .workgraph/surfacedrift wrapper (invokes surfacedrift via python3 -m)."""
+    content = (
+        "#!/usr/bin/env bash\n"
+        "# ABOUTME: Surfacedrift lane wrapper for speedrift\n"
+        "# ABOUTME: Runs model-operable interface-compliance validation (advisory)\n"
+        "set -euo pipefail\n"
+        "python3 -m driftdriver.surfacedrift \"$@\"\n"
+    )
+    wrapper = wg_dir / "surfacedrift"
     existing = wrapper.read_text(encoding="utf-8") if wrapper.exists() else None
     changed = existing != content
     if changed:

@@ -29,6 +29,17 @@ These two form a coherent pair. Together they turn the model-mediated-architectu
 - **Why**: this is the exact anti-pattern the `model-mediated-development` skill warns about (agents adding hidden deterministic judgment). `modelrift` turns that guideline into a gate.
 - **Pair story**: `surfacedrift` ensures the model can *use* what you build; `modelrift` ensures your build actually *defers* to the model. Model-mediated architecture enforced from both ends.
 
+### Build status — SHIPPED 2026-07-17
+
+Both lanes shipped as **internal lanes** (`driftdriver.<lane>`), so they are boundary-compliant by construction: findings flow through `_run_internal_lane` → `_create_followups_from_findings` → `guarded_add_drift_task`. They never call `wg` directly — the exact mistake the 10 external lanes made. Posture is **advisory** (`exit_code=0`, `warning` findings) so they surface evidence for review without blocking the gate; both reuse the model-mediated deviation register as the owned escape hatch.
+
+- **`modelrift`** (`driftdriver/modelrift.py`): two v1 detectors — keyword/marker intent gates (`keyword-gate`) and hardcoded float thresholds on semantic dimensions (`semantic-threshold`). 12 tests. CLI entry via `python3 -m driftdriver.modelrift`.
+- **`surfacedrift` Layer 1** (`driftdriver/surfacedrift.py`): static structural gate. Discovers classes marked `@model_operable` or subclassing a `ModelOperable*` base, and validates they declare every field in the contract's `REQUIRED_FIELDS` (error, message, expected, valid_examples, retryable, next_step) via AST — no imports, no side effects, no tokens. 17 tests. **Layer 2** (Instructor-mediated LLM judgment of whether guidance is *adequate*) is deferred — it would inherit uxdrift's model-route dependency and cost, so the cheap structural gate ships first.
+- **Shared contract** (`driftdriver/contracts.py`): `ModelOperableErrorContract` (pydantic, import-safe without pydantic) + the `@model_operable` marker + `REQUIRED_FIELDS` as a single source of truth. Apps import/subclass this; surfacedrift validates against it — surfacedrift is a contract provider, not just a checker.
+- **Shared lane support** (`driftdriver/_lanecommon.py`): the walk + deviation-register machinery both lanes share, factored out so suppression semantics are identical across lanes (one register, many lanes).
+
+**Dogfood signal**: running `modelrift` against driftdriver's own repo surfaces **238 possible model-agency violations** (`governancedrift`, `continuation_intent`, `quality_planner`, `policy`, `plandrift`, …). That is the lane working exactly as designed — and honest evidence that driftdriver is not yet compliant with the doctrine it enforces. Resolving those is future work: either migrate the judgment to the model or log each as an intentional deviation in the register.
+
 ## Deferred (with reasons)
 
 ### `deadrift` — dead-code detection + pruning
@@ -72,7 +83,7 @@ All 10 external lanes bypass `guarded_add_drift_task` when creating followups (`
 ## Build sequence
 
 1. **(Done)** Fix registry discoverability — unblocks the LLM-driven lane category.
-2. Build `surfacedrift` + `modelrift` as a pair, boundary-compliant from day one, following the `speedrift-lane-sdk` contract.
+2. **(Done)** Build `surfacedrift` + `modelrift` — shipped as internal lanes (boundary-compliant by construction), 2026-07-17. See "Build status" above. surfacedrift Layer 2 (Instructor judgment) and the 238 self-violations remain open.
 3. Decide `datarift`-mapping: `archdrift` mode vs. new lane (non-colliding name).
 4. Tackle directive-layer boundary compliance (phased, per `drift-lane-audit.md`) — separate effort across 10 repos.
 5. Restore the `uxdrift` source repo.
