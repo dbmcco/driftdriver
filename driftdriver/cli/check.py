@@ -27,7 +27,7 @@ from driftdriver.health import (
     redrift_depth,
 )
 from driftdriver.policy import load_drift_policy
-from driftdriver.policy_enforcement import collect_enforcement_findings, evaluate_enforcement
+from driftdriver.policy_enforcement import SEVERITY_RANK, collect_enforcement_findings, evaluate_enforcement
 from driftdriver.routing_models import rule_based_routing
 from driftdriver.smart_routing import gather_evidence
 from driftdriver.speedrift_auto_update import auto_update_for_repo_changes
@@ -636,10 +636,58 @@ def _ensure_breaker_task(*, wg_dir: Path, task_id: str, actor: Any = None) -> st
     return breaker_id
 
 
+_GATE_BLOCK_RANK = SEVERITY_RANK["warning"]
+_SEVERITY_ALIASES = {
+    "warn": "warning",
+    "warning": "warning",
+    "err": "error",
+    "error": "error",
+    "critical": "critical",
+    "crit": "critical",
+    "fatal": "critical",
+    "info": "info",
+    "informational": "info",
+    "note": "info",
+    "low": "info",
+    "minor": "info",
+}
+
+
+def _gate_blocks(plugins_json: dict[str, Any] | None) -> tuple[bool, int]:
+    """Return ``(blocks, blocking_count)`` for gate mode.
+
+    Gate mode passes the graph unless a finding is at/above ``warning``
+    severity, so advisory ``info``-level findings do not fail a gate node.
+    Several lanes emit ``warn`` (not ``warning``); it is normalised here.
+    """
+    blocking = 0
+    for pdata in (plugins_json or {}).values():
+        if not isinstance(pdata, dict):
+            continue
+        report = pdata.get("report")
+        if not isinstance(report, dict):
+            continue
+        for finding in report.get("findings") or []:
+            if not isinstance(finding, dict):
+                continue
+            token = str(finding.get("severity", "info")).strip().lower()
+            sev = _SEVERITY_ALIASES.get(token, "info")
+            if SEVERITY_RANK.get(sev, 0) >= _GATE_BLOCK_RANK:
+                blocking += 1
+    return (blocking > 0), blocking
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     if not args.task:
         print("error: --task is required", file=sys.stderr)
         return ExitCode.usage
+
+    # Gate mode: severity-thresholded exit for graph gate-node verify commands.
+    # Forces the JSON collection path so per-finding severities are available.
+    gate_mode = bool(getattr(args, "gate", False))
+    explicit_json = bool(args.json)
+    if gate_mode:
+        args.json = True
 
     wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
     project_dir = wg_dir.parent
@@ -817,8 +865,17 @@ def cmd_check(args: argparse.Namespace) -> int:
         elif enforcement_result["exit_code"] == 1 and final_rc == ExitCode.ok:
             final_rc = 1  # warnings only (no lane findings)
 
+        # Gate mode: pass unless a warning+ finding is present, so a graph gate
+        # node's --verify fails only on substantive drift, not advisory info.
+        if gate_mode:
+            _g_blocks, _g_n = _gate_blocks(plugins_json)
+            final_rc = ExitCode.findings if _g_blocks else ExitCode.ok
+        else:
+            _g_blocks, _g_n = False, 0
+
         combined = {
             "task_id": task_id,
+            "gate": {"enabled": gate_mode, "blocking": _g_blocks, "blocking_count": _g_n},
             "exit_code": final_rc,
             "mode": mode,
             "effective_mode": effective_mode,
@@ -853,7 +910,11 @@ def cmd_check(args: argparse.Namespace) -> int:
             save_check_snapshot(wg_dir, task_id, combined)
         except Exception:
             pass
-        print(json.dumps(combined, indent=2, sort_keys=False))
+        if gate_mode and not explicit_json:
+            verdict = "FAIL" if _g_blocks else "pass"
+            print(f"gate: {verdict} — {_g_n} blocking finding(s)")
+        else:
+            print(json.dumps(combined, indent=2, sort_keys=False))
         return final_rc
 
     if repo_auto_update.get("refreshed"):

@@ -1421,6 +1421,11 @@ def _build_parser() -> argparse.ArgumentParser:
     check.add_argument("--create-followups", action="store_true", help="Create follow-up tasks for findings")
     check.add_argument("--actor-id", default="", help="Actor ID for authority-gated follow-up creation")
     check.add_argument("--actor-class", default="", help="Actor class (human/interactive/worker/daemon/lane)")
+    check.add_argument(
+        "--gate",
+        action="store_true",
+        help="Gate mode: exit non-zero only on warning+ findings (passes advisory info). Forces --json; use as a graph gate-node verify.",
+    )
     check.set_defaults(func=cmd_check)
 
     updates = sub.add_parser("updates", help="Check Speedrift ecosystem repos for upstream updates")
