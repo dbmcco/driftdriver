@@ -135,3 +135,37 @@ def test_ignores_venv_and_build_dirs(tmp_path: Path) -> None:
     _write(tmp_path, "__pycache__/c.py", "_TRIGGERS = (\"y\",)\n")
     res = modelrift.run_as_lane(tmp_path)
     assert res.findings == []
+
+
+# --- Working-copy boundary (isolation, not elimination) -----------------------
+
+def test_nested_linked_worktree_is_not_scanned(tmp_path: Path) -> None:
+    # A git linked worktree nested under .worktrees/ carries its own ``.git``
+    # file marker and is a separate working copy — the walker must not descend.
+    _write(tmp_path, ".worktrees/feat-x/gate.py", '_INTENT = ("go",)\n')
+    (tmp_path / ".worktrees/feat-x/.git").write_text(
+        "gitdir: /fake/.git/worktrees/feat-x\n"
+    )
+    res = modelrift.run_as_lane(tmp_path)
+    assert not any("worktrees" in f.file for f in res.findings)
+
+
+def test_nested_submodule_dir_not_scanned(tmp_path: Path) -> None:
+    # A nested repo with a ``.git`` directory (submodule / nested clone) is
+    # likewise a boundary.
+    _write(tmp_path, "vendor/sub/gate.py", '_INTENT = ("go",)\n')
+    (tmp_path / "vendor/sub/.git").mkdir()
+    res = modelrift.run_as_lane(tmp_path)
+    assert not any("vendor" in f.file for f in res.findings)
+
+
+def test_scan_root_inside_a_worktree_is_scanned(tmp_path: Path) -> None:
+    # Running a lane from *inside* a worktree: the scan root itself carries a
+    # ``.git`` file (linked-worktree marker). Its own code MUST still be scanned
+    # — only nested children are boundaries, never the root.
+    _write(tmp_path, "src/gate.py", '_INTENT = ("go",)\n')
+    (tmp_path / ".git").write_text("gitdir: /fake/.git/worktrees/here\n")
+    res = modelrift.run_as_lane(tmp_path)
+    assert any(
+        "keyword-gate" in f.tags for f in res.findings if f.file.endswith("gate.py")
+    )

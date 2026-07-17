@@ -34,10 +34,33 @@ LOCATION_TOKEN_RE = re.compile(
 )
 
 
+def _is_separate_workcopy(path: Path) -> bool:
+    """True if ``path`` is itself a separate git working copy (don't descend).
+
+    A child directory carrying its own ``.git`` — a file (git linked worktree)
+    or a directory (submodule / nested clone) — marks a working-copy boundary,
+    not a subtree of the current checkout. The scan root itself is never tested,
+    so running a lane from *inside* a worktree still scans that worktree's code.
+    This is the isolation invariant: scan exactly one working copy.
+    """
+    g = path / ".git"
+    return g.is_file() or g.is_dir()
+
+
 def walk_py_files(project_dir: Path) -> Iterable[Path]:
-    """Yield ``.py`` files under ``project_dir``, pruning build/deps/cache dirs."""
+    """Yield ``.py`` files under ``project_dir``.
+
+    Prunes build/deps/cache dirs by name and stops at any nested separate
+    working copy (a git boundary: linked worktree, submodule, nested clone) so
+    a scan covers exactly one working copy rather than recursively swallowing
+    sibling copies nested on disk (e.g. under ``.worktrees/``).
+    """
     for root, dirs, files in project_dir.walk():  # py3.12+: yields (Path, dirs, files)
-        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]  # prune in place
+        # prune in place: ignored names first (cheap), then git boundaries
+        dirs[:] = [
+            d for d in dirs
+            if d not in IGNORED_DIRS and not _is_separate_workcopy(root / d)
+        ]
         for name in files:
             if name.endswith(PY_EXT):
                 yield root / name
