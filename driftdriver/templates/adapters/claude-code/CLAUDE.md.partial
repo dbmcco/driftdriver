@@ -42,9 +42,11 @@ driftdriver attractor run --json
 ### Runtime Authority
 - Workgraph is the task/dependency source of truth. `speedriftd` is the repo-local supervisor.
 - Sessions default to `observe`. Do not use `wg service start` as a generic kickoff.
+- `supervise` and `autonomous` require an explicit non-empty lease owner and reason; expired or missing leases fail closed to observe-only dispatch.
 - Refresh state: `driftdriver --dir "$PWD" --json speedriftd status --refresh`
 - Arm repo: `driftdriver --dir "$PWD" speedriftd status --set-mode supervise --lease-owner <agent> --reason "reason"`
 - Disarm: `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "done"`
+- Service start is permitted only when the refreshed control state reports an elevated mode with `control.lease_active == true`.
 
 ### Dark Factory
 This repo is part of a dark factory managed by the **Factory Brain** — a three-tier

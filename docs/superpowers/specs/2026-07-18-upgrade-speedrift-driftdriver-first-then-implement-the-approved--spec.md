@@ -76,6 +76,10 @@ Speedrift control-plane gates pass before downstream work begins. The implementa
 - waiver Live external messaging sends: No tests may send real messages; deterministic fake messaging transports, dry-run delivery executors, would-block receipts, idempotency fixtures, and explicit approval-record fixtures substitute for external sends. (approved by planning_policy_deterministic_substitute)
 - waiver LaunchAgent scheduling in CI: CI must not install or wait for real LaunchAgents; manifest fixtures, clock-controlled scheduler tests, fake launchd status, lock-wait simulations, and manual runbook verification substitute for live scheduling. (approved by planning_policy_deterministic_substitute)
 
+## Phase 0 Runtime-Gate Implementation Surface
+
+The repository-local runtime gate is implemented and verified across the actual existing files rather than the originally proposed placeholder paths: `driftdriver/cli/__init__.py`, `driftdriver/speedriftd_state.py`, `driftdriver/install.py`, `driftdriver/templates/handlers/session-start.sh`, `driftdriver/templates/adapters/codex/AGENTS.md.partial`, `driftdriver/templates/adapters/claude-code/CLAUDE.md.partial`, `tests/test_speedriftd_runtime_gate.py`, `tests/test_cli_fixes.py`, and `tests/test_install_amplifier.py`. The gate requires a non-empty lease owner and reason for elevated modes, fails closed when leases expire, and prevents generated session hooks from starting Workgraph without an active lease.
+
 ## Risks
 
 - False green source freshness could authorize answers or messaging effects from stale, index-only, event-only, or probe-only evidence. [high]: Separate content, event, index, probe, and completeness statuses; add per-adapter tests, route-level sufficiency declarations, datadrift gates, and model-mediated evals that block freshness collapse.

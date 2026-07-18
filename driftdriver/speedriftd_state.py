@@ -153,6 +153,16 @@ def _normalize_control_state(raw: dict[str, Any], *, repo_name: str, cfg: dict[s
     return control
 
 
+def _apply_runtime_gate(control: dict[str, Any]) -> dict[str, Any]:
+    """Keep dispatch and service start disabled without an active lease."""
+    mode = str(control.get("mode") or "observe").strip().lower()
+    control["dispatch_enabled"] = mode in {"supervise", "autonomous"} and bool(
+        control.get("lease_active")
+    )
+    control["interactive_service_start"] = bool(control["dispatch_enabled"])
+    return control
+
+
 def load_control_state(project_dir: Path, *, policy: DriftPolicy | None = None) -> dict[str, Any]:
     paths = runtime_paths(project_dir)
     project_dir = paths["wg_dir"].parent.resolve()
@@ -160,7 +170,7 @@ def load_control_state(project_dir: Path, *, policy: DriftPolicy | None = None) 
     policy = policy or load_drift_policy(paths["wg_dir"])
     cfg = dict(getattr(policy, "speedriftd", {}) or {})
     raw = _read_json(paths["control"])
-    return _normalize_control_state(raw, repo_name=repo_name, cfg=cfg)
+    return _apply_runtime_gate(_normalize_control_state(raw, repo_name=repo_name, cfg=cfg))
 
 
 def write_control_state(
@@ -208,7 +218,9 @@ def write_control_state(
     control["source"] = source
     if reason:
         control["reason"] = reason
-    normalized = _normalize_control_state(control, repo_name=repo_name, cfg=cfg)
+    normalized = _apply_runtime_gate(
+        _normalize_control_state(control, repo_name=repo_name, cfg=cfg)
+    )
     _write_json(paths["control"], normalized)
     return normalized
 

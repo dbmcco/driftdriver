@@ -26,12 +26,14 @@ Run: `./.workgraph/handlers/agent-error.sh --cli codex`
 - `speedriftd` is the repo-local runtime supervisor. Interactive sessions do not own dispatch by default.
 - PlanForge handoffs should include unit tests, integration tests, UX tests or waivers, Agency usage, roborev/review obligations, bounded adversarial review, and detailed small-model-ready implementation steps.
 - Default posture is `observe`. Do not use `wg service start` as a generic way to kick off autonomous work.
+- `supervise` and `autonomous` require an explicit non-empty lease owner and reason; expired or missing leases fail closed to observe-only dispatch.
 - Refresh repo runtime state before acting: `driftdriver --dir "$PWD" --json speedriftd status --refresh`
 - If the user wants background execution in this repo, arm it explicitly:
   - `driftdriver --dir "$PWD" speedriftd status --set-mode supervise --lease-owner <agent-name> --reason "explicit repo supervision requested"`
   - `driftdriver --dir "$PWD" speedriftd status --set-mode autonomous --lease-owner <agent-name> --reason "explicit autonomous execution requested"`
 - When the task is complete or the repo should stop self-dispatching, return it to passive mode:
   - `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "return repo to observation"`
+- Verify the gate after changes: `driftdriver --dir "$PWD" --json speedriftd status --refresh`; service start is allowed only when mode is elevated and `control.lease_active` is true.
 - To see the broader ecosystem hub and current port 8777 URLs:
   - `cd /Users/braydon/projects/experiments/driftdriver && scripts/ecosystem_hub_daemon.sh url`
 

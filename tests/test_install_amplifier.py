@@ -47,6 +47,8 @@ class AmplifierInstallTests(unittest.TestCase):
             self.assertIn("ensure-contracts --apply", script_text)
             self.assertIn("STAMP_FILE", script_text)
             self.assertIn("speedriftd status --refresh", script_text)
+            self.assertIn("LEASE_ACTIVE", script_text)
+            self.assertIn('&& "$LEASE_ACTIVE" == "true"', script_text)
             self.assertNotIn("drifts\" orchestrate", script_text)
             self.assertNotIn("nohup bash -lc", script_text)
 

@@ -1052,16 +1052,29 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
         or getattr(args, "lease_ttl_seconds", None) is not None
     ):
         new_mode = getattr(args, "set_mode", None)
-        write_control_state(
-            project_dir,
-            policy=policy,
-            mode=new_mode,
-            lease_owner=getattr(args, "lease_owner", None),
-            lease_ttl_seconds=getattr(args, "lease_ttl_seconds", None),
-            release_lease=bool(getattr(args, "release_lease", False)),
-            source="cli",
-            reason=str(getattr(args, "reason", "") or ""),
-        )
+        if new_mode in ("supervise", "autonomous") and (
+            not str(getattr(args, "lease_owner", None) or "").strip()
+            or not str(getattr(args, "reason", "") or "").strip()
+        ):
+            print(
+                "Runtime gate: supervise/autonomous mode requires an explicit lease owner and reason",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            write_control_state(
+                project_dir,
+                policy=policy,
+                mode=new_mode,
+                lease_owner=getattr(args, "lease_owner", None),
+                lease_ttl_seconds=getattr(args, "lease_ttl_seconds", None),
+                release_lease=bool(getattr(args, "release_lease", False)),
+                source="cli",
+                reason=str(getattr(args, "reason", "") or ""),
+            )
+        except ValueError as exc:
+            print(f"Runtime gate: {exc}", file=sys.stderr)
+            return 2
         control_changed = True
 
         # Stop the wg daemon when mode drops to observe/manual — it should

@@ -134,6 +134,8 @@ def test_speedriftd_status_forces_refresh_after_control_change(tmp_path):
                 "autonomous",
                 "--lease-owner",
                 "speedriftd",
+                "--reason",
+                "test runtime authorization",
             ]
         )
 
