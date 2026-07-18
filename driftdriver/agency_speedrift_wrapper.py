@@ -3,6 +3,57 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from driftdriver.speedriftd_state import _append_jsonl, load_control_state, runtime_paths
+from driftdriver.workgraph import validate_pi_model_spec
+
+
+def record_agency_pi_fallback_receipt(
+    project_dir: Path,
+    *,
+    task_id: str,
+    selected_model: str,
+    fallback_model: str,
+    reason: str,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Append an audit-only Agency-to-Pi fallback receipt.
+
+    This function intentionally reads control state but never writes it, starts
+    services, or acquires leases. Any model or filesystem error is raised to the
+    caller so a fallback cannot be reported as successful without a receipt.
+    """
+    selected = validate_pi_model_spec(selected_model)
+    fallback = validate_pi_model_spec(fallback_model)
+    before = load_control_state(project_dir)
+    control = {"mode": before["mode"], "lease_active": before["lease_active"]}
+    after = load_control_state(project_dir)
+    control_after = {"mode": after["mode"], "lease_active": after["lease_active"]}
+    if control_after != control:
+        raise RuntimeError("speedriftd control changed while recording Agency fallback")
+
+    receipt: dict[str, Any] = {
+        "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+        "repo": project_dir.resolve().name,
+        "task_id": str(task_id),
+        "preferred_runtime": "agency",
+        "preferred_model": selected,
+        "fallback_runtime": "pi",
+        "fallback_model": fallback,
+        "reason": str(reason),
+        "control_before": control,
+        "control_after": control_after,
+    }
+    receipt_path = runtime_paths(project_dir)["dir"] / "agency-pi-fallback-receipts.jsonl"
+    try:
+        _append_jsonl(receipt_path, receipt)
+    except OSError as exc:
+        raise RuntimeError("could not write Agency-to-Pi fallback receipt") from exc
+    return receipt
+
 
 def _executor_guidance(task_id: str) -> str:
     """Build the executor guidance section for a given task."""

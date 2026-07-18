@@ -6,6 +6,77 @@ from pathlib import Path
 from typing import Any
 
 
+# This is the checked-in live Pi-resolvable set for the current plan. Keep this
+# explicit: silently accepting provider/model heuristics would make dispatch
+# non-deterministic when a provider catalog changes.
+ALLOWED_PI_MODEL_IDS = frozenset(
+    {
+        "zai/glm-5.2",
+        "anthropic/claude-haiku-4-5",
+        "anthropic/claude-sonnet-4-5",
+        "anthropic/claude-opus-4-8",
+    }
+)
+_ALLOWED_THINKING_SUFFIXES = frozenset({"low", "medium", "high"})
+
+
+def _json_object(value: str | dict[str, Any], *, label: str) -> dict[str, Any]:
+    if isinstance(value, dict):
+        payload = value
+    else:
+        try:
+            payload = json.loads(value)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid Workgraph {label} JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Workgraph {label} output must be a JSON object")
+    return payload
+
+
+def parse_workgraph_status(value: str | dict[str, Any]) -> dict[str, Any]:
+    """Validate and return the current ``wg --json status`` envelope."""
+    payload = _json_object(value, label="status")
+    required = {"service", "coordinator", "agents", "tasks", "recent"}
+    missing = required - payload.keys()
+    if missing or not all(isinstance(payload[key], (dict, list)) for key in required):
+        raise ValueError(f"Workgraph status missing required sections: {sorted(missing)}")
+    coordinator = payload["coordinator"]
+    if not {"executor", "model"} <= coordinator.keys():
+        raise ValueError("Workgraph status coordinator lacks executor/model")
+    return payload
+
+
+def parse_workgraph_ready(value: str | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Validate and return the current ``wg --json ready`` task list."""
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid Workgraph ready JSON") from exc
+    else:
+        payload = value
+    if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+        raise ValueError("Workgraph ready output must be a JSON array of task objects")
+    required = {"id", "title", "ready", "assigned", "priority", "estimate"}
+    if any(not required <= row.keys() for row in payload):
+        raise ValueError("Workgraph ready task lacks required fields")
+    return payload
+
+
+def validate_pi_model_spec(model_spec: str) -> str:
+    """Accept only an exact allowed provider/id, optionally with Pi thinking suffix."""
+    value = str(model_spec or "").strip()
+    base = value
+    suffix = ""
+    if ":" in value:
+        base, suffix = value.rsplit(":", 1)
+        if suffix not in _ALLOWED_THINKING_SUFFIXES:
+            raise ValueError(f"model is not an allowed Pi model: {model_spec!r}")
+    if base not in ALLOWED_PI_MODEL_IDS:
+        raise ValueError(f"model is not an allowed Pi model: {model_spec!r}")
+    return value
+
+
 @dataclass(frozen=True)
 class Workgraph:
     wg_dir: Path

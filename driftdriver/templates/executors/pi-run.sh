@@ -17,13 +17,16 @@ fi
 # is "provider/id", so when wg gives us --provider + a bare --model we qualify it.
 PROVIDER=""
 MODEL=""
+FALLBACK_MODEL=""
 THINKING=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --provider) PROVIDER="$2"; shift 2 ;;
     --provider=*) PROVIDER="${1#--provider=}"; shift ;;
-    --model) MODEL="$2"; shift 2 ;;
-    --model=*) MODEL="${1#--model=}"; shift ;;
+    --model|--selected-model) MODEL="$2"; shift 2 ;;
+    --model=*|--selected-model=*) MODEL="${1#*=}"; shift ;;
+    --fallback-model) FALLBACK_MODEL="$2"; shift 2 ;;
+    --fallback-model=*) FALLBACK_MODEL="${1#--fallback-model=}"; shift ;;
     --thinking) THINKING="$2"; shift 2 ;;
     --thinking=*) THINKING="${1#--thinking=}"; shift ;;
     # Flags we don't need but wg may pass — consume value-pairs and bare flags gracefully.
@@ -39,13 +42,20 @@ done
 # Build the provider-qualified model spec (provider/id). Pass through unchanged
 # if already qualified (contains '/') or if no provider was supplied.
 MODEL_ARGS=()
+SELECTED_MODEL="$MODEL"
 if [[ -n "$MODEL" ]]; then
   if [[ "$MODEL" != */* && -n "$PROVIDER" ]]; then
-    MODEL_ARGS+=(--model "$PROVIDER/$MODEL")
-  else
-    MODEL_ARGS+=(--model "$MODEL")
+    SELECTED_MODEL="$PROVIDER/$MODEL"
   fi
+  MODEL_ARGS+=(--model "$SELECTED_MODEL")
 fi
+if [[ -n "$FALLBACK_MODEL" && "$FALLBACK_MODEL" != */* && -n "$PROVIDER" ]]; then
+  FALLBACK_MODEL="$PROVIDER/$FALLBACK_MODEL"
+fi
+# Pi only receives the selected model; keep fallback metadata available to the
+# receipt/audit layer without passing an unsupported flag to the Pi CLI.
+export WG_SELECTED_MODEL="$SELECTED_MODEL"
+export WG_FALLBACK_MODEL="$FALLBACK_MODEL"
 THINKING_ARGS=()
 if [[ -n "$THINKING" ]]; then
   THINKING_ARGS+=(--thinking "$THINKING")

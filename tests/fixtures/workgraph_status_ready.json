@@ -1,0 +1,407 @@
+{
+  "captured_command": "wg --json status / wg --json ready",
+  "status_json": {
+    "service": {
+      "running": false,
+      "pid": null,
+      "uptime": null,
+      "socket": null
+    },
+    "coordinator": {
+      "max_agents": 8,
+      "executor": "pi",
+      "model": "pi:zai/glm-5.2",
+      "reasoning": "high",
+      "poll_interval": 5
+    },
+    "agents": {
+      "alive": 0,
+      "dead": 0,
+      "active": []
+    },
+    "tasks": {
+      "in_progress": 0,
+      "ready": 4,
+      "blocked": 40,
+      "delayed": 0,
+      "done_today": 4,
+      "done_total": 4
+    },
+    "recent": [
+      {
+        "time": "19:25",
+        "task_id": "phase0.reaper-regression",
+        "title": "Restore missing reaper source and regression coverage"
+      },
+      {
+        "time": "19:24",
+        "task_id": "phase0.sdk-pin",
+        "title": "Pin speedrift-lane-sdk to an immutable audited ref"
+      },
+      {
+        "time": "19:21",
+        "task_id": "phase0.runtime-gate",
+        "title": "Enforce repository-local runtime gate for speedriftd and agent entrypoints"
+      },
+      {
+        "time": "19:19",
+        "task_id": "root.state-system-upgrade",
+        "title": "Plan and baseline the observe-only State System upgrade"
+      }
+    ]
+  },
+  "ready_json": [
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-paiaos.governance-adapter",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Integrate State System messaging evidence with paia-os governance verdicts"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-evals.upstream-consumption",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Run upstream consumption eval for Speedrift SDK and paia-contracts"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": "ecosystem-adopt-2026-07-16-7f77228f",
+      "priority": 10,
+      "ready": true,
+      "title": "To approve"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-evals.model-mediated",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Run objective model-mediated evals for relevance agency and bounded proposals"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-agents.caroline-binding",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Bind Caroline to explicit State System scope and visible gaps"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-tests.e2e-canary",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Run end-to-end canary for inspect, package decision, model proposal, governance, and observe messaging gate"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-agents.synthyra-binding",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Bind Synthyra to explicit State System scope and visible gaps"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.adapter-linear",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Correct Linear adapter status basis"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-adversarial.review",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Run bounded adversarial review of model and messaging gate bypasses"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.adapter-zulip",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Correct Zulip adapter status basis"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-final.handoff",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Final handoff for observe-only telemetry and disabled messaging gate"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-evals.dead-code-cleanup",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Run dead-code eval for legacy parser and validator removal"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-runtime.messaging-gate-core",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Implement disabled-by-default fail-closed StateActionGate for one messaging send path"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.adapter-repository",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Correct repository adapter status basis"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.adapter-garmin",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Correct Garmin adapter status basis"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.api-handshake",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Implement State System dispatcher, handshake, repair protocol, and acknowledge_gap ledger wiring"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-agents.samantha-binding",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Bind Samantha to explicit State System scope and visible gaps"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": "ecosystem-adopt-2026-07-16-a54ac1b2",
+      "priority": 10,
+      "ready": true,
+      "title": "To approve"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-review.roborev",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Run RoboRev and architecture/security review closeout"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.cli-guidance",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Make State System CLI model-operable while preserving legacy compatibility"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-cleanup.legacy-parser-validator-removal",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Remove legacy raw-pg parser and partial validator from new protocol boundaries after parity"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-runtime.messaging-observe-canary",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Enable observe-only messaging canary receipts without changing delivery behavior"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.adapter-transcripts",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Correct transcript adapter status basis"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-phase0.speedrift-gate",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Block downstream work until Speedrift control-plane gate is green"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-runtime.instructor-boundary",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Bound Instructor to typed model proposals and shape repair only"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-contracts.pydantic-protocol",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Add strict State System protocol contracts to paia-contracts"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-runtime.route-answer-gating",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Enable state-dependent route gating without forcing every turn"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.adapter-drive",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Correct Drive adapter status basis"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-tests.cross-repo-run",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Run cross-repository contract and runtime verification without fixing failures"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-drift.full-suite",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Run Speedrift drift gates across all State System upgrade repositories"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": "ecosystem-adopt-2026-07-17-1b42907a",
+      "priority": 10,
+      "ready": true,
+      "title": "To approve"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-phase0.workgraph-pi-compat",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Verify Workgraph, Pi executor, model registry, and Agency fallback compatibility"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": "ecosystem-adopt-2026-07-17-8e004797",
+      "priority": 10,
+      "ready": true,
+      "title": "To approve"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-paiaos.external-effect-receipts",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Implement paia-os external-effect receipt ownership and retention"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-runtime.context-header",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Reserve non-truncatable State System policy header and visible limitations"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.audit-ledger",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Implement State System append-only redacted audit ledger"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.inspect-reports",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Add read-only inspect operation and separate process/content health reports"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-runtime.company-state-client",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Replace raw pg output parsing with typed State System client"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.adapter-beeper",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Correct Beeper adapter status basis"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-agents.pi-bindings",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Bind Pi harness agents to state routes, model assignments, and Agency fallback receipts"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-contracts.schema-export",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Export JSON Schemas and standards-compliant validation for published contracts"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.content-dimensions",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Separate source content, event, index, probe, and completeness statuses"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-state.adapter-known-stale-sources",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Add regressions for known stale MsgVault, Spotify, memory, and Folio sources"
+    },
+    {
+      "assigned": null,
+      "estimate": null,
+      "id": ".assign-runtime.package-loader",
+      "priority": 10,
+      "ready": true,
+      "title": "Assign agent for: Add strict package loader and observe-only StateContextDecision receipts"
+    }
+  ]
+}
