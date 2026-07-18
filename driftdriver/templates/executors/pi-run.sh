@@ -10,13 +10,22 @@ if [[ -d "$PWD/.workgraph/bin" ]]; then
   export PATH="$PWD/.workgraph/bin:$PATH"
 fi
 
-# Parse wg-passed flags; forward --model to pi (pi default model is resolved by
-# pi itself via provider/model spec, e.g. zai/glm-5.2 or openai/gpt-5.5).
-MODEL_ARGS=()
+# Parse wg-passed flags. We MUST build a provider-qualified model spec because pi
+# resolves a BARE model id (e.g. "glm-5.2" with no provider) via catalog search,
+# which is non-deterministic and frequently falls back to the opencode provider
+# ("No API key found for opencode" -> exit 1). The deterministic, documented form
+# is "provider/id", so when wg gives us --provider + a bare --model we qualify it.
+PROVIDER=""
+MODEL=""
+THINKING=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model) MODEL_ARGS+=(--model "$2"); shift 2 ;;
-    --model=*) MODEL_ARGS+=(--model "${1#--model=}"); shift ;;
+    --provider) PROVIDER="$2"; shift 2 ;;
+    --provider=*) PROVIDER="${1#--provider=}"; shift ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --model=*) MODEL="${1#--model=}"; shift ;;
+    --thinking) THINKING="$2"; shift 2 ;;
+    --thinking=*) THINKING="${1#--thinking=}"; shift ;;
     # Flags we don't need but wg may pass — consume value-pairs and bare flags gracefully.
     --system-prompt) shift 2 ;;
     --system-prompt=*) shift ;;
@@ -26,6 +35,21 @@ while [[ $# -gt 0 ]]; do
     *) shift ;;
   esac
 done
+
+# Build the provider-qualified model spec (provider/id). Pass through unchanged
+# if already qualified (contains '/') or if no provider was supplied.
+MODEL_ARGS=()
+if [[ -n "$MODEL" ]]; then
+  if [[ "$MODEL" != */* && -n "$PROVIDER" ]]; then
+    MODEL_ARGS+=(--model "$PROVIDER/$MODEL")
+  else
+    MODEL_ARGS+=(--model "$MODEL")
+  fi
+fi
+THINKING_ARGS=()
+if [[ -n "$THINKING" ]]; then
+  THINKING_ARGS+=(--thinking "$THINKING")
+fi
 
 # Read the rendered task prompt from stdin (the [executor.prompt_template]).
 PROMPT="$(cat)"
@@ -54,7 +78,7 @@ PI_BIN="${PI_BIN:-${PI_CMD:-pi}}"
 
 # Run pi non-interactively. Prompt is a positional argument (pi -p "<prompt>").
 set +e
-"$PI_BIN" -p "${MODEL_ARGS[@]}" "$PROMPT"
+"$PI_BIN" -p "${MODEL_ARGS[@]}" "${THINKING_ARGS[@]}" "$PROMPT"
 EXIT_CODE=$?
 set -e
 
