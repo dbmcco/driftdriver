@@ -685,39 +685,44 @@ def dispatch_task(
     run: AutopilotRun,
 ) -> WorkerContext:
     """Dispatch a worker for a task. Returns WorkerContext."""
+    from driftdriver.speedriftd_state import control_receipt_lock
+
     worker_name = f"ap-{task['id']}"
-    authority = _dispatch_authority(project_dir)
-    if not authority["enabled"]:
-        return WorkerContext(
+    # Serialize authority evaluation with the claim side effect. The lock is
+    # released before worker conversation so lease mutations remain responsive.
+    with control_receipt_lock(project_dir):
+        authority = _dispatch_authority(project_dir)
+        if not authority["enabled"]:
+            return WorkerContext(
+                task_id=task["id"],
+                task_title=task.get("title", ""),
+                worker_name=worker_name,
+                status="blocked",
+                response=authority["reason"],
+            )
+
+        ctx = WorkerContext(
             task_id=task["id"],
             task_title=task.get("title", ""),
             worker_name=worker_name,
-            status="blocked",
-            response=authority["reason"],
+            started_at=time.time(),
+            status="running",
         )
 
-    ctx = WorkerContext(
-        task_id=task["id"],
-        task_title=task.get("title", ""),
-        worker_name=worker_name,
-        started_at=time.time(),
-        status="running",
-    )
-
-    # Claim the task via directive interface
-    wg_dir = project_dir / ".workgraph"
-    agent_name = worker_name
-    directive = Directive(
-        source="project_autopilot",
-        repo=project_dir.name,
-        action=Action.CLAIM_TASK,
-        params={"task_id": task["id"], "agent": agent_name},
-        reason="autopilot claiming task for execution",
-    )
-    directive_dir = wg_dir / "service" / "directives"
-    log = DirectiveLog(directive_dir)
-    shim = ExecutorShim(wg_dir=wg_dir, log=log)
-    shim.execute(directive)
+        # Claim the task via directive interface
+        wg_dir = project_dir / ".workgraph"
+        agent_name = worker_name
+        directive = Directive(
+            source="project_autopilot",
+            repo=project_dir.name,
+            action=Action.CLAIM_TASK,
+            params={"task_id": task["id"], "agent": agent_name},
+            reason="autopilot claiming task for execution",
+        )
+        directive_dir = wg_dir / "service" / "directives"
+        log = DirectiveLog(directive_dir)
+        shim = ExecutorShim(wg_dir=wg_dir, log=log)
+        shim.execute(directive)
 
     extra_env: dict[str, str] | None = None
     if str(task.get("manual_owner_policy") or "") == "assist":
@@ -728,31 +733,55 @@ def dispatch_task(
         }
 
     if scripts_dir is None:
-        # Fallback: direct CLI execution (no session-driver)
-        prompt = build_worker_prompt(task, project_dir)
-        result = _run_command(
-            [
-                "claude",
-                "--print",
-                "--dangerously-skip-permissions",
-                "--no-session-persistence",
-                "-p",
-                prompt,
-            ],
-            cwd=project_dir,
-            timeout=run.config.worker_timeout + 60,
-            extra_env=extra_env,
-        )
+        # Revalidate immediately before starting the fallback worker. The
+        # claim and worker launch are separate side effects and authority may
+        # have changed between them.
+        with control_receipt_lock(project_dir):
+            authority = _dispatch_authority(project_dir)
+            if not authority["enabled"]:
+                return WorkerContext(
+                    task_id=task["id"],
+                    task_title=task.get("title", ""),
+                    worker_name=worker_name,
+                    status="blocked",
+                    response=authority["reason"],
+                )
+            # Fallback: direct CLI execution (no session-driver)
+            prompt = build_worker_prompt(task, project_dir)
+            result = _run_command(
+                [
+                    "claude",
+                    "--print",
+                    "--dangerously-skip-permissions",
+                    "--no-session-persistence",
+                    "-p",
+                    prompt,
+                ],
+                cwd=project_dir,
+                timeout=run.config.worker_timeout + 60,
+                extra_env=extra_env,
+            )
         ctx.response = result.stdout
         ctx.status = "completed" if result.returncode == 0 else "failed"
     else:
-        # Session-driver path
-        worker_info = launch_worker(
-            scripts_dir,
-            worker_name,
-            project_dir,
-            extra_env=extra_env,
-        )
+        # Revalidate immediately before starting the session-driver worker.
+        with control_receipt_lock(project_dir):
+            authority = _dispatch_authority(project_dir)
+            if not authority["enabled"]:
+                return WorkerContext(
+                    task_id=task["id"],
+                    task_title=task.get("title", ""),
+                    worker_name=worker_name,
+                    status="blocked",
+                    response=authority["reason"],
+                )
+            # Session-driver path
+            worker_info = launch_worker(
+                scripts_dir,
+                worker_name,
+                project_dir,
+                extra_env=extra_env,
+            )
         if worker_info is None:
             ctx.response = "worker launch failed"
             ctx.status = "failed"

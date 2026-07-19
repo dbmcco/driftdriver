@@ -905,10 +905,14 @@ class EcosystemHubTests(unittest.TestCase):
                         method="POST",
                     )
                     completed = subprocess.CompletedProcess(request, 0, stdout="started", stderr="")
-                    with patch(
-                        "driftdriver.speedriftd_state.load_control_state",
-                        return_value={"mode": "supervise", "lease_owner": "agent-a", "lease_active": True},
-                    ), patch("subprocess.run", return_value=completed) as run:
+                    with (
+                        patch(
+                            "driftdriver.speedriftd_state.load_control_state",
+                            return_value={"mode": "supervise", "lease_owner": "agent-a", "lease_active": True},
+                        ),
+                        patch("driftdriver.speedriftd_state.control_receipt_lock") as lock,
+                        patch("subprocess.run", return_value=completed) as run,
+                    ):
                         response = urlopen(request, timeout=5)
                         data = json.loads(response.read().decode("utf-8"))
                 finally:
@@ -919,6 +923,7 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertEqual(data["returncode"], 0)
             self.assertEqual(run.call_count, 1)
+            lock.assert_called_once_with(repo)
 
     def test_collect_snapshot_aggregates_and_renders_packets(self) -> None:
         with tempfile.TemporaryDirectory() as td:

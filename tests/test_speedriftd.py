@@ -583,7 +583,7 @@ class LeaseExpiryStopTests(unittest.TestCase):
 
                 second = run_runtime_cycle(repo)
 
-            self.assertEqual(stop.call_count, 1)
+            self.assertEqual(stop.call_count, 2)
             self.assertEqual(second["last_lease_expiry_stop"]["stop_exit_code"], 0)
             self.assertTrue(load_lease_expiry_stop(repo)["reconciled"])
 

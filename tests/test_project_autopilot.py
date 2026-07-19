@@ -112,6 +112,74 @@ class TestSessionDriverLifecycle(unittest.TestCase):
         mock_shim.return_value.execute.assert_called_once()
         mock_stop.assert_called_once_with(Path("/driver/scripts"), "ap-t1", "sess-1")
 
+    def test_dispatch_denies_when_lease_revoked_before_worker_launch(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            run = AutopilotRun(config=AutopilotConfig(project_dir=repo))
+            task = {"id": "t1", "title": "Task 1"}
+            active = {
+                "mode": "autonomous",
+                "lease_owner": "agent-a",
+                "lease_active": True,
+            }
+            denied = {
+                "mode": "autonomous",
+                "lease_owner": "agent-a",
+                "lease_active": False,
+            }
+            with (
+                patch(
+                    "driftdriver.project_autopilot.load_control_state",
+                    side_effect=[active, denied],
+                ),
+                patch("driftdriver.speedriftd_state.control_receipt_lock") as lock,
+                patch("driftdriver.project_autopilot.ExecutorShim") as shim,
+                patch(
+                    "driftdriver.project_autopilot.launch_worker",
+                    return_value={"session_id": "sess-1"},
+                ) as launch,
+                patch("driftdriver.project_autopilot.converse", return_value="done"),
+                patch("driftdriver.project_autopilot.stop_worker"),
+            ):
+                ctx = dispatch_task(task, repo, Path("/driver/scripts"), run)
+
+        self.assertEqual(ctx.status, "blocked")
+        self.assertEqual(ctx.response, "lease is not active")
+        shim.return_value.execute.assert_called_once()
+        self.assertEqual(lock.call_count, 2)
+        launch.assert_not_called()
+        self.assertEqual(run.workers, {})
+
+    def test_dispatch_claim_is_serialized_with_authority_check(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            run = AutopilotRun(config=AutopilotConfig(project_dir=repo))
+            task = {"id": "t1", "title": "Task 1"}
+            active = {
+                "mode": "autonomous",
+                "lease_owner": "agent-a",
+                "lease_active": True,
+            }
+            with (
+                patch(
+                    "driftdriver.project_autopilot.load_control_state",
+                    return_value=active,
+                ),
+                patch("driftdriver.speedriftd_state.control_receipt_lock") as lock,
+                patch("driftdriver.project_autopilot.ExecutorShim") as shim,
+                patch(
+                    "driftdriver.project_autopilot.launch_worker",
+                    return_value=None,
+                ),
+            ):
+                ctx = dispatch_task(task, repo, Path("/driver/scripts"), run)
+
+        self.assertEqual(ctx.status, "failed")
+        lock.assert_called()
+        shim.return_value.execute.assert_called_once()
+
     def test_dispatch_denies_when_control_state_is_unavailable_before_claim_or_launch(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)

@@ -638,31 +638,34 @@ class _HubHandler(BaseHTTPRequestHandler):
             if not wg_dir.is_dir():
                 self._send_json({"error": "no_workgraph", "repo": repo_name}, status=HTTPStatus.BAD_REQUEST)
                 return
-            authority = self._dispatch_authority_for_repo(repo_path)
-            if not authority.get("enabled"):
-                self._send_json(
-                    {"error": "dispatch_not_authorized", "repo": repo_name, "reason": authority["reason"]},
-                    status=HTTPStatus.CONFLICT,
-                )
-                return
-            import subprocess as _sp
-            try:
-                result = _sp.run(  # noqa: S603
-                    ["wg", "service", "start"],
-                    cwd=repo_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                )
-                self._send_json({
-                    "repo": repo_name,
-                    "action": "start",
-                    "returncode": result.returncode,
-                    "stdout": result.stdout[:500],
-                    "stderr": result.stderr[:500],
-                })
-            except Exception as exc:
-                self._send_json({"error": str(exc), "repo": repo_name}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            from driftdriver.speedriftd_state import control_receipt_lock
+
+            with control_receipt_lock(Path(repo_path)):
+                authority = self._dispatch_authority_for_repo(repo_path)
+                if not authority.get("enabled"):
+                    self._send_json(
+                        {"error": "dispatch_not_authorized", "repo": repo_name, "reason": authority["reason"]},
+                        status=HTTPStatus.CONFLICT,
+                    )
+                    return
+                import subprocess as _sp
+                try:
+                    result = _sp.run(  # noqa: S603
+                        ["wg", "service", "start"],
+                        cwd=repo_path,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
+                    self._send_json({
+                        "repo": repo_name,
+                        "action": "start",
+                        "returncode": result.returncode,
+                        "stdout": result.stdout[:500],
+                        "stderr": result.stderr[:500],
+                    })
+                except Exception as exc:
+                    self._send_json({"error": str(exc), "repo": repo_name}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
 
         # --- Workgraph service start (new route alias) ---
@@ -678,26 +681,29 @@ class _HubHandler(BaseHTTPRequestHandler):
             if not (Path(repo_path) / ".workgraph").is_dir():
                 self._send_json({"error": "no_workgraph", "repo": repo_name}, status=HTTPStatus.BAD_REQUEST)
                 return
-            authority = self._dispatch_authority_for_repo(repo_path)
-            if not authority.get("enabled"):
-                self._send_json(
-                    {"error": "dispatch_not_authorized", "repo": repo_name, "reason": authority["reason"]},
-                    status=HTTPStatus.CONFLICT,
-                )
-                return
-            import subprocess as _sp
-            try:
-                result = _sp.run(  # noqa: S603
-                    ["wg", "service", "start"],
-                    cwd=repo_path, capture_output=True, text=True, timeout=15,
-                )
-                self._send_json({
-                    "repo": repo_name, "action": "workgraph/start",
-                    "returncode": result.returncode,
-                    "stdout": result.stdout[:500], "stderr": result.stderr[:500],
-                })
-            except Exception as exc:
-                self._send_json({"error": str(exc), "repo": repo_name}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            from driftdriver.speedriftd_state import control_receipt_lock
+
+            with control_receipt_lock(Path(repo_path)):
+                authority = self._dispatch_authority_for_repo(repo_path)
+                if not authority.get("enabled"):
+                    self._send_json(
+                        {"error": "dispatch_not_authorized", "repo": repo_name, "reason": authority["reason"]},
+                        status=HTTPStatus.CONFLICT,
+                    )
+                    return
+                import subprocess as _sp
+                try:
+                    result = _sp.run(  # noqa: S603
+                        ["wg", "service", "start"],
+                        cwd=repo_path, capture_output=True, text=True, timeout=15,
+                    )
+                    self._send_json({
+                        "repo": repo_name, "action": "workgraph/start",
+                        "returncode": result.returncode,
+                        "stdout": result.stdout[:500], "stderr": result.stderr[:500],
+                    })
+                except Exception as exc:
+                    self._send_json({"error": str(exc), "repo": repo_name}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
 
         # --- Workgraph service stop ---

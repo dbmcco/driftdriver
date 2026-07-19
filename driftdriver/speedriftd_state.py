@@ -23,7 +23,14 @@ CONTROL_RECEIPT_LOCK_FILENAME = "control-receipt.lock"
 @contextmanager
 def control_receipt_lock(project_dir: Path) -> Iterator[None]:
     """Serialize control mutations with audit receipt appends."""
-    lock_path = runtime_paths(project_dir)["dir"] / CONTROL_RECEIPT_LOCK_FILENAME
+    try:
+        runtime_dir = runtime_paths(project_dir)["dir"]
+    except FileNotFoundError:
+        # API callers may validate a newly-created .workgraph directory before
+        # its graph file exists; use the same eventual runtime location.
+        wg_dir = project_dir if project_dir.name == ".workgraph" else project_dir / ".workgraph"
+        runtime_dir = wg_dir / "service" / "runtime"
+    lock_path = runtime_dir / CONTROL_RECEIPT_LOCK_FILENAME
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)

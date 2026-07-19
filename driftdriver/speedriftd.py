@@ -288,14 +288,11 @@ def handle_lease_expiry(
                     "lease_owner": str(marker.get("lease_owner") or ""),
                     "prior_key": str(marker.get("prior_key") or ""),
                 }
+                stop_result = _stop_workgraph_service(project_dir)
                 return record_lease_expiry_stop(
                     project_dir,
                     reconciled_decision,
-                    stop_result={
-                        "exit_code": 0,
-                        "stdout": "reconciled interrupted stop reservation",
-                        "stderr": "",
-                    },
+                    stop_result=stop_result,
                     reconciled=True,
                 )
 
