@@ -222,13 +222,16 @@ def handle_lease_expiry(
     *,
     control: Mapping[str, Any],
     previous_control: Mapping[str, Any] | None = None,
+    previous_stop: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Stop an already-running coordinator once on lease expiry transition.
 
     A stop is considered only when the previous runtime snapshot had an active
-    elevated lease and the current control is denied in an elevated mode. This
-    prevents a first cycle from stopping a coordinator for a pre-existing
-    expired lease. The persisted marker makes the resulting stop idempotent.
+    elevated lease and the current control is denied in an elevated mode. A
+    prior failed stop for the same lease is also retried. This prevents a first
+    cycle from stopping a coordinator for a pre-existing expired lease while
+    allowing failures to recover. The persisted marker makes successful stops
+    idempotent.
     """
     from driftdriver.speedriftd_state import (
         evaluate_lease_expiry_stop,
@@ -239,9 +242,17 @@ def handle_lease_expiry(
     previous = previous_control or {}
     previous_mode = str(previous.get("mode") or "").strip().lower()
     current_mode = str(control.get("mode") or "").strip().lower()
+    same_lease_failed = (
+        isinstance(previous_stop, Mapping)
+        and str(previous_stop.get("stopped_lease_key") or "") == _lease_identity(control)
+        and previous_stop.get("stop_exit_code") != 0
+    )
+    prior_active_transition = (
+        previous.get("lease_active") is True
+        and previous_mode in {"supervise", "autonomous"}
+    )
     if (
-        previous.get("lease_active") is not True
-        or previous_mode not in {"supervise", "autonomous"}
+        not (prior_active_transition or same_lease_failed)
         or current_mode not in {"supervise", "autonomous"}
         or _lease_is_active_raw(control)
     ):
@@ -274,6 +285,7 @@ def run_runtime_cycle(project_dir: Path, *, policy: DriftPolicy | None = None) -
         project_dir,
         control=snapshot.get("control") or {},
         previous_control=previous_snapshot.get("control") or {},
+        previous_stop=previous_snapshot.get("last_lease_expiry_stop"),
     )
     if expiry:
         snapshot["last_lease_expiry_stop"] = expiry

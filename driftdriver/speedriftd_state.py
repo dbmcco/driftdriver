@@ -3,18 +3,34 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from driftdriver.policy import DriftPolicy, load_drift_policy
 from driftdriver.workgraph import find_workgraph_dir
 
 CONTROL_MODES = {"manual", "observe", "supervise", "autonomous"}
+CONTROL_RECEIPT_LOCK_FILENAME = "control-receipt.lock"
+
+
+@contextmanager
+def control_receipt_lock(project_dir: Path) -> Iterator[None]:
+    """Serialize control mutations with audit receipt appends."""
+    lock_path = runtime_paths(project_dir)["dir"] / CONTROL_RECEIPT_LOCK_FILENAME
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def directives_allowed_for_mode(mode: str) -> set[str]:
@@ -215,40 +231,41 @@ def write_control_state(
     repo_name = project_dir.name
     policy = policy or load_drift_policy(paths["wg_dir"])
     cfg = dict(getattr(policy, "speedriftd", {}) or {})
-    control = load_control_state(project_dir, policy=policy)
-    now_iso = _iso_now()
-    if mode is not None:
-        normalized_mode = str(mode or "").strip().lower()
-        if normalized_mode in CONTROL_MODES:
-            control["mode"] = normalized_mode
-    if lease_ttl_seconds is not None:
-        control["lease_ttl_seconds"] = max(0, int(lease_ttl_seconds))
-    if release_lease:
-        control["lease_owner"] = ""
-        control["lease_acquired_at"] = ""
-        control["lease_expires_at"] = ""
-        control["lease_active"] = False
-    elif lease_owner is not None:
-        owner = str(lease_owner or "").strip()
-        control["lease_owner"] = owner
-        if owner:
-            control["lease_acquired_at"] = now_iso
-            ttl = int(control.get("lease_ttl_seconds") or 0)
-            control["lease_expires_at"] = _iso_now(time.time() + ttl) if ttl > 0 else ""
-            control["lease_active"] = True
-        else:
+    with control_receipt_lock(project_dir):
+        control = load_control_state(project_dir, policy=policy)
+        now_iso = _iso_now()
+        if mode is not None:
+            normalized_mode = str(mode or "").strip().lower()
+            if normalized_mode in CONTROL_MODES:
+                control["mode"] = normalized_mode
+        if lease_ttl_seconds is not None:
+            control["lease_ttl_seconds"] = max(0, int(lease_ttl_seconds))
+        if release_lease:
+            control["lease_owner"] = ""
             control["lease_acquired_at"] = ""
             control["lease_expires_at"] = ""
             control["lease_active"] = False
-    control["updated_at"] = now_iso
-    control["source"] = source
-    if reason:
-        control["reason"] = reason
-    normalized = _apply_runtime_gate(
-        _normalize_control_state(control, repo_name=repo_name, cfg=cfg)
-    )
-    _write_json(paths["control"], normalized)
-    return normalized
+        elif lease_owner is not None:
+            owner = str(lease_owner or "").strip()
+            control["lease_owner"] = owner
+            if owner:
+                control["lease_acquired_at"] = now_iso
+                ttl = int(control.get("lease_ttl_seconds") or 0)
+                control["lease_expires_at"] = _iso_now(time.time() + ttl) if ttl > 0 else ""
+                control["lease_active"] = True
+            else:
+                control["lease_acquired_at"] = ""
+                control["lease_expires_at"] = ""
+                control["lease_active"] = False
+        control["updated_at"] = now_iso
+        control["source"] = source
+        if reason:
+            control["reason"] = reason
+        normalized = _apply_runtime_gate(
+            _normalize_control_state(control, repo_name=repo_name, cfg=cfg)
+        )
+        _write_json(paths["control"], normalized)
+        return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +375,9 @@ def record_lease_expiry_stop(
         "stop_stdout": str(stop.get("stdout") or "")[:500],
         "stop_stderr": str(stop.get("stderr") or "")[:500],
     }
-    _write_json(paths["dir"] / LEASE_EXPIRY_STOP_FILENAME, record)
+    stop_succeeded = stop.get("exit_code") == 0
+    if stop_succeeded:
+        _write_json(paths["dir"] / LEASE_EXPIRY_STOP_FILENAME, record)
     event_date = now_iso[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     _append_jsonl(
         paths["events_dir"] / f"{event_date}.jsonl",
@@ -366,8 +385,12 @@ def record_lease_expiry_stop(
             "event_id": f"evt_{uuid.uuid4().hex}",
             "ts": now_iso,
             "repo": repo_name,
-            "event_type": "coordinator_stopped_on_lease_expiry",
-            "state": "expired",
+            "event_type": (
+                "coordinator_stopped_on_lease_expiry"
+                if stop_succeeded
+                else "coordinator_stop_failed_on_lease_expiry"
+            ),
+            "state": "expired" if stop_succeeded else "stop_failed",
             "worker_id": "",
             "task_id": "",
             "runtime": "",
@@ -377,6 +400,9 @@ def record_lease_expiry_stop(
                 "mode": record["mode"],
                 "lease_owner": record["lease_owner"],
                 "stop_exit_code": record["stop_exit_code"],
+                "stop_stdout": record["stop_stdout"],
+                "stop_stderr": record["stop_stderr"],
+                "stop_succeeded": stop_succeeded,
             },
         },
     )
@@ -399,7 +425,8 @@ def write_runtime_snapshot(project_dir: Path, snapshot: dict[str, Any]) -> dict[
     paths["results_dir"].mkdir(parents=True, exist_ok=True)
     paths["workers"].touch(exist_ok=True)
     paths["stalls"].touch(exist_ok=True)
-    _write_json(paths["control"], snapshot.get("control") if isinstance(snapshot.get("control"), dict) else {})
+    with control_receipt_lock(project_dir):
+        _write_json(paths["control"], snapshot.get("control") if isinstance(snapshot.get("control"), dict) else {})
 
     _write_json(paths["current"], snapshot)
 

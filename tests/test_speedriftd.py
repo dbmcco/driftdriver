@@ -540,8 +540,43 @@ class LeaseExpiryStopTests(unittest.TestCase):
 
             stop.assert_called_once_with(repo)
             self.assertEqual(snapshot["last_lease_expiry_stop"]["stop_exit_code"], 7)
-            marker = load_lease_expiry_stop(repo)
-            self.assertEqual(marker["stop_stderr"], "stop failed")
+            # Failed stops retain evidence in the runtime snapshot/event but
+            # must not reserve the lease identity for future retries.
+            self.assertEqual(load_lease_expiry_stop(repo), {})
+            events = [
+                json.loads(line)
+                for event_file in runtime_paths(repo)["events_dir"].glob("*.jsonl")
+                for line in event_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            failures = [
+                event for event in events
+                if event.get("event_type") == "coordinator_stop_failed_on_lease_expiry"
+            ]
+            self.assertEqual(len(failures), 1)
+            self.assertEqual(failures[0]["payload"]["stop_stderr"], "stop failed")
+            self.assertFalse(failures[0]["payload"]["stop_succeeded"])
+
+    def test_failed_stop_is_retried_until_success(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+
+            with patch(
+                "driftdriver.speedriftd._stop_workgraph_service",
+                side_effect=[
+                    {"exit_code": 7, "stdout": "", "stderr": "stop failed"},
+                    {"exit_code": 0, "stdout": "stopped", "stderr": ""},
+                ],
+            ) as stop:
+                first = run_runtime_cycle(repo)
+                second = run_runtime_cycle(repo)
+
+            self.assertEqual(stop.call_count, 2)
+            self.assertEqual(first["last_lease_expiry_stop"]["stop_exit_code"], 7)
+            self.assertEqual(second["last_lease_expiry_stop"]["stop_exit_code"], 0)
+            self.assertEqual(load_lease_expiry_stop(repo)["stop_exit_code"], 0)
 
     def test_stop_exception_is_recorded_as_terminal_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -556,9 +591,20 @@ class LeaseExpiryStopTests(unittest.TestCase):
                 snapshot = run_runtime_cycle(repo)
 
             self.assertIsNone(snapshot["last_lease_expiry_stop"]["stop_exit_code"])
-            self.assertEqual(
-                load_lease_expiry_stop(repo)["stop_stderr"], "wg unavailable"
+            self.assertEqual(load_lease_expiry_stop(repo), {})
+            events = [
+                json.loads(line)
+                for event_file in runtime_paths(repo)["events_dir"].glob("*.jsonl")
+                for line in event_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            failure = next(
+                event for event in events
+                if event.get("event_type") == "coordinator_stop_failed_on_lease_expiry"
             )
+            self.assertIsNone(failure["payload"]["stop_exit_code"])
+            self.assertEqual(failure["payload"]["stop_stderr"], "wg unavailable")
+            self.assertFalse(failure["payload"]["stop_succeeded"])
 
     def test_active_to_manual_or_observe_does_not_stop_coordinator(self) -> None:
         for mode in ("manual", "observe"):

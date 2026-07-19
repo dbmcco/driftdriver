@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -81,6 +82,62 @@ def test_fallback_receipt_persists_control_change_before_receipt_write(
     assert rows[0]["control_before"] == before
     assert rows[0]["control_after"] == changed
     assert rows[0]["receipt_status"] == "invalidated"
+
+
+def test_fallback_receipt_lock_covers_actual_append_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".workgraph" / "graph.jsonl").parent.mkdir(parents=True)
+    (tmp_path / ".workgraph" / "graph.jsonl").write_text("", encoding="utf-8")
+    write_control_state(tmp_path, mode="observe", release_lease=True, source="fixture")
+
+    original_append = agency_wrapper._append_jsonl
+    mutation_started = threading.Event()
+    mutation_finished = threading.Event()
+    mutation_thread: threading.Thread | None = None
+
+    def append_at_boundary(path: Path, row: dict[str, object]) -> None:
+        nonlocal mutation_thread
+
+        def mutate_control() -> None:
+            mutation_started.set()
+            write_control_state(
+                tmp_path,
+                mode="autonomous",
+                lease_owner="changed-during-receipt",
+                source="race-test",
+                reason="receipt append boundary",
+            )
+            mutation_finished.set()
+
+        mutation_thread = threading.Thread(target=mutate_control)
+        mutation_thread.start()
+        assert mutation_started.wait(timeout=2)
+        # The shared lock prevents the mutation from overtaking the JSONL write.
+        assert not mutation_finished.wait(timeout=0.05)
+        original_append(path, row)
+
+    monkeypatch.setattr(agency_wrapper, "_append_jsonl", append_at_boundary)
+    receipt = record_agency_pi_fallback_receipt(
+        tmp_path,
+        task_id="task",
+        selected_model="anthropic/claude-sonnet-4-5",
+        fallback_model="anthropic/claude-haiku-4-5",
+        reason="agency unavailable",
+        timestamp="2026-07-18T20:00:00+00:00",
+    )
+    assert mutation_thread is not None
+    mutation_thread.join(timeout=2)
+    assert not mutation_thread.is_alive()
+    assert mutation_finished.is_set()
+
+    receipt_path = runtime_paths(tmp_path)["dir"] / "agency-pi-fallback-receipts.jsonl"
+    rows = [json.loads(line) for line in receipt_path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [receipt]
+    for row in rows:
+        assert row["control_before"] == row["control_after"]
+        assert row.get("receipt_status") != "invalidated"
+    assert load_control_state(tmp_path)["mode"] == "autonomous"
 
 
 def test_fallback_receipt_rejects_non_live_model_without_touching_control(tmp_path: Path) -> None:

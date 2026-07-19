@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from driftdriver.speedriftd_state import _append_jsonl, load_control_state, runtime_paths
+from driftdriver.speedriftd_state import (
+    _append_jsonl,
+    control_receipt_lock,
+    load_control_state,
+    runtime_paths,
+)
 from driftdriver.workgraph import validate_pi_model_spec
 
 
@@ -28,35 +33,39 @@ def record_agency_pi_fallback_receipt(
     """
     selected = validate_pi_model_spec(selected_model)
     fallback = validate_pi_model_spec(fallback_model)
-    before = load_control_state(project_dir)
-    control = {"mode": before["mode"], "lease_active": before["lease_active"]}
-    after = load_control_state(project_dir)
-    control_after = {"mode": after["mode"], "lease_active": after["lease_active"]}
+    # Control writers use this same lock, so the samples and the actual JSONL
+    # append form one audit boundary. A mutation can only happen before or
+    # after the persisted receipt, never in the gap between its evidence.
+    with control_receipt_lock(project_dir):
+        before = load_control_state(project_dir)
+        control = {"mode": before["mode"], "lease_active": before["lease_active"]}
+        after = load_control_state(project_dir)
+        control_after = {"mode": after["mode"], "lease_active": after["lease_active"]}
 
-    receipt: dict[str, Any] = {
-        "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
-        "repo": project_dir.resolve().name,
-        "task_id": str(task_id),
-        "preferred_runtime": "agency",
-        "preferred_model": selected,
-        "fallback_runtime": "pi",
-        "fallback_model": fallback,
-        "reason": str(reason),
-        "control_before": control,
-        "control_after": control_after,
-    }
-    if control_after != control:
-        receipt["receipt_status"] = "invalidated"
+        receipt: dict[str, Any] = {
+            "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+            "repo": project_dir.resolve().name,
+            "task_id": str(task_id),
+            "preferred_runtime": "agency",
+            "preferred_model": selected,
+            "fallback_runtime": "pi",
+            "fallback_model": fallback,
+            "reason": str(reason),
+            "control_before": control,
+            "control_after": control_after,
+        }
+        if control_after != control:
+            receipt["receipt_status"] = "invalidated"
 
-    receipt_path = runtime_paths(project_dir)["dir"] / "agency-pi-fallback-receipts.jsonl"
-    try:
-        _append_jsonl(receipt_path, receipt)
-    except OSError as exc:
-        raise RuntimeError("could not write Agency-to-Pi fallback receipt") from exc
+        receipt_path = runtime_paths(project_dir)["dir"] / "agency-pi-fallback-receipts.jsonl"
+        try:
+            _append_jsonl(receipt_path, receipt)
+        except OSError as exc:
+            raise RuntimeError("could not write Agency-to-Pi fallback receipt") from exc
 
-    if control_after != control:
-        raise RuntimeError("speedriftd control changed while recording Agency fallback")
-    return receipt
+        if control_after != control:
+            raise RuntimeError("speedriftd control changed while recording Agency fallback")
+        return receipt
 
 
 def _executor_guidance(task_id: str) -> str:
