@@ -671,12 +671,16 @@ class EcosystemHubTests(unittest.TestCase):
                     "ready": [],
                 }
             ]
-            with patch("driftdriver.ecosystem_hub._run", return_value=(0, "started", "")) as fake_run:
+            with (
+                patch("driftdriver.ecosystem_hub._run", return_value=(0, "started", "")) as fake_run,
+                patch("driftdriver.speedriftd_state.control_receipt_lock") as lock,
+            ):
                 first = supervise_repo_services(repos_payload=payload, cooldown_seconds=60, max_starts=3)
                 self.assertEqual(first["attempted"], 1)
                 self.assertEqual(first["started"], 1)
                 self.assertEqual(first["failed"], 0)
                 self.assertEqual(fake_run.call_count, 1)
+                lock.assert_called_once_with(repo)
 
                 second = supervise_repo_services(repos_payload=payload, cooldown_seconds=60, max_starts=3)
                 self.assertEqual(second["attempted"], 0)

@@ -221,6 +221,23 @@ def _subprocess_env(
     return env
 
 
+def _start_command(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.Popen:
+    """Start a command without waiting, so admission locks stay short-lived."""
+    return subprocess.Popen(  # noqa: S603
+        _resolve_command(cmd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=str(cwd) if cwd else None,
+        env=_subprocess_env(cwd, extra_env),
+    )
+
+
 def _run_command(
     cmd: list[str],
     *,
@@ -746,21 +763,29 @@ def dispatch_task(
                     status="blocked",
                     response=authority["reason"],
                 )
-            # Fallback: direct CLI execution (no session-driver)
+            # Fallback: direct CLI execution (no session-driver). Start the
+            # process under the lock, then wait after releasing it.
             prompt = build_worker_prompt(task, project_dir)
-            result = _run_command(
-                [
-                    "claude",
-                    "--print",
-                    "--dangerously-skip-permissions",
-                    "--no-session-persistence",
-                    "-p",
-                    prompt,
-                ],
+            command = [
+                "claude",
+                "--print",
+                "--dangerously-skip-permissions",
+                "--no-session-persistence",
+                "-p",
+                prompt,
+            ]
+            process = _start_command(
+                command,
                 cwd=project_dir,
-                timeout=run.config.worker_timeout + 60,
                 extra_env=extra_env,
             )
+        stdout, _stderr = process.communicate(timeout=run.config.worker_timeout + 60)
+        result = subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout=stdout,
+            stderr=_stderr,
+        )
         ctx.response = result.stdout
         ctx.status = "completed" if result.returncode == 0 else "failed"
     else:
@@ -923,7 +948,14 @@ def _run_peer_dispatch(
         if not task:
             continue
 
-        if not run.config.dry_run:
+        if run.config.dry_run:
+            print(f"[dry-run] Would dispatch to peer {assignment.peer_name}: {task['id']}")
+            dispatched.append(task["id"])
+            continue
+
+        from driftdriver.speedriftd_state import control_receipt_lock
+
+        with control_receipt_lock(project_dir):
             authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
                 print(
@@ -931,13 +963,7 @@ def _run_peer_dispatch(
                     f"{authority['reason']}"
                 )
                 return dispatched
-
-        if run.config.dry_run:
-            print(f"[dry-run] Would dispatch to peer {assignment.peer_name}: {task['id']}")
-            dispatched.append(task["id"])
-            continue
-
-        remote_id = _dispatch_to_peer(project_dir, assignment.peer_name, task, peer_registry)
+            remote_id = _dispatch_to_peer(project_dir, assignment.peer_name, task, peer_registry)
         if remote_id:
             print(f"[autopilot] Dispatched to peer {assignment.peer_name}: {task['id']} → {remote_id}")
             ctx = WorkerContext(

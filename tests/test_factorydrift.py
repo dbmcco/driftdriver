@@ -564,9 +564,13 @@ class FactoryDriftTests(unittest.TestCase):
             def _fake_run(_cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
                 return responses.pop(0)
 
-            with patch("driftdriver.factorydrift.subprocess.run", side_effect=_fake_run), patch(
-                "driftdriver.factorydrift.load_control_state",
-                return_value={"mode": "autonomous", "lease_owner": "factory", "lease_active": True},
+            with (
+                patch("driftdriver.factorydrift.subprocess.run", side_effect=_fake_run),
+                patch(
+                    "driftdriver.factorydrift.load_control_state",
+                    return_value={"mode": "autonomous", "lease_owner": "factory", "lease_active": True},
+                ),
+                patch("driftdriver.speedriftd_state.control_receipt_lock") as lock,
             ):
                 execution = execute_factory_cycle(
                     cycle=cycle,
@@ -580,6 +584,7 @@ class FactoryDriftTests(unittest.TestCase):
 
             self.assertEqual(execution["executed"], 2)
             self.assertEqual(execution["failed"], 0)
+            lock.assert_called_once_with(repo)
             self.assertEqual(cycle["execution_status"], "executed")
             self.assertEqual(cycle["outcomes"]["executed_actions"], 2)
 

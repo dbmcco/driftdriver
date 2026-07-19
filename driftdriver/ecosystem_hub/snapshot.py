@@ -1161,6 +1161,54 @@ def write_snapshot_once(
     return snapshot
 
 
+def _run_authorized_service_start(
+    *,
+    repo_path: Path,
+    repo_name: str,
+    in_progress: list[Any],
+    ready: list[Any],
+    directive_log: DirectiveLog | None,
+) -> dict[str, Any]:
+    """Recheck authority and start a service under one control lock."""
+    from driftdriver.speedriftd_state import control_receipt_lock, dispatch_authority, load_control_state
+
+    with control_receipt_lock(repo_path):
+        try:
+            authority = dispatch_authority(load_control_state(repo_path))
+        except Exception:
+            authority = {"enabled": False, "reason": "control state unavailable"}
+        if not authority.get("enabled"):
+            return {"authorized": False, "reason": authority["reason"]}
+
+        if directive_log is not None:
+            from driftdriver.directives import Action, Directive
+            from driftdriver.executor_shim import ExecutorShim
+
+            directive = Directive(
+                source="ecosystem_hub",
+                repo=repo_name,
+                action=Action.START_SERVICE,
+                params={"repo": str(repo_path / ".workgraph")},
+                reason=f"service not running with {len(in_progress)} in-progress, {len(ready)} ready tasks",
+            )
+            wg_dir = repo_path / ".workgraph"
+            shim = ExecutorShim(wg_dir=wg_dir, log=directive_log, timeout=15.0)
+            shim_result = shim.execute(directive)
+            return {
+                "authorized": True,
+                "rc": 0 if shim_result == "completed" else 1,
+                "out": shim_result,
+                "err": "",
+            }
+
+        rc, out, err = _run_cmd(
+            ["wg", "--dir", str(repo_path / ".workgraph"), "service", "start"],
+            cwd=repo_path,
+            timeout=15.0,
+        )
+        return {"authorized": True, "rc": rc, "out": out, "err": err}
+
+
 def supervise_repo_services(
     *,
     repos_payload: list[dict[str, Any]],
@@ -1226,29 +1274,25 @@ def supervise_repo_services(
         _SUPERVISOR_LAST_ATTEMPT[key] = now
         attempted += 1
 
-        if directive_log is not None:
-            from driftdriver.directives import Action, Directive
-            from driftdriver.executor_shim import ExecutorShim
-
-            directive = Directive(
-                source="ecosystem_hub",
-                repo=repo_name,
-                action=Action.START_SERVICE,
-                params={"repo": str(repo_path / ".workgraph")},
-                reason=f"service not running with {len(in_progress)} in-progress, {len(ready)} ready tasks",
+        start_result = _run_authorized_service_start(
+            repo_path=repo_path,
+            repo_name=repo_name,
+            in_progress=in_progress,
+            ready=ready,
+            directive_log=directive_log,
+        )
+        if not start_result["authorized"]:
+            denied_rows.append(
+                {
+                    "repo": repo_name,
+                    "path": str(repo_path),
+                    "reason": f"service start denied: {start_result['reason']}",
+                }
             )
-            wg_dir = repo_path / ".workgraph"
-            shim = ExecutorShim(wg_dir=wg_dir, log=directive_log, timeout=15.0)
-            shim_result = shim.execute(directive)
-            rc = 0 if shim_result == "completed" else 1
-            out = shim_result
-            err = ""
-        else:
-            rc, out, err = _run_cmd(
-                ["wg", "--dir", str(repo_path / ".workgraph"), "service", "start"],
-                cwd=repo_path,
-                timeout=15.0,
-            )
+            continue
+        rc = int(start_result["rc"])
+        out = str(start_result["out"])
+        err = str(start_result["err"])
         text = f"{out}\n{err}".strip().lower()
         ok = rc == 0 or "already running" in text
         if ok:

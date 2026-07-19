@@ -352,12 +352,14 @@ def evaluate_lease_expiry_stop(
     mode = str(control.get("mode") or "").strip().lower()
     if mode not in {"supervise", "autonomous"}:
         return None
-    if control.get("lease_ttl_valid") is False or not _coerce_lease_ttl(control.get("lease_ttl_seconds"))[1]:
-        return None
+    malformed_ttl = (
+        control.get("lease_ttl_valid") is False
+        or not _coerce_lease_ttl(control.get("lease_ttl_seconds"))[1]
+    )
     owner = str(control.get("lease_owner") or "").strip()
     if not owner:
         return None
-    if _lease_is_active_raw(control):
+    if not malformed_ttl and _lease_is_active_raw(control):
         return None
     lease_key = _lease_identity(control)
     prior_key = str((marker or {}).get("stopped_lease_key") or "")
@@ -365,7 +367,7 @@ def evaluate_lease_expiry_stop(
         return None
     return {
         "lease_key": lease_key,
-        "reason": "expired_lease",
+        "reason": "malformed_lease_ttl" if malformed_ttl else "expired_lease",
         "mode": mode,
         "lease_owner": owner,
         "prior_key": prior_key,

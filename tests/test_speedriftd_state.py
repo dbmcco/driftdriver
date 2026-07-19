@@ -623,7 +623,9 @@ class TestNormalizeControlState:
 
         assert control["lease_active"] is False
         assert dispatch_authority(control)["enabled"] is False
-        assert evaluate_lease_expiry_stop(control) is None
+        decision = evaluate_lease_expiry_stop(control)
+        assert decision is not None
+        assert decision["reason"] == "malformed_lease_ttl"
 
     def test_empty_lease_owner_clears_lease_fields(self) -> None:
         result = _normalize_control_state(

@@ -161,6 +161,7 @@ class RunPeerDispatchTests(unittest.TestCase):
                 "driftdriver.project_autopilot._dispatch_authority",
                 side_effect=[permitted, denied],
             ) as mock_authority,
+            patch("driftdriver.speedriftd_state.control_receipt_lock") as lock,
             patch(
                 "driftdriver.project_autopilot._dispatch_to_peer",
                 return_value="remote-1",
@@ -170,6 +171,7 @@ class RunPeerDispatchTests(unittest.TestCase):
 
         self.assertEqual(dispatched, ["t1"])
         self.assertEqual(mock_authority.call_count, 2)
+        self.assertEqual(lock.call_count, 2)
         mock_dispatch.assert_called_once()
         self.assertEqual(run.completed_tasks, {"t1"})
         self.assertNotIn("t2", run.workers)

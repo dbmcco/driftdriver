@@ -1263,15 +1263,18 @@ def execute_factory_cycle(
             attempts.append(row)
 
         if kind == "restart_workgraph_service":
-            authority = _dispatch_authority(repo_path)
-            if not authority["enabled"]:
-                _done("blocked", reason=f"service start denied: {authority['reason']}")
-                continue
-            rc, out, err = _run_cmd(
-                ["wg", "--dir", str(repo_path / ".workgraph"), "service", "start"],
-                cwd=repo_path,
-                timeout=20.0,
-            )
+            from driftdriver.speedriftd_state import control_receipt_lock
+
+            with control_receipt_lock(repo_path):
+                authority = _dispatch_authority(repo_path)
+                if not authority["enabled"]:
+                    _done("blocked", reason=f"service start denied: {authority['reason']}")
+                    continue
+                rc, out, err = _run_cmd(
+                    ["wg", "--dir", str(repo_path / ".workgraph"), "service", "start"],
+                    cwd=repo_path,
+                    timeout=20.0,
+                )
             text = f"{out}\n{err}".lower()
             ok = rc == 0 or "already running" in text
             if ok:

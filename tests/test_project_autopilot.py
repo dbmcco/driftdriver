@@ -180,6 +180,53 @@ class TestSessionDriverLifecycle(unittest.TestCase):
         lock.assert_called()
         shim.return_value.execute.assert_called_once()
 
+    def test_fallback_worker_releases_control_lock_before_waiting(self):
+        class Lock:
+            def __init__(self) -> None:
+                self.released = False
+
+            def __enter__(self) -> "Lock":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                self.released = True
+
+        class Process:
+            returncode = 0
+
+            def communicate(self, *, timeout: int) -> tuple[str, str]:
+                self.assertTrue(lock.released)
+                return "done", ""
+
+            @staticmethod
+            def assertTrue(value: bool) -> None:
+                if not value:
+                    raise AssertionError("control lock remained held during worker wait")
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            run = AutopilotRun(config=AutopilotConfig(project_dir=repo))
+            task = {"id": "t1", "title": "Task 1"}
+            active = {
+                "mode": "autonomous",
+                "lease_owner": "agent-a",
+                "lease_active": True,
+            }
+            lock = Lock()
+            process = Process()
+            with (
+                patch("driftdriver.project_autopilot.load_control_state", return_value=active),
+                patch("driftdriver.speedriftd_state.control_receipt_lock", return_value=lock),
+                patch("driftdriver.project_autopilot.ExecutorShim") as shim,
+                patch("driftdriver.project_autopilot.subprocess.Popen", return_value=process) as popen,
+            ):
+                ctx = dispatch_task(task, repo, None, run)
+
+        self.assertEqual(ctx.status, "completed")
+        shim.return_value.execute.assert_called_once()
+        popen.assert_called_once()
+
     def test_dispatch_denies_when_control_state_is_unavailable_before_claim_or_launch(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)
