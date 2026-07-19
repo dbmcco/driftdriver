@@ -38,8 +38,15 @@ def parse_workgraph_status(value: str | dict[str, Any]) -> dict[str, Any]:
     payload = _json_object(value, label="status")
     required = {"service", "coordinator", "agents", "tasks", "recent"}
     missing = required - payload.keys()
-    if missing or not all(isinstance(payload[key], (dict, list)) for key in required):
+    if missing:
         raise ValueError(f"Workgraph status missing required sections: {sorted(missing)}")
+    if (
+        not isinstance(payload["coordinator"], dict)
+        or not isinstance(payload["agents"], dict)
+        or not isinstance(payload["tasks"], dict)
+        or not isinstance(payload["recent"], list)
+    ):
+        raise ValueError("Workgraph status sections have invalid types")
     coordinator = payload["coordinator"]
     if not {"executor", "model"} <= coordinator.keys():
         raise ValueError("Workgraph status coordinator lacks executor/model")

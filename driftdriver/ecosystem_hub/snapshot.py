@@ -1176,6 +1176,7 @@ def supervise_repo_services(
     checked = 0
     candidates = 0
     attempt_rows: list[dict[str, Any]] = []
+    denied_rows: list[dict[str, Any]] = []
 
     for row in repos_payload:
         if attempted >= max(1, max_starts):
@@ -1199,8 +1200,6 @@ def supervise_repo_services(
         ready = row.get("ready") if isinstance(row.get("ready"), list) else []
         if not in_progress and not ready:
             continue
-        candidates += 1
-
         try:
             from driftdriver.speedriftd_state import dispatch_authority, load_control_state
             ctrl = load_control_state(repo_path)
@@ -1208,17 +1207,16 @@ def supervise_repo_services(
         except Exception:
             authority = {"enabled": False, "reason": "control state unavailable"}
         if not authority.get("enabled"):
-            attempt_rows.append(
+            denied_rows.append(
                 {
                     "repo": repo_name,
                     "path": str(repo_path),
-                    "ok": False,
-                    "skipped": True,
                     "reason": f"service start denied: {authority['reason']}",
                 }
             )
             continue
 
+        candidates += 1
         key = str(repo_path.resolve())
         last_attempt = _SUPERVISOR_LAST_ATTEMPT.get(key, 0.0)
         if now - last_attempt < max(1, cooldown_seconds):
@@ -1280,6 +1278,7 @@ def supervise_repo_services(
         "cooldown_skipped": cooldown_skipped,
         "last_tick_at": _iso_now(),
         "attempts": attempt_rows[:20],
+        "denied": denied_rows[:20],
     }
 
 

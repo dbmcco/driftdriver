@@ -23,6 +23,7 @@ from driftdriver.workgraph import load_workgraph
 
 from driftdriver.speedriftd_state import (
     _iso_now,
+    _lease_is_active_raw,
     load_control_state,
     load_runtime_snapshot,
     runtime_paths,
@@ -238,10 +239,10 @@ def handle_lease_expiry(
     previous_mode = str(previous.get("mode") or "").strip().lower()
     current_mode = str(control.get("mode") or "").strip().lower()
     if (
-        previous.get("lease_active") is not True
+        not _lease_is_active_raw(previous)
         or previous_mode not in {"supervise", "autonomous"}
         or current_mode not in {"supervise", "autonomous"}
-        or control.get("lease_active") is not False
+        or _lease_is_active_raw(control)
     ):
         return None
 

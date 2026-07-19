@@ -52,6 +52,22 @@ def record_agency_pi_fallback_receipt(
     after = load_control_state(project_dir)
     control_after = {"mode": after["mode"], "lease_active": after["lease_active"]}
     if control_after != control:
+        correction = dict(receipt)
+        correction.update(
+            {
+                "event_type": "agency_pi_fallback_receipt_correction",
+                "receipt_status": "invalidated",
+                "correction_for_timestamp": receipt["timestamp"],
+                "control_after": control_after,
+            }
+        )
+        try:
+            _append_jsonl(receipt_path, correction)
+        except OSError as exc:
+            raise RuntimeError(
+                "speedriftd control changed while recording Agency fallback; "
+                "could not persist receipt correction"
+            ) from exc
         raise RuntimeError("speedriftd control changed while recording Agency fallback")
     return receipt
 

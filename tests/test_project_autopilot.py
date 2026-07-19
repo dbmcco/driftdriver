@@ -506,6 +506,34 @@ class TestDryRun(unittest.TestCase):
         self.assertEqual(result.completed_tasks, set())
         mock_ready.assert_not_called()
 
+    @patch("driftdriver.project_autopilot.dispatch_task")
+    @patch("driftdriver.project_autopilot.load_control_state")
+    @patch("driftdriver.project_autopilot.get_ready_tasks", return_value=[{"id": "t1", "title": "Task 1"}])
+    def test_denied_dispatch_is_visible_and_not_marked_complete(self, mock_ready, mock_control, mock_dispatch):
+        mock_control.return_value = {
+            "mode": "autonomous",
+            "lease_owner": "agent-a",
+            "lease_active": True,
+        }
+        mock_dispatch.return_value = WorkerContext(
+            task_id="t1",
+            task_title="Task 1",
+            worker_name="ap-t1",
+            status="blocked",
+            response="lease is not active",
+        )
+        run = AutopilotRun(
+            config=AutopilotConfig(project_dir=Path("/project"), no_peer_dispatch=True)
+        )
+
+        with patch("builtins.print") as mock_print:
+            result = run_autopilot_loop(run)
+
+        self.assertEqual(result.completed_tasks, set())
+        output = " ".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn("Dispatch denied/blocked", output)
+        self.assertNotIn("Dispatching", output)
+
     @patch("driftdriver.peer_registry.subprocess.run")
     @patch("driftdriver.project_autopilot.get_ready_tasks")
     def test_dry_run_does_not_dispatch(self, mock_ready, mock_peer_run):

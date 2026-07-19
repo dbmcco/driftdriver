@@ -899,10 +899,9 @@ def _run_peer_dispatch(
             dispatched.append(task["id"])
             continue
 
-        print(f"[autopilot] Dispatching to peer {assignment.peer_name}: {task['id']}")
         remote_id = _dispatch_to_peer(project_dir, assignment.peer_name, task, peer_registry)
         if remote_id:
-            print(f"[autopilot] Peer {assignment.peer_name} accepted: {task['id']} → {remote_id}")
+            print(f"[autopilot] Dispatched to peer {assignment.peer_name}: {task['id']} → {remote_id}")
             ctx = WorkerContext(
                 task_id=task["id"],
                 task_title=task.get("title", ""),
@@ -913,7 +912,7 @@ def _run_peer_dispatch(
             run.completed_tasks.add(task["id"])
             dispatched.append(task["id"])
         else:
-            print(f"[autopilot] Peer dispatch failed for {task['id']}, will try locally")
+            print(f"[autopilot] Peer dispatch denied for {task['id']}, will try locally")
 
     return dispatched
 
@@ -963,6 +962,7 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
     if not run.config.dry_run:
         authority = _dispatch_authority(project_dir)
         if not authority["enabled"]:
+            print(f"[autopilot] Dispatch denied/blocked: {authority['reason']}")
             return run
 
     scripts_dir = discover_session_driver()
@@ -983,6 +983,7 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
         if not run.config.dry_run:
             authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
+                print(f"[autopilot] Dispatch denied/blocked: {authority['reason']}")
                 return run
 
         ready = get_ready_tasks(project_dir)
@@ -1005,6 +1006,7 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
             if not run.config.dry_run:
                 authority = _dispatch_authority(project_dir)
                 if not authority["enabled"]:
+                    print(f"[autopilot] Dispatch denied/blocked: {authority['reason']}")
                     return run
             dispatched_ids = _run_peer_dispatch(run, actionable, peer_registry)
             peer_dispatched = set(dispatched_ids)
@@ -1016,6 +1018,7 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
         if not run.config.dry_run:
             authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
+                print(f"[autopilot] Dispatch denied/blocked: {authority['reason']}")
                 return run
 
         for task in batch:
@@ -1024,11 +1027,13 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
                 run.completed_tasks.add(task["id"])
                 continue
 
-            print(f"[autopilot] Dispatching: {task['id']} — {task.get('title')}")
             ctx = dispatch_task(task, project_dir, scripts_dir, run)
 
             if ctx.status == "blocked":
+                print(f"[autopilot] Dispatch denied/blocked: {task['id']} — {ctx.response}")
                 return run
+
+            print(f"[autopilot] Dispatched: {task['id']} — {task.get('title')}")
 
             if ctx.status == "failed":
                 run.failed_tasks.add(task["id"])

@@ -4,7 +4,40 @@ from __future__ import annotations
 
 import pytest
 
-from driftdriver.workgraph import find_workgraph_dir, load_workgraph
+from driftdriver.workgraph import find_workgraph_dir, load_workgraph, parse_workgraph_status
+
+
+def test_parse_workgraph_status_requires_expected_section_types():
+    status = {
+        "service": {},
+        "coordinator": {"executor": "pi", "model": "zai/glm-5.2"},
+        "agents": {},
+        "tasks": {},
+        "recent": [],
+    }
+    assert parse_workgraph_status(status) == status
+
+    for section, value in (
+        ("coordinator", []),
+        ("agents", []),
+        ("tasks", []),
+        ("recent", {}),
+    ):
+        invalid = {**status, section: value}
+        with pytest.raises(ValueError, match="invalid types"):
+            parse_workgraph_status(invalid)
+
+
+def test_parse_workgraph_status_rejects_coordinator_without_required_keys():
+    status = {
+        "service": {},
+        "coordinator": {"executor": "pi"},
+        "agents": {},
+        "tasks": {},
+        "recent": [],
+    }
+    with pytest.raises(ValueError, match="executor/model"):
+        parse_workgraph_status(status)
 
 
 def test_load_workgraph_happy_path(tmp_path):

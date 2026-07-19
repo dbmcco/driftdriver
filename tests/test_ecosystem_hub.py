@@ -769,9 +769,10 @@ class EcosystemHubTests(unittest.TestCase):
                 )
 
         self.assertEqual(result["attempted"], 0)
-        self.assertEqual(result["restart_candidates"], 1)
+        self.assertEqual(result["restart_candidates"], 0)
         self.assertEqual(result["cooldown_skipped"], 0)
-        self.assertEqual(result["attempts"][0]["reason"], "service start denied: lease is not active")
+        assert result["attempts"] == []
+        self.assertEqual(result["denied"][0]["reason"], "service start denied: lease is not active")
         run.assert_not_called()
         execute.assert_not_called()
 

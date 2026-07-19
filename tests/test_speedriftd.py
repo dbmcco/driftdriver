@@ -580,6 +580,30 @@ class LeaseExpiryStopTests(unittest.TestCase):
             ]
             self.assertEqual(len(stop_calls), 2)
 
+    def test_handle_lease_expiry_uses_raw_previous_lease_state(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            expired = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+            previous = {
+                "mode": "autonomous",
+                "lease_owner": "supervisor",
+                "lease_ttl_seconds": 0,
+                "lease_expires_at": "",
+                "lease_active": False,
+            }
+            current = {
+                "mode": "autonomous",
+                "lease_owner": "supervisor",
+                "lease_ttl_seconds": 60,
+                "lease_expires_at": expired,
+                "lease_active": True,
+            }
+            with patch("driftdriver.speedriftd._stop_workgraph_service") as stop:
+                handle_lease_expiry(repo, control=current, previous_control=previous)
+
+            stop.assert_called_once_with(repo)
+
     def test_handle_lease_expiry_returns_none_without_decision(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)
