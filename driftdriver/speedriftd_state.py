@@ -156,12 +156,16 @@ def _normalize_control_state(raw: dict[str, Any], *, repo_name: str, cfg: dict[s
 def dispatch_authority(control: Mapping[str, Any]) -> dict[str, Any]:
     mode = str(control.get("mode") or "observe").strip().lower()
     lease_owner = str(control.get("lease_owner") or "").strip()
-    lease_active = bool(control.get("lease_active"))
+    raw_lease_active = control.get("lease_active")
+    lease_active = raw_lease_active is True
     if mode not in {"supervise", "autonomous"}:
         reason = "mode does not permit dispatch"
         enabled = False
     elif not lease_owner:
         reason = "lease owner is missing"
+        enabled = False
+    elif not isinstance(raw_lease_active, bool):
+        reason = "lease_active value is malformed"
         enabled = False
     elif not lease_active:
         reason = "lease is not active"

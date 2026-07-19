@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import subprocess
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -199,6 +201,20 @@ def _stop_workgraph_service(project_dir: Path) -> dict[str, Any]:
         return {"exit_code": None, "stdout": "", "stderr": str(exc)[:200]}
 
 
+@contextmanager
+def _lease_expiry_lock(project_dir: Path):
+    """Serialize expiry stop reservation, command, and evidence recording."""
+    paths = runtime_paths(project_dir)
+    lock_path = paths["dir"] / "lease-expiry-stop.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def handle_lease_expiry(
     project_dir: Path,
     *,
@@ -229,13 +245,14 @@ def handle_lease_expiry(
     ):
         return None
 
-    marker = load_lease_expiry_stop(project_dir)
-    decision = evaluate_lease_expiry_stop(control, marker)
-    if not decision:
-        return None
+    with _lease_expiry_lock(project_dir):
+        marker = load_lease_expiry_stop(project_dir)
+        decision = evaluate_lease_expiry_stop(control, marker)
+        if not decision:
+            return None
 
-    stop_result = _stop_workgraph_service(project_dir)
-    return record_lease_expiry_stop(project_dir, decision, stop_result=stop_result)
+        stop_result = _stop_workgraph_service(project_dir)
+        return record_lease_expiry_stop(project_dir, decision, stop_result=stop_result)
 
 
 def run_runtime_cycle(project_dir: Path, *, policy: DriftPolicy | None = None) -> dict[str, Any]:

@@ -369,6 +369,19 @@ def test_dispatch_authority_denies_missing_owner_and_malformed_mode() -> None:
     })["reason"] == "mode does not permit dispatch"
 
 
+@pytest.mark.parametrize("lease_active", ["false", "0", 1, 0, None, []])
+def test_dispatch_authority_denies_malformed_lease_active(lease_active: object) -> None:
+    result = dispatch_authority({
+        "mode": "supervise", "lease_owner": "agent-a", "lease_active": lease_active,
+    })
+    assert result == {
+        "enabled": False,
+        "mode": "supervise",
+        "lease_active": False,
+        "reason": "lease_active value is malformed",
+    }
+
+
 def test_runtime_gate_uses_dispatch_authority() -> None:
     control = {
         "mode": "supervise",

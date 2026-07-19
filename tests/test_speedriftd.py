@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -403,6 +404,65 @@ class LeaseExpiryStopTests(unittest.TestCase):
                 if "stop" in (c.args[0] if c.args else [])
             ]
             self.assertEqual(len(stop_calls), 1)
+
+    def test_concurrent_runtime_cycles_stop_coordinator_once(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+            active = {"mode": "autonomous", "lease_owner": "speedriftd", "lease_active": True}
+            expired = {
+                "mode": "autonomous",
+                "lease_owner": "speedriftd",
+                "lease_active": False,
+                "lease_ttl_seconds": 120,
+                "lease_acquired_at": "2024-01-01T00:00:00+00:00",
+                "lease_expires_at": "2024-01-01T00:01:00+00:00",
+            }
+            entered = threading.Barrier(2)
+            stop_started = threading.Event()
+            release_stop = threading.Event()
+            calls: list[Path] = []
+
+            def stop(repo_path: Path) -> dict[str, object]:
+                calls.append(repo_path)
+                stop_started.set()
+                self.assertTrue(release_stop.wait(timeout=2))
+                return {"exit_code": 0, "stdout": "stopped", "stderr": ""}
+
+            def cycle() -> None:
+                entered.wait(timeout=2)
+                run_runtime_cycle(repo)
+
+            with (
+                patch("driftdriver.speedriftd.load_runtime_snapshot", return_value={"control": active}),
+                patch("driftdriver.speedriftd.collect_runtime_snapshot", return_value={"control": expired}),
+                patch("driftdriver.speedriftd.write_runtime_snapshot", side_effect=lambda _repo, snapshot: snapshot),
+                patch("driftdriver.speedriftd._stop_workgraph_service", side_effect=stop),
+            ):
+                threads = [threading.Thread(target=cycle) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                self.assertTrue(stop_started.wait(timeout=2))
+                # Both cycles have started, but the second cannot pass the
+                # inter-process critical section while the first stop is held.
+                self.assertEqual(len(calls), 1)
+                release_stop.set()
+                for thread in threads:
+                    thread.join(timeout=2)
+                    self.assertFalse(thread.is_alive())
+
+            self.assertEqual(calls, [repo])
+            events = [
+                json.loads(line)
+                for event_file in runtime_paths(repo)["events_dir"].glob("*.jsonl")
+                for line in event_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(
+                sum(event.get("event_type") == "coordinator_stopped_on_lease_expiry" for event in events),
+                1,
+            )
 
     def test_stop_failure_is_recorded_as_terminal_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:

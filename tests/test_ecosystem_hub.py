@@ -802,6 +802,55 @@ class EcosystemHubTests(unittest.TestCase):
                     self.assertEqual(body, {"error": "dispatch_not_authorized", "repo": "demo", "reason": reason})
                     run.assert_not_called()
 
+    def test_api_service_start_control_failure_uses_stable_denial_reason(self) -> None:
+        from http.server import ThreadingHTTPServer
+
+        from driftdriver.ecosystem_hub.api import _handler_factory
+        from driftdriver.ecosystem_hub.websocket import LiveStreamHub
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "demo"
+            repo.mkdir()
+            (repo / ".workgraph").mkdir()
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(
+                json.dumps({"repos": [{"name": "demo", "path": str(repo)}]}),
+                encoding="utf-8",
+            )
+            stop_event = threading.Event()
+            handler = _handler_factory(snapshot_path, snapshot_path, LiveStreamHub(stop_event))
+            server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                request = Request(
+                    f"http://127.0.0.1:{server.server_address[1]}/api/repo/demo/start",
+                    method="POST",
+                )
+                with patch(
+                    "driftdriver.speedriftd_state.load_control_state",
+                    side_effect=RuntimeError("cannot read /private/secret/control.json"),
+                ), patch("subprocess.run") as run:
+                    with self.assertRaises(HTTPError) as raised:
+                        urlopen(request, timeout=5)
+                    self.assertEqual(raised.exception.code, 409)
+                    body = json.loads(raised.exception.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+        self.assertEqual(
+            body,
+            {
+                "error": "dispatch_not_authorized",
+                "repo": "demo",
+                "reason": "control state unavailable",
+            },
+        )
+        run.assert_not_called()
+
     def test_api_service_start_preserves_active_lease_behavior(self) -> None:
         from http.server import ThreadingHTTPServer
 

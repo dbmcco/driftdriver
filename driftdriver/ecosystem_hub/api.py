@@ -236,8 +236,8 @@ class _HubHandler(BaseHTTPRequestHandler):
         try:
             from driftdriver.speedriftd_state import dispatch_authority, load_control_state
             return dispatch_authority(load_control_state(Path(repo_path)))
-        except Exception as exc:
-            return {"enabled": False, "reason": f"control unavailable: {exc}", "mode": "unknown"}
+        except Exception:
+            return {"enabled": False, "reason": "control state unavailable", "mode": "unknown"}
 
     def _pg_config(self) -> "PostgresConfig":
         from driftdriver.intelligence.db import PostgresConfig as _PgConfig
