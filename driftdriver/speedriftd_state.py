@@ -77,6 +77,16 @@ def _parse_iso_timestamp(raw: str) -> float:
         return 0.0
 
 
+def _coerce_lease_ttl(raw: Any) -> tuple[int, bool]:
+    """Return a non-negative TTL and whether the raw value was valid."""
+    if raw is None or raw == "":
+        return 0, True
+    try:
+        return max(0, int(raw)), True
+    except (TypeError, ValueError):
+        return 0, False
+
+
 def runtime_paths(project_dir: Path) -> dict[str, Path]:
     wg_dir = find_workgraph_dir(project_dir)
     base = wg_dir / "service" / "runtime"
@@ -129,6 +139,7 @@ def _default_control(repo_name: str, cfg: dict[str, Any]) -> dict[str, Any]:
         "lease_owner": "",
         "lease_acquired_at": "",
         "lease_ttl_seconds": int(cfg.get("default_lease_ttl_seconds", 0) or 0),
+        "lease_ttl_valid": True,
         "lease_expires_at": "",
         "lease_active": False,
         "source": "default",
@@ -148,11 +159,16 @@ def _normalize_control_state(raw: dict[str, Any], *, repo_name: str, cfg: dict[s
     control["interactive_service_start"] = bool(control["dispatch_enabled"])
     control["repo"] = repo_name
     control["lease_owner"] = str(control.get("lease_owner") or "").strip()
-    control["lease_ttl_seconds"] = max(0, int(control.get("lease_ttl_seconds") or 0))
+    ttl, ttl_valid = _coerce_lease_ttl(control.get("lease_ttl_seconds"))
+    control["lease_ttl_seconds"] = ttl
+    control["lease_ttl_valid"] = ttl_valid
     acquired = str(control.get("lease_acquired_at") or "").strip()
     expires = str(control.get("lease_expires_at") or "").strip()
     expires_ts = _parse_iso_timestamp(expires)
-    if control["lease_owner"]:
+    if not ttl_valid:
+        control["lease_active"] = False
+        control["reason"] = "malformed lease_ttl_seconds"
+    elif control["lease_owner"]:
         if control["lease_ttl_seconds"] <= 0:
             control["lease_active"] = True
         else:
@@ -179,6 +195,9 @@ def dispatch_authority(control: Mapping[str, Any]) -> dict[str, Any]:
         enabled = False
     elif not lease_owner:
         reason = "lease owner is missing"
+        enabled = False
+    elif control.get("lease_ttl_valid") is False or not _coerce_lease_ttl(control.get("lease_ttl_seconds"))[1]:
+        reason = "lease_ttl_seconds value is malformed"
         enabled = False
     elif not isinstance(raw_lease_active, bool):
         reason = "lease_active value is malformed"
@@ -291,7 +310,11 @@ def _lease_is_active_raw(control: Mapping[str, Any]) -> bool:
     owner = str(control.get("lease_owner") or "").strip()
     if not owner:
         return False
-    ttl = max(0, int(control.get("lease_ttl_seconds") or 0))
+    if control.get("lease_ttl_valid") is False:
+        return False
+    ttl, ttl_valid = _coerce_lease_ttl(control.get("lease_ttl_seconds"))
+    if not ttl_valid:
+        return False
     if ttl <= 0:
         return True
     return _parse_iso_timestamp(str(control.get("lease_expires_at") or "")) > time.time()
@@ -322,6 +345,8 @@ def evaluate_lease_expiry_stop(
     mode = str(control.get("mode") or "").strip().lower()
     if mode not in {"supervise", "autonomous"}:
         return None
+    if control.get("lease_ttl_valid") is False or not _coerce_lease_ttl(control.get("lease_ttl_seconds"))[1]:
+        return None
     owner = str(control.get("lease_owner") or "").strip()
     if not owner:
         return None
@@ -346,11 +371,39 @@ def load_lease_expiry_stop(project_dir: Path) -> dict[str, Any]:
     return _read_json(paths["dir"] / LEASE_EXPIRY_STOP_FILENAME)
 
 
+def reserve_lease_expiry_stop(
+    project_dir: Path,
+    decision: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reserve an expiry stop before invoking the external coordinator command."""
+    paths = runtime_paths(project_dir)
+    repo_dir = paths["wg_dir"].parent.resolve()
+    now_iso = _iso_now()
+    record: dict[str, Any] = {
+        "repo": repo_dir.name,
+        "stopped_lease_key": str(decision.get("lease_key") or ""),
+        "reserved_at": now_iso,
+        "stopped_at": "",
+        "stop_state": "stopping",
+        "reconciled": False,
+        "mode": str(decision.get("mode") or ""),
+        "reason": str(decision.get("reason") or "expired_lease"),
+        "lease_owner": str(decision.get("lease_owner") or ""),
+        "prior_key": str(decision.get("prior_key") or ""),
+        "stop_exit_code": None,
+        "stop_stdout": "",
+        "stop_stderr": "",
+    }
+    _write_json(paths["dir"] / LEASE_EXPIRY_STOP_FILENAME, record)
+    return record
+
+
 def record_lease_expiry_stop(
     project_dir: Path,
     decision: Mapping[str, Any],
     *,
     stop_result: Mapping[str, Any] | None = None,
+    reconciled: bool = False,
 ) -> dict[str, Any]:
     """Persist terminal evidence that a coordinator was stopped on expiry.
 
@@ -367,6 +420,8 @@ def record_lease_expiry_stop(
         "repo": repo_name,
         "stopped_lease_key": str(decision.get("lease_key") or ""),
         "stopped_at": now_iso,
+        "stop_state": "stopped" if stop.get("exit_code") == 0 else "failed",
+        "reconciled": bool(reconciled),
         "mode": str(decision.get("mode") or ""),
         "reason": str(decision.get("reason") or "expired_lease"),
         "lease_owner": str(decision.get("lease_owner") or ""),
@@ -376,8 +431,14 @@ def record_lease_expiry_stop(
         "stop_stderr": str(stop.get("stderr") or "")[:500],
     }
     stop_succeeded = stop.get("exit_code") == 0
+    marker_path = paths["dir"] / LEASE_EXPIRY_STOP_FILENAME
     if stop_succeeded:
-        _write_json(paths["dir"] / LEASE_EXPIRY_STOP_FILENAME, record)
+        _write_json(marker_path, record)
+    else:
+        try:
+            marker_path.unlink()
+        except FileNotFoundError:
+            pass
     event_date = now_iso[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     _append_jsonl(
         paths["events_dir"] / f"{event_date}.jsonl",
@@ -403,6 +464,7 @@ def record_lease_expiry_stop(
                 "stop_stdout": record["stop_stdout"],
                 "stop_stderr": record["stop_stderr"],
                 "stop_succeeded": stop_succeeded,
+                "reconciled": bool(reconciled),
             },
         },
     )

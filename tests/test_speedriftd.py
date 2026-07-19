@@ -526,6 +526,67 @@ class LeaseExpiryStopTests(unittest.TestCase):
             stop.assert_not_called()
             self.assertTrue(load_control_state(repo)["lease_active"])
 
+    def test_rearm_waits_until_expiry_stop_decision_finishes(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+            stop_started = threading.Event()
+            rearm_completed = threading.Event()
+
+            def rearm() -> None:
+                stop_started.wait(timeout=2)
+                write_control_state(
+                    repo,
+                    mode="autonomous",
+                    lease_owner="speedriftd-rearmed",
+                    lease_ttl_seconds=120,
+                    reason="re-armed during stop decision",
+                )
+                rearm_completed.set()
+
+            rearm_thread = threading.Thread(target=rearm)
+            rearm_thread.start()
+
+            def stop(_repo: Path) -> dict[str, object]:
+                stop_started.set()
+                self.assertFalse(rearm_completed.wait(timeout=0.2))
+                return {"exit_code": 0, "stdout": "stopped", "stderr": ""}
+
+            try:
+                with patch("driftdriver.speedriftd._stop_workgraph_service", side_effect=stop):
+                    run_runtime_cycle(repo)
+            finally:
+                rearm_thread.join(timeout=2)
+
+            self.assertFalse(rearm_thread.is_alive())
+            self.assertTrue(rearm_completed.is_set())
+            self.assertEqual(load_control_state(repo)["lease_owner"], "speedriftd-rearmed")
+
+    def test_interrupted_stop_reservation_is_reconciled_without_duplicate_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+            stop_result = {"exit_code": 0, "stdout": "stopped", "stderr": ""}
+
+            with patch(
+                "driftdriver.speedriftd._stop_workgraph_service",
+                return_value=stop_result,
+            ) as stop:
+                with patch(
+                    "driftdriver.speedriftd_state.record_lease_expiry_stop",
+                    side_effect=RuntimeError("crash after stop"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "crash after stop"):
+                        run_runtime_cycle(repo)
+
+                second = run_runtime_cycle(repo)
+
+            self.assertEqual(stop.call_count, 1)
+            self.assertEqual(second["last_lease_expiry_stop"]["stop_exit_code"], 0)
+            self.assertTrue(load_lease_expiry_stop(repo)["reconciled"])
+
     def test_stop_failure_is_recorded_as_terminal_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)

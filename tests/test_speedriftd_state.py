@@ -604,6 +604,27 @@ class TestNormalizeControlState:
         )
         assert result["lease_active"] is False
 
+    def test_malformed_lease_ttl_fails_closed_without_raising(self, tmp_path: Path) -> None:
+        repo = _scaffold_repo(tmp_path)
+        control_path = runtime_paths(repo)["control"]
+        control_path.parent.mkdir(parents=True, exist_ok=True)
+        control_path.write_text(
+            json.dumps({
+                "mode": "autonomous",
+                "lease_owner": "agent-a",
+                "lease_ttl_seconds": "unknown",
+                "lease_expires_at": _iso_now(time.time() + 3600),
+                "lease_active": True,
+            }),
+            encoding="utf-8",
+        )
+
+        control = load_control_state(repo)
+
+        assert control["lease_active"] is False
+        assert dispatch_authority(control)["enabled"] is False
+        assert evaluate_lease_expiry_stop(control) is None
+
     def test_empty_lease_owner_clears_lease_fields(self) -> None:
         result = _normalize_control_state(
             {"lease_owner": "", "lease_acquired_at": "2024-01-01T00:00:00+00:00"},

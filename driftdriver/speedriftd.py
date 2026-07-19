@@ -234,9 +234,11 @@ def handle_lease_expiry(
     idempotent.
     """
     from driftdriver.speedriftd_state import (
+        control_receipt_lock,
         evaluate_lease_expiry_stop,
         load_lease_expiry_stop,
         record_lease_expiry_stop,
+        reserve_lease_expiry_stop,
     )
 
     previous = previous_control or {}
@@ -259,23 +261,51 @@ def handle_lease_expiry(
         return None
 
     with _lease_expiry_lock(project_dir):
-        # Control may have been re-armed after the snapshot was collected but
-        # before this process acquired the expiry lock. Never stop a coordinator
-        # for an active or replaced lease.
-        locked_control = load_control_state(project_dir)
-        if (
-            _lease_is_active_raw(locked_control)
-            or _lease_identity(locked_control) != _lease_identity(control)
-        ):
-            return None
+        # Serialize the final control recheck and the safety stop with lease
+        # mutation. A writer must not acquire a new lease between this check
+        # and stopping the coordinator for the expired lease.
+        with control_receipt_lock(project_dir):
+            # Control may have been re-armed after the snapshot was collected
+            # but before this process acquired the expiry lock. Never stop a
+            # coordinator for an active or replaced lease.
+            locked_control = load_control_state(project_dir)
+            if (
+                _lease_is_active_raw(locked_control)
+                or _lease_identity(locked_control) != _lease_identity(control)
+            ):
+                return None
 
-        marker = load_lease_expiry_stop(project_dir)
-        decision = evaluate_lease_expiry_stop(locked_control, marker)
-        if not decision:
-            return None
+            marker = load_lease_expiry_stop(project_dir)
+            lease_key = _lease_identity(locked_control)
+            if (
+                str(marker.get("stopped_lease_key") or "") == lease_key
+                and marker.get("stop_state") == "stopping"
+            ):
+                reconciled_decision = {
+                    "lease_key": lease_key,
+                    "reason": str(marker.get("reason") or "expired_lease"),
+                    "mode": str(marker.get("mode") or ""),
+                    "lease_owner": str(marker.get("lease_owner") or ""),
+                    "prior_key": str(marker.get("prior_key") or ""),
+                }
+                return record_lease_expiry_stop(
+                    project_dir,
+                    reconciled_decision,
+                    stop_result={
+                        "exit_code": 0,
+                        "stdout": "reconciled interrupted stop reservation",
+                        "stderr": "",
+                    },
+                    reconciled=True,
+                )
 
-        stop_result = _stop_workgraph_service(project_dir)
-        return record_lease_expiry_stop(project_dir, decision, stop_result=stop_result)
+            decision = evaluate_lease_expiry_stop(locked_control, marker)
+            if not decision:
+                return None
+
+            reserve_lease_expiry_stop(project_dir, decision)
+            stop_result = _stop_workgraph_service(project_dir)
+            return record_lease_expiry_stop(project_dir, decision, stop_result=stop_result)
 
 
 def run_runtime_cycle(project_dir: Path, *, policy: DriftPolicy | None = None) -> dict[str, Any]:
