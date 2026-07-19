@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from driftdriver.directive_schemas import DirectiveValidationError, validate_params
 from driftdriver.directives import Action, Directive, DirectiveLog
 
 
@@ -18,6 +19,18 @@ class ExecutorShim:
 
     def execute(self, directive: Directive) -> str:
         self.log.append(directive)
+        try:
+            validate_params(directive.action, directive.params)
+        except DirectiveValidationError as exc:
+            payload = exc.to_payload()
+            self.log.mark_failed(
+                directive.id,
+                exit_code=2,
+                error=str(exc),
+                directive=directive,
+                details=payload,
+            )
+            return "failed"
         cmd = self._build_command(directive)
         try:
             result = subprocess.run(
@@ -39,11 +52,31 @@ class ExecutorShim:
                     directive.id,
                     exit_code=result.returncode,
                     error=result.stderr[:2000],
+                    directive=directive,
+                    details={
+                        "error_code": "directive_execution_failed",
+                        "retryable": None,
+                        "repairable": False,
+                        "observed_exit_code": result.returncode,
+                        "retryability_basis": "not_classified_by_executor",
+                        "next_step": "Inspect stderr and verify the target Workgraph before deciding whether to retry.",
+                    },
                 )
                 return "failed"
         except subprocess.TimeoutExpired:
             self.log.mark_failed(
-                directive.id, exit_code=-1, error="timeout"
+                directive.id,
+                exit_code=-1,
+                error="timeout",
+                directive=directive,
+                details={
+                    "error_code": "directive_execution_timeout",
+                    "retryable": None,
+                    "repairable": False,
+                    "observed_timeout": True,
+                    "retryability_basis": "not_classified_by_executor",
+                    "next_step": "Inspect the Workgraph and verify whether the effect occurred before deciding whether to retry.",
+                },
             )
             return "failed"
 
@@ -63,6 +96,10 @@ class ExecutorShim:
                 cmd = wg + ["add", p["title"], "--id", p["task_id"], "--no-place"]
                 if p.get("description"):
                     cmd += ["-d", p["description"]]
+                if p.get("assign"):
+                    cmd += ["--assign", p["assign"]]
+                if p.get("model"):
+                    cmd += ["--model", p["model"]]
                 for tag in p.get("tags", []):
                     cmd += ["-t", tag]
                 for dep in p.get("after", []):
@@ -70,7 +107,10 @@ class ExecutorShim:
                 return cmd
 
             case Action.CLAIM_TASK:
-                return wg + ["claim", p["task_id"]]
+                cmd = wg + ["claim", p["task_id"]]
+                if p.get("agent"):
+                    cmd += ["--actor", p["agent"]]
+                return cmd
 
             case Action.COMPLETE_TASK:
                 cmd = wg + ["done", p["task_id"]]

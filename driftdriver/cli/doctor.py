@@ -307,7 +307,7 @@ def cmd_compact(args: argparse.Namespace) -> int:
                 source="doctor/compact",
                 repo=repo_name,
                 action=Action.RESCHEDULE_TASK,
-                params={"task_id": task_id, "after_hours": str(defer_hours)},
+                params={"task_id": task_id, "after_hours": defer_hours},
                 reason=f"compact: defer overflow task by {defer_hours}h",
             )
             result = shim.execute(directive)

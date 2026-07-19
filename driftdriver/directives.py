@@ -119,16 +119,38 @@ class DirectiveLog:
             f.write(record + "\n")
 
     def mark_failed(
-        self, directive_id: str, *, exit_code: int, error: str
+        self,
+        directive_id: str,
+        *,
+        exit_code: int,
+        error: str,
+        directive: Directive | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
-        record = json.dumps({
+        record: dict[str, Any] = {
             "directive_id": directive_id,
             "exit_code": exit_code,
             "error": error,
             "failed_at": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        if directive is not None:
+            record.update(
+                {
+                    "source": directive.source,
+                    "repo": directive.repo,
+                    "action": directive.action.value,
+                    "params": directive.params,
+                    "reason": directive.reason,
+                    "priority": directive.priority,
+                    "authority": asdict(directive.authority)
+                    if directive.authority is not None
+                    else None,
+                }
+            )
+        if details:
+            record.update(details)
         with self._failed.open("a") as f:
-            f.write(record + "\n")
+            f.write(json.dumps(record, separators=(",", ":")) + "\n")
 
     def read_completed(self) -> list[dict[str, Any]]:
         return self._read_records(self._completed)
