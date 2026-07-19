@@ -10,9 +10,10 @@
 #   2. Runs `driftdriver install` with the full lane set (lands pi-run.sh/pi.toml,
 #      refreshes handlers/hooks/drift-policy). Idempotent — does not touch
 #      graph.jsonl or the task graph.
-#   3. Flips the dispatch model to pi:zai/glm-5.2 via `wg config --model`.
+#   3. Normalizes dispatch roles and tiers to pi:zai/glm-5.2 via `wg config`.
 #   4. Applies safe config cleanups with sed/python (strip deprecated `executor`
-#      key, rename [coordinator]->[dispatcher], fix `zai:` -> `pi:zai/` prefix).
+#      key, rename [coordinator]->[dispatcher], fix `zai:` -> `pi:zai/` prefix,
+#      disable the OpenRouter model-catalog refresh).
 #   5. Verifies with `wg config --merged` — flags any repo still showing
 #      deprecation warnings, invalid models, or unknown providers.
 #
@@ -93,7 +94,12 @@ txt = re.sub(r'^(\s*)executor\s*=\s*"[^"]*"\s*$\n', '', txt, flags=re.M)
 txt = re.sub(r'^\[coordinator\]', '[dispatcher]', txt, flags=re.M)
 # 3. Fix old `zai:` prefix -> `pi:zai/` (old config format the new wg rejects)
 txt = re.sub(r'=\s*"zai:([^"]+)"', r'="pi:zai/\1"', txt)
-# 4. Collapse 3+ blank lines -> 2
+# 4. Disable the OpenRouter model-catalog refresh; this workspace uses Pi/ZAI.
+if re.search(r'^\s*registry_refresh_interval\s*=', txt, flags=re.M):
+    txt = re.sub(r'^\s*registry_refresh_interval\s*=.*$', 'registry_refresh_interval = 0', txt, count=1, flags=re.M)
+elif re.search(r'^\[dispatcher\]\s*$', txt, flags=re.M):
+    txt = re.sub(r'^(\[dispatcher\]\s*\n)', r'\1registry_refresh_interval = 0\n', txt, count=1, flags=re.M)
+# 5. Collapse 3+ blank lines -> 2
 txt = re.sub(r'\n{3,}', '\n\n', txt)
 if txt != orig:
     with open(path, 'w') as f:
@@ -149,13 +155,20 @@ for r in "${REPOS[@]}"; do
   if [[ $LANES_ONLY -eq 0 ]]; then
     cfg="$wg_dir/config.toml"
     if [[ $DRY_RUN -eq 0 ]]; then
-      # flip model to pi (creates config.toml if missing)
-      (cd "$repo_dir" && wg config --model "$PI_MODEL" --no-reload >/dev/null 2>&1 || true)
-      # apply safe cleanups
+      # Normalize every dispatch role to Pi/ZAI (creates config.toml if missing).
+      (cd "$repo_dir" && wg config --model "$PI_MODEL" \
+        --set-model evaluator "$PI_MODEL" \
+        --set-model assigner "$PI_MODEL" \
+        --flip-model "$PI_MODEL" \
+        --tier "fast=$PI_MODEL" \
+        --tier "standard=$PI_MODEL" \
+        --tier "premium=$PI_MODEL" \
+        --no-reload >/dev/null 2>&1 || true)
+      # apply safe cleanups, including disabling OpenRouter registry refresh
       clean_config "$cfg"
     else
-      echo "  [dry-run] would run: wg config --model $PI_MODEL --no-reload"
-      echo "  [dry-run] would apply safe cleanups (strip executor, rename coordinator, fix zai:)"
+      echo "  [dry-run] would normalize all dispatch roles and tiers to $PI_MODEL"
+      echo "  [dry-run] would apply safe cleanups (strip executor, rename coordinator, fix zai:, disable OpenRouter refresh)"
     fi
   fi
 
