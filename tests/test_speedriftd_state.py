@@ -696,6 +696,34 @@ class TestLoadControlState:
         assert loaded["lease_owner"] == "agent-x"
         assert loaded["dispatch_enabled"] is True
 
+    def test_metadata_update_does_not_repair_malformed_ttl(self, tmp_path: Path) -> None:
+        repo = _scaffold_repo(tmp_path)
+        control_path = runtime_paths(repo)["control"]
+        control_path.parent.mkdir(parents=True, exist_ok=True)
+        control_path.write_text(
+            json.dumps({
+                "mode": "autonomous",
+                "lease_owner": "agent-a",
+                "lease_ttl_seconds": "unknown",
+                "lease_expires_at": _iso_now(time.time() + 3600),
+                "lease_active": True,
+            }),
+            encoding="utf-8",
+        )
+
+        touched = write_control_state(repo, reason="metadata touch")
+
+        assert touched["lease_ttl_valid"] is False
+        assert touched["lease_active"] is False
+        repaired = write_control_state(
+            repo,
+            lease_owner="agent-a",
+            lease_ttl_seconds=60,
+            reason="explicit repair",
+        )
+        assert repaired["lease_ttl_valid"] is True
+        assert repaired["lease_active"] is True
+
     def test_write_with_release_lease(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
         write_control_state(repo, mode="supervise", lease_owner="agent-x")

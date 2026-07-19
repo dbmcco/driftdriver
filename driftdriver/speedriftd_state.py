@@ -168,7 +168,8 @@ def _normalize_control_state(raw: dict[str, Any], *, repo_name: str, cfg: dict[s
     control["interactive_service_start"] = bool(control["dispatch_enabled"])
     control["repo"] = repo_name
     control["lease_owner"] = str(control.get("lease_owner") or "").strip()
-    ttl, ttl_valid = _coerce_lease_ttl(control.get("lease_ttl_seconds"))
+    ttl, parsed_ttl_valid = _coerce_lease_ttl(control.get("lease_ttl_seconds"))
+    ttl_valid = parsed_ttl_valid and control.get("lease_ttl_valid") is not False
     control["lease_ttl_seconds"] = ttl
     control["lease_ttl_valid"] = ttl_valid
     acquired = str(control.get("lease_acquired_at") or "").strip()
@@ -267,8 +268,13 @@ def write_control_state(
             if normalized_mode in CONTROL_MODES:
                 control["mode"] = normalized_mode
         if lease_ttl_seconds is not None:
-            control["lease_ttl_seconds"] = max(0, int(lease_ttl_seconds))
+            ttl, ttl_valid = _coerce_lease_ttl(lease_ttl_seconds)
+            if not ttl_valid:
+                raise ValueError("lease_ttl_seconds must be a valid integer")
+            control["lease_ttl_seconds"] = ttl
+            control["lease_ttl_valid"] = True
         if release_lease:
+            control["lease_ttl_valid"] = True
             control["lease_owner"] = ""
             control["lease_acquired_at"] = ""
             control["lease_expires_at"] = ""
