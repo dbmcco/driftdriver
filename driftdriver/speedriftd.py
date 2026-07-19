@@ -200,9 +200,12 @@ def _workgraph_service_running(project_dir: Path) -> bool | None:
         return None
     if not isinstance(status, dict):
         return None
+    service = status.get("service") if isinstance(status.get("service"), dict) else {}
+    if isinstance(service.get("running"), bool):
+        return service["running"]
     if isinstance(status.get("running"), bool):
         return status["running"]
-    state = str(status.get("status") or "").strip().lower()
+    state = str(status.get("status") or service.get("status") or "").strip().lower()
     if state in {"running", "stopped"}:
         return state == "running"
     return None
@@ -385,13 +388,30 @@ def handle_lease_expiry(
 
 def run_runtime_cycle(project_dir: Path, *, policy: DriftPolicy | None = None) -> dict[str, Any]:
     previous_snapshot = load_runtime_snapshot(project_dir)
+    previous_control = previous_snapshot.get("control") or {}
+    early_expiry: dict[str, Any] | None = None
+    if (
+        previous_control.get("lease_active") is True
+        and str(previous_control.get("mode") or "").strip().lower() in {"supervise", "autonomous"}
+    ):
+        early_control = load_control_state(project_dir, policy=policy)
+        early_expiry = handle_lease_expiry(
+            project_dir,
+            control=early_control,
+            previous_control=previous_control,
+            previous_stop=previous_snapshot.get("last_lease_expiry_stop"),
+        )
+
     snapshot = collect_runtime_snapshot(project_dir, policy=policy)
-    expiry = handle_lease_expiry(
-        project_dir,
-        control=snapshot.get("control") or {},
-        previous_control=previous_snapshot.get("control") or {},
-        previous_stop=previous_snapshot.get("last_lease_expiry_stop"),
-    )
+    late_expiry = None
+    if early_expiry is None:
+        late_expiry = handle_lease_expiry(
+            project_dir,
+            control=snapshot.get("control") or {},
+            previous_control=previous_control,
+            previous_stop=previous_snapshot.get("last_lease_expiry_stop"),
+        )
+    expiry = late_expiry or early_expiry
     if expiry:
         snapshot["last_lease_expiry_stop"] = expiry
     return write_runtime_snapshot(project_dir, snapshot)

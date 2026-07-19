@@ -18,6 +18,7 @@ from driftdriver.speedriftd import (
     handle_lease_expiry,
     run_runtime_cycle,
     run_runtime_loop,
+    _workgraph_service_running,
 )
 from driftdriver.speedriftd_state import (
     load_control_state,
@@ -319,6 +320,51 @@ def _expire_active_lease(repo: Path) -> None:
 
 
 class LeaseExpiryStopTests(unittest.TestCase):
+    def test_workgraph_service_status_reads_nested_service_running(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            with patch(
+                "driftdriver.speedriftd.subprocess.run",
+                return_value=SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"service": {"running": False}}),
+                    stderr="",
+                ),
+            ):
+                self.assertIs(_workgraph_service_running(repo), False)
+
+    def test_expiry_stop_runs_before_runtime_snapshot_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+            active = load_runtime_snapshot(repo)["control"]
+            expired = load_control_state(repo)
+            order: list[str] = []
+
+            def collect(*_args: object, **_kwargs: object) -> dict[str, object]:
+                order.append("collect")
+                return {"control": expired}
+
+            with (
+                patch("driftdriver.speedriftd.load_runtime_snapshot", return_value={"control": active}),
+                patch("driftdriver.speedriftd.load_control_state", return_value=expired),
+                patch(
+                    "driftdriver.speedriftd._stop_workgraph_service",
+                    side_effect=lambda _repo: order.append("stop") or {
+                        "exit_code": 0,
+                        "stdout": "stopped",
+                        "stderr": "",
+                    },
+                ),
+                patch("driftdriver.speedriftd.collect_runtime_snapshot", side_effect=collect),
+                patch("driftdriver.speedriftd.write_runtime_snapshot", side_effect=lambda _repo, snapshot: snapshot),
+            ):
+                run_runtime_cycle(repo)
+
+            self.assertEqual(order[:2], ["stop", "collect"])
+
     """An already-running coordinator must be stopped exactly once when a
     previously-active elevated lease expires; repeated cycles must not
     duplicate the stop/revoke event."""
