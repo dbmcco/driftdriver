@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 from driftdriver.manual_owner import apply_manual_owner_policy
 from driftdriver.policy import load_drift_policy
+from driftdriver.speedriftd_state import load_dispatch_authority
 
 
 @dataclass
@@ -326,6 +327,14 @@ def _dispatch_wg_spawn(
     forwarded so the executor runs with the PlanForge-assigned model.
     """
     task_id = str(task.get("id", "unknown"))
+    admitted, reason = _dispatch_admission(repo_path)
+    if not admitted:
+        return DispatchResult(
+            task_id=task_id,
+            dispatched=False,
+            executor=executor.name,
+            skipped_reason=f"dispatch admission denied: {reason}",
+        )
     wg_dir = repo_path / ".workgraph"
 
     # Clear stale graph lock (crashed processes leave empty lock files)
@@ -501,8 +510,12 @@ def _run_wg(repo_path: Path, *args: str, timeout: int = 15) -> subprocess.Comple
 def claim_task(task_id: str, repo_path: Path, *, actor: str = "driftdriver-router") -> bool:
     """Claim a task via ``wg claim`` (flock-safe).
 
-    Returns True if claimed, False if already in-progress or not found.
+    Returns True if claimed, False if already in-progress or not found, or when
+    lease authority denies admission (fail closed — no claim without an active
+    supervise/autonomous lease).
     """
+    if not _dispatch_admission(repo_path)[0]:
+        return False
     try:
         result = _run_wg(repo_path, "claim", task_id, "--actor", actor)
         return result.returncode == 0
@@ -516,13 +529,29 @@ def _unclaim_task(task_id: str, repo_path: Path) -> None:
     _run_wg(repo_path, "log", task_id, "Unclaimed by router: dispatch failed, returning to open")
 
 
+def _dispatch_admission(repo_path: Path) -> tuple[bool, str]:
+    """Lease-gate Workgraph dispatch effects; fail closed without an active lease."""
+    try:
+        authority = load_dispatch_authority(repo_path)
+    except Exception:
+        return False, "control state unavailable"
+    if authority.get("enabled"):
+        return True, str(authority.get("reason") or "admitted")
+    return False, str(authority.get("reason") or "dispatch not authorized")
+
+
 def route_ready_tasks(
     repo_path: Path, config: RoutingConfig
 ) -> list[DispatchResult]:
     """Load graph, find ready tasks, match executors, claim and dispatch.
 
-    Returns a list of DispatchResult for each ready task processed.
+    Returns a list of DispatchResult for each ready task processed. Short-
+    circuits to an empty list when lease authority denies dispatch, so the
+    router never claims or spawns without an active supervise/autonomous lease.
     """
+    admitted, reason = _dispatch_admission(repo_path)
+    if not admitted:
+        return []
     graph_path = repo_path / ".workgraph" / "graph.jsonl"
     nodes = _read_graph_lines(graph_path)
     ready = _find_ready_tasks(nodes)

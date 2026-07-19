@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from driftdriver.factory_brain.directives import (
     DIRECTIVE_SCHEMA,
@@ -214,6 +217,64 @@ class TestEnforceComplianceDirective(unittest.TestCase):
 
         missing = Directive(action="enforce_compliance", params={})
         self.assertFalse(validate_directive(missing))
+
+
+def _grant_active_lease(repo: Path) -> None:
+    """Write a control.json granting an active supervise lease for tests."""
+    control = repo / ".workgraph" / "service" / "runtime" / "control.json"
+    control.parent.mkdir(parents=True, exist_ok=True)
+    control.write_text(json.dumps({
+        "repo": repo.name,
+        "mode": "supervise",
+        "lease_owner": "factory-brain-test",
+        "lease_active": True,
+        "lease_ttl_seconds": 0,
+        "lease_ttl_valid": True,
+    }), encoding="utf-8")
+
+
+class TestSpawnAgentLeaseGate(unittest.TestCase):
+    """``wg spawn`` admission is gated by lease authority (fail closed)."""
+
+    def _make_repo(self, td: str, *, lease: bool) -> Path:
+        repo = Path(td) / "spawn-repo"
+        wg_dir = repo / ".workgraph"
+        wg_dir.mkdir(parents=True)
+        (wg_dir / "graph.jsonl").write_text("", encoding="utf-8")
+        if lease:
+            _grant_active_lease(repo)
+        return repo
+
+    def test_spawn_agent_dry_run_skips_admission(self) -> None:
+        d = Directive(action="spawn_agent", params={"repo": "spawn-repo", "task_id": "t1"})
+        result = execute_directive(d, dry_run=True, repo_paths={"spawn-repo": "/tmp/x"})
+        self.assertEqual(result["status"], "dry_run")
+
+    @patch("driftdriver.factory_brain.directives._run_cmd")
+    def test_spawn_agent_blocked_without_lease(self, mock_run_cmd: MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._make_repo(td, lease=False)
+            d = Directive(action="spawn_agent", params={"repo": "spawn-repo", "task_id": "t1"})
+            result = execute_directive(
+                d, dry_run=False, repo_paths={"spawn-repo": str(repo)},
+            )
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["task_id"], "t1")
+        self.assertTrue(result["reason"])
+        mock_run_cmd.assert_not_called()
+
+    @patch("driftdriver.factory_brain.directives._run_cmd")
+    def test_spawn_agent_runs_with_active_lease(self, mock_run_cmd: MagicMock) -> None:
+        mock_run_cmd.return_value = (0, "Spawned agent-1")
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._make_repo(td, lease=True)
+            d = Directive(action="spawn_agent", params={"repo": "spawn-repo", "task_id": "t1"})
+            result = execute_directive(
+                d, dry_run=False, repo_paths={"spawn-repo": str(repo)},
+            )
+        self.assertEqual(result["status"], "ok")
+        cmd = mock_run_cmd.call_args[0][0]
+        self.assertEqual(cmd, ["wg", "spawn", "--executor", "claude", "t1"])
 
 
 if __name__ == "__main__":

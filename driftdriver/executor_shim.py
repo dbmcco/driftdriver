@@ -9,6 +9,14 @@ from pathlib import Path
 
 from driftdriver.directive_schemas import DirectiveValidationError, validate_params
 from driftdriver.directives import Action, Directive, DirectiveLog
+from driftdriver.speedriftd_state import load_dispatch_authority
+
+# Directive actions that mutate Workgraph dispatch/service state. These reach
+# the executor as raw effects and are gated by lease authority: a directive
+# arriving here without an active supervise/autonomous lease is denied (fail
+# closed) so neither ``wg claim`` nor ``wg service start`` can run without one,
+# regardless of which caller built the directive.
+_DISPATCH_ACTIONS: frozenset[Action] = frozenset({Action.CLAIM_TASK, Action.START_SERVICE})
 
 
 @dataclass
@@ -31,6 +39,23 @@ class ExecutorShim:
                 details=payload,
             )
             return "failed"
+        admitted, reason = self._admit(directive)
+        if not admitted:
+            self.log.mark_failed(
+                directive.id,
+                exit_code=0,
+                error=reason,
+                directive=directive,
+                details={
+                    "error_code": "directive_admission_denied",
+                    "retryable": True,
+                    "repairable": False,
+                    "admission_reason": reason,
+                    "retryability_basis": "lease_may_become_active",
+                    "next_step": "Acquire an active supervise/autonomous lease before retrying.",
+                },
+            )
+            return "blocked"
         cmd = self._build_command(directive)
         try:
             result = subprocess.run(
@@ -86,6 +111,27 @@ class ExecutorShim:
         if directive.action == Action.CREATE_UPSTREAM_PR:
             return directive.params.get("repo", str(self.wg_dir.parent))
         return str(self.wg_dir.parent)
+
+    def _admit(self, directive: Directive) -> tuple[bool, str]:
+        """Lease-gate dispatch-mutating actions; fail closed without a lease.
+
+        Returns ``(admitted, reason)``. Non-dispatch actions are always admitted.
+        For CLAIM_TASK / START_SERVICE the repo is resolved from the directive's
+        ``repo`` param (a ``.workgraph`` path is collapsed to its repo root) or
+        falls back to the shim's ``wg_dir`` parent.
+        """
+        if directive.action not in _DISPATCH_ACTIONS:
+            return True, "action does not require lease admission"
+        raw_repo = directive.params.get("repo")
+        if raw_repo:
+            candidate = Path(str(raw_repo))
+            project_dir = candidate.parent if candidate.name == ".workgraph" else candidate
+        else:
+            project_dir = self.wg_dir.parent
+        authority = load_dispatch_authority(project_dir)
+        if authority.get("enabled"):
+            return True, str(authority.get("reason") or "admitted")
+        return False, str(authority.get("reason") or "dispatch not authorized")
 
     def _build_command(self, directive: Directive) -> list[str]:
         p = directive.params

@@ -28,6 +28,20 @@ from driftdriver.task_router import (
 )
 
 
+def _grant_active_lease(repo: Path, *, owner: str = "test-suite") -> None:
+    """Write a control.json granting an active supervise lease for routing tests."""
+    control_path = repo / ".workgraph" / "service" / "runtime" / "control.json"
+    control_path.parent.mkdir(parents=True, exist_ok=True)
+    control_path.write_text(json.dumps({
+        "repo": repo.name,
+        "mode": "supervise",
+        "lease_owner": owner,
+        "lease_active": True,
+        "lease_ttl_seconds": 0,
+        "lease_ttl_valid": True,
+    }), encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # LoadConfigTests
 # ---------------------------------------------------------------------------
@@ -356,6 +370,15 @@ class TestFindReadyTasks(unittest.TestCase):
 class TestClaimTask(unittest.TestCase):
     """Claim a task via wg claim CLI with actor registration."""
 
+    def setUp(self) -> None:
+        # Claim command construction is exercised under an admitted lease.
+        patcher = patch(
+            "driftdriver.task_router._dispatch_admission",
+            return_value=(True, "test admission"),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @patch("driftdriver.task_router.subprocess.run")
     def test_claim_calls_wg_claim_with_actor(self, mock_run: MagicMock) -> None:
         mock_run.return_value = MagicMock(returncode=0, stderr="")
@@ -444,6 +467,7 @@ class TestCheckAgentCompletions(unittest.TestCase):
             "\n".join(json.dumps(t) for t in tasks) + "\n",
             encoding="utf-8",
         )
+        _grant_active_lease(repo)
         return repo
 
     def _make_config(self) -> RoutingConfig:
@@ -617,6 +641,15 @@ class TestCheckAgentCompletions(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class TestDispatchTask(unittest.TestCase):
     """Dispatch tasks to different executor types."""
+
+    def setUp(self) -> None:
+        # Spawn command construction is exercised under an admitted lease.
+        patcher = patch(
+            "driftdriver.task_router._dispatch_admission",
+            return_value=(True, "test admission"),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _make_task(self, **overrides: object) -> dict:
         base = {
@@ -814,6 +847,7 @@ class TestRouteReadyTasks(unittest.TestCase):
             encoding="utf-8",
         )
         (wg_dir / "drift-policy.toml").write_bytes(toml_bytes)
+        _grant_active_lease(repo)
         return repo
 
     @patch("driftdriver.task_router.subprocess.run")
@@ -1101,7 +1135,8 @@ tag_match = "agent:samantha"
             workspace = Path(td)
             # Create two repos
             for repo_name in ["repo-a", "repo-b"]:
-                wg_dir = workspace / repo_name / ".workgraph"
+                repo = workspace / repo_name
+                wg_dir = repo / ".workgraph"
                 wg_dir.mkdir(parents=True)
                 (wg_dir / "graph.jsonl").write_text(
                     json.dumps({
@@ -1113,6 +1148,7 @@ tag_match = "agent:samantha"
                     }) + "\n"
                 )
                 (wg_dir / "drift-policy.toml").write_bytes(toml)
+                _grant_active_lease(repo)
 
             config = load_routing_config(
                 workspace / "repo-a" / ".workgraph" / "drift-policy.toml"
@@ -1139,6 +1175,71 @@ tag_match = "agent:samantha"
             )
 
         self.assertEqual(summary.get("no-wg-repo", {}).get("skipped"), True)
+
+
+class TestDispatchLeaseGate(unittest.TestCase):
+    """Lease-authority admission gates claim/spawn/route effects (fail closed)."""
+
+    def _observe_repo(self, td: str) -> Path:
+        """A repo with a ready task but NO active lease (observe, no owner)."""
+        repo = Path(td) / "observe-repo"
+        wg_dir = repo / ".workgraph"
+        wg_dir.mkdir(parents=True)
+        (wg_dir / "graph.jsonl").write_text(
+            json.dumps({
+                "kind": "task",
+                "id": "t1",
+                "status": "open",
+                "title": "Ready but unleased",
+                "tags": ["agent:samantha"],
+            }) + "\n",
+            encoding="utf-8",
+        )
+        return repo
+
+    @patch("driftdriver.task_router.subprocess.run")
+    def test_claim_task_denied_without_lease(self, mock_run: MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._observe_repo(td)
+            claimed = claim_task("t1", repo, actor="samantha")
+        self.assertFalse(claimed)
+        mock_run.assert_not_called()
+
+    @patch("driftdriver.task_router.subprocess")
+    def test_spawn_denied_without_lease(self, mock_subprocess: MagicMock) -> None:
+        executor = ExecutorConfig(
+            name="claude-runner", type="claude", endpoint="", tag_match="executor:claude",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._observe_repo(td)
+            result = dispatch_task({"id": "t1", "title": "t", "tags": []}, executor, repo)
+        self.assertFalse(result.dispatched)
+        self.assertIsNotNone(result.skipped_reason)
+        self.assertIn("admission denied", result.skipped_reason)
+        mock_subprocess.run.assert_not_called()
+
+    @patch("driftdriver.task_router.subprocess.run")
+    @patch("driftdriver.task_router.urlopen")
+    def test_route_ready_tasks_short_circuits_without_lease(
+        self, mock_urlopen: MagicMock, mock_run: MagicMock,
+    ) -> None:
+        config = RoutingConfig(
+            enabled=True,
+            default_executor="wg-daemon",
+            executors={
+                "samantha": ExecutorConfig(
+                    name="samantha", type="http",
+                    endpoint="http://localhost:3530/api/agent/task",
+                    tag_match="agent:samantha",
+                ),
+            },
+        )
+        with tempfile.TemporaryDirectory() as td:
+            repo = self._observe_repo(td)
+            results = route_ready_tasks(repo, config)
+        self.assertEqual(results, [])
+        mock_run.assert_not_called()
+        mock_urlopen.assert_not_called()
 
 
 if __name__ == "__main__":

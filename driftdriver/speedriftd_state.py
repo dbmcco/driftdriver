@@ -226,6 +226,22 @@ def dispatch_authority(control: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def load_dispatch_authority(project_dir: Path) -> dict[str, Any]:
+    """Evaluate dispatch authority for a repo, failing closed on read errors.
+
+    This is the shared admission primitive for any code path that is about to
+    issue a dispatch-mutating Workgraph command (``wg claim`` / ``wg spawn`` /
+    ``wg service start``). It loads the repo's runtime control state and returns
+    the :func:`dispatch_authority` verdict. When control state cannot be read or
+    normalized it returns a denied verdict with ``reason == "control state
+    unavailable"`` so callers fail closed without leaking exceptions.
+    """
+    try:
+        return dispatch_authority(load_control_state(project_dir))
+    except Exception:
+        return {"enabled": False, "reason": "control state unavailable"}
+
+
 def _apply_runtime_gate(control: dict[str, Any]) -> dict[str, Any]:
     """Keep dispatch and service start disabled without an active lease."""
     dispatch_enabled = dispatch_authority(control)["enabled"]

@@ -25,6 +25,7 @@ from driftdriver.speedriftd_state import (
     dispatch_authority,
     evaluate_lease_expiry_stop,
     load_control_state,
+    load_dispatch_authority,
     load_lease_expiry_stop,
     load_runtime_snapshot,
     record_lease_expiry_stop,
@@ -413,6 +414,59 @@ def test_dispatch_authority_allows_active_autonomous_lease() -> None:
     result = dispatch_authority(control)
     assert result["enabled"] is True
     assert result["mode"] == "autonomous"
+
+
+# ---------------------------------------------------------------------------
+# load_dispatch_authority (shared admission primitive, fail-closed)
+# ---------------------------------------------------------------------------
+
+
+def _grant_active_lease(repo: Path, *, owner: str = "agent-a") -> None:
+    """Write a control.json granting an active supervise lease for tests."""
+    (repo / ".workgraph" / "graph.jsonl").parent.mkdir(parents=True, exist_ok=True)
+    (repo / ".workgraph" / "graph.jsonl").write_text("", encoding="utf-8")
+    paths = runtime_paths(repo)
+    _write_json(paths["control"], {
+        "repo": repo.name,
+        "mode": "supervise",
+        "lease_owner": owner,
+        "lease_active": True,
+        "lease_ttl_seconds": 0,
+        "lease_ttl_valid": True,
+    })
+
+
+def test_load_dispatch_authority_allows_active_lease(tmp_path: Path) -> None:
+    repo = tmp_path / "supervised-repo"
+    _grant_active_lease(repo)
+
+    authority = load_dispatch_authority(repo)
+
+    assert authority["enabled"] is True
+    assert authority["reason"] == "active lease permits dispatch"
+
+
+def test_load_dispatch_authority_denies_observe_repo(tmp_path: Path) -> None:
+    repo = tmp_path / "observe-repo"
+    (repo / ".workgraph").mkdir(parents=True)
+    (repo / ".workgraph" / "graph.jsonl").write_text("", encoding="utf-8")
+    # No control.json -> defaults to observe, denied.
+
+    authority = load_dispatch_authority(repo)
+
+    assert authority["enabled"] is False
+    assert authority["reason"] == "mode does not permit dispatch"
+
+
+def test_load_dispatch_authority_fails_closed_on_read_error(tmp_path: Path) -> None:
+    repo = tmp_path / "broken-repo"
+    with patch(
+        "driftdriver.speedriftd_state.load_control_state",
+        side_effect=RuntimeError("boom"),
+    ):
+        authority = load_dispatch_authority(repo)
+
+    assert authority == {"enabled": False, "reason": "control state unavailable"}
 
 
 # ---------------------------------------------------------------------------

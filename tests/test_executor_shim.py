@@ -67,8 +67,10 @@ class TestExecutorShim(unittest.TestCase):
             self.assertIn("t1", cmd)
             self.assertNotIn("--immediate", cmd)
 
+    @patch("driftdriver.executor_shim.load_dispatch_authority")
     @patch("driftdriver.executor_shim.subprocess.run")
-    def test_start_service_calls_wg_service_start(self, mock_run: MagicMock) -> None:
+    def test_start_service_calls_wg_service_start(self, mock_run: MagicMock, mock_authority: MagicMock) -> None:
+        mock_authority.return_value = {"enabled": True, "reason": "active lease permits dispatch"}
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         with TemporaryDirectory() as tmp:
             wg_dir = Path(tmp)
@@ -80,6 +82,66 @@ class TestExecutorShim(unittest.TestCase):
             cmd = mock_run.call_args[0][0]
             self.assertIn("service", cmd)
             self.assertIn("start", cmd)
+
+    @patch("driftdriver.executor_shim.load_dispatch_authority")
+    @patch("driftdriver.executor_shim.subprocess.run")
+    def test_start_service_blocked_without_lease(self, mock_run: MagicMock, mock_authority: MagicMock) -> None:
+        mock_authority.return_value = {"enabled": False, "reason": "lease is not active"}
+        with TemporaryDirectory() as tmp:
+            wg_dir = Path(tmp)
+            log = DirectiveLog(wg_dir / "directives")
+            shim = ExecutorShim(wg_dir=wg_dir, log=log)
+            d = self._make_directive(Action.START_SERVICE, {"repo": "/tmp/repo"})
+            result = shim.execute(d)
+            self.assertEqual(result, "blocked")
+            mock_run.assert_not_called()
+            failed = log.read_failed()
+            self.assertEqual(len(failed), 1)
+            self.assertEqual(failed[0]["error"], "lease is not active")
+
+    @patch("driftdriver.executor_shim.load_dispatch_authority")
+    @patch("driftdriver.executor_shim.subprocess.run")
+    def test_claim_task_blocked_without_lease(self, mock_run: MagicMock, mock_authority: MagicMock) -> None:
+        mock_authority.return_value = {"enabled": False, "reason": "mode does not permit dispatch"}
+        with TemporaryDirectory() as tmp:
+            wg_dir = Path(tmp)
+            log = DirectiveLog(wg_dir / "directives")
+            shim = ExecutorShim(wg_dir=wg_dir, log=log)
+            d = self._make_directive(Action.CLAIM_TASK, {"task_id": "t1", "agent": "bot"})
+            result = shim.execute(d)
+            self.assertEqual(result, "blocked")
+            mock_run.assert_not_called()
+
+    @patch("driftdriver.executor_shim.load_dispatch_authority")
+    @patch("driftdriver.executor_shim.subprocess.run")
+    def test_claim_task_runs_with_active_lease(self, mock_run: MagicMock, mock_authority: MagicMock) -> None:
+        mock_authority.return_value = {"enabled": True, "reason": "active lease permits dispatch"}
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with TemporaryDirectory() as tmp:
+            wg_dir = Path(tmp)
+            log = DirectiveLog(wg_dir / "directives")
+            shim = ExecutorShim(wg_dir=wg_dir, log=log)
+            d = self._make_directive(Action.CLAIM_TASK, {"task_id": "t1", "agent": "bot"})
+            result = shim.execute(d)
+            self.assertEqual(result, "completed")
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("claim", cmd)
+            self.assertIn("t1", cmd)
+
+    @patch("driftdriver.executor_shim.load_dispatch_authority")
+    @patch("driftdriver.executor_shim.subprocess.run")
+    def test_claim_admission_resolves_workgraph_repo_param(self, mock_run: MagicMock, mock_authority: MagicMock) -> None:
+        """A START_SERVICE repo pointing at a .workgraph dir collapses to its repo root."""
+        mock_authority.return_value = {"enabled": True, "reason": "active lease permits dispatch"}
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        with TemporaryDirectory() as tmp:
+            wg_dir = Path(tmp)
+            log = DirectiveLog(wg_dir / "directives")
+            shim = ExecutorShim(wg_dir=wg_dir, log=log)
+            d = self._make_directive(Action.START_SERVICE, {"repo": str(Path("/some/repo/.workgraph"))})
+            shim.execute(d)
+            # Authority evaluated against the repo root, not the .workgraph dir.
+            self.assertEqual(mock_authority.call_args[0][0], Path("/some/repo"))
 
     @patch("driftdriver.executor_shim.subprocess.run")
     def test_failed_command_records_failure(self, mock_run: MagicMock) -> None:

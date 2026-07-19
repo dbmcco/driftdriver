@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from driftdriver.paia_topology import is_noncanonical_paia_repo
+from driftdriver.speedriftd_state import load_dispatch_authority
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,17 @@ def _handle_spawn_agent(d: Directive, *, dry_run: bool, repo_paths: dict[str, st
         return {"status": "error", "error": f"unknown repo: {d.params['repo']}"}
     if dry_run:
         return {"status": "dry_run", "action": "spawn_agent", "repo": d.params["repo"], "task_id": task_id}
+    # Gate ``wg spawn`` by lease authority: a factory brain spawn without an
+    # active supervise/autonomous lease is denied (fail closed).
+    authority = load_dispatch_authority(repo_dir)
+    if not authority.get("enabled"):
+        return {
+            "status": "blocked",
+            "action": "spawn_agent",
+            "repo": d.params["repo"],
+            "task_id": task_id,
+            "reason": authority.get("reason") or "dispatch not authorized",
+        }
     code, output = _run_cmd(["wg", "spawn", "--executor", "claude", task_id], timeout=60)
     return {"status": "ok" if code == 0 else "error", "exit_code": code, "output": output}
 
