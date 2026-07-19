@@ -23,8 +23,11 @@ from driftdriver.speedriftd_state import (
     _safe_slug,
     _write_json,
     dispatch_authority,
+    evaluate_lease_expiry_stop,
     load_control_state,
+    load_lease_expiry_stop,
     load_runtime_snapshot,
+    record_lease_expiry_stop,
     runtime_paths,
     write_control_state,
     write_runtime_snapshot,
@@ -383,6 +386,147 @@ def test_runtime_gate_uses_dispatch_authority() -> None:
     authority.assert_called_once_with(control)
     assert result["dispatch_enabled"] is True
     assert result["interactive_service_start"] is True
+
+
+def test_dispatch_authority_denies_manual_mode() -> None:
+    control = {"mode": "manual", "lease_owner": "agent-a", "lease_active": True}
+    result = dispatch_authority(control)
+    assert result["enabled"] is False
+    assert result["mode"] == "manual"
+
+
+def test_dispatch_authority_allows_active_autonomous_lease() -> None:
+    control = {"mode": "autonomous", "lease_owner": "auto", "lease_active": True}
+    result = dispatch_authority(control)
+    assert result["enabled"] is True
+    assert result["mode"] == "autonomous"
+
+
+# ---------------------------------------------------------------------------
+# evaluate_lease_expiry_stop (pure expiry-transition decision)
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluateLeaseExpiryStop:
+    def _expired(self, *, mode: str = "autonomous", owner: str = "sup") -> dict:
+        past = _iso_now(time.time() - 600)
+        return {
+            "mode": mode,
+            "lease_owner": owner,
+            "lease_ttl_seconds": 60,
+            "lease_expires_at": past,
+            "lease_acquired_at": _iso_now(time.time() - 700),
+        }
+
+    def test_active_lease_needs_no_stop(self) -> None:
+        future = _iso_now(time.time() + 600)
+        control = {
+            "mode": "autonomous",
+            "lease_owner": "sup",
+            "lease_ttl_seconds": 60,
+            "lease_expires_at": future,
+        }
+        assert evaluate_lease_expiry_stop(control, marker=None) is None
+
+    def test_observe_mode_never_triggers_stop(self) -> None:
+        # Observe has no running coordinator to stop.
+        control = {"mode": "observe", "lease_owner": "sup", "lease_active": False}
+        assert evaluate_lease_expiry_stop(control, marker=None) is None
+
+    def test_missing_owner_never_triggers_stop(self) -> None:
+        control = {"mode": "autonomous", "lease_owner": ""}
+        assert evaluate_lease_expiry_stop(control, marker=None) is None
+
+    def test_expired_elevated_lease_with_owner_triggers_stop(self) -> None:
+        control = self._expired()
+        decision = evaluate_lease_expiry_stop(control, marker=None)
+        assert decision is not None
+        assert decision["reason"] == "expired_lease"
+        assert decision["mode"] == "autonomous"
+        assert decision["lease_owner"] == "sup"
+        assert decision["lease_key"]
+
+    def test_supervise_expiry_also_triggers_stop(self) -> None:
+        control = self._expired(mode="supervise")
+        decision = evaluate_lease_expiry_stop(control, marker=None)
+        assert decision is not None
+        assert decision["mode"] == "supervise"
+
+    def test_does_not_trust_stale_active_flag(self) -> None:
+        """A control dict claiming lease_active=True must still trigger a stop
+        when the underlying expiry timestamp is in the past."""
+        control = self._expired()
+        control["lease_active"] = True  # stale / lying
+        decision = evaluate_lease_expiry_stop(control, marker=None)
+        assert decision is not None
+
+    def test_idempotent_when_marker_matches_lease_identity(self) -> None:
+        control = self._expired()
+        first = evaluate_lease_expiry_stop(control, marker=None)
+        assert first is not None
+        # Second cycle: marker records the same lease identity -> no repeat stop.
+        marker = {"stopped_lease_key": first["lease_key"]}
+        assert evaluate_lease_expiry_stop(control, marker=marker) is None
+
+    def test_new_expired_lease_stops_again_after_renewal(self) -> None:
+        """A freshly-acquired-and-expired lease has a new identity and stops again."""
+        first_expired = self._expired(owner="first")
+        first = evaluate_lease_expiry_stop(first_expired, marker=None)
+        assert first is not None
+        # A different lease instance (different owner) expires later.
+        second_expired = self._expired(owner="second")
+        marker = {"stopped_lease_key": first["lease_key"]}
+        second = evaluate_lease_expiry_stop(second_expired, marker=marker)
+        assert second is not None
+        assert second["lease_key"] != first["lease_key"]
+
+    def test_decision_is_pure_and_does_not_mutate_input(self) -> None:
+        control = self._expired()
+        before = {k: control[k] for k in control}
+        evaluate_lease_expiry_stop(control, marker=None)
+        assert control == before
+
+
+# ---------------------------------------------------------------------------
+# lease-expiry stop marker I/O (load / record)
+# ---------------------------------------------------------------------------
+
+
+class TestLeaseExpiryStopIO:
+    def test_load_returns_empty_when_no_marker(self, tmp_path: Path) -> None:
+        repo = _scaffold_repo(tmp_path)
+        assert load_lease_expiry_stop(repo) == {}
+
+    def test_record_writes_marker_and_event(self, tmp_path: Path) -> None:
+        repo = _scaffold_repo(tmp_path)
+        decision = {
+            "lease_key": "sup|acq|exp",
+            "reason": "expired_lease",
+            "mode": "autonomous",
+            "lease_owner": "sup",
+            "prior_key": "",
+        }
+        record = record_lease_expiry_stop(
+            repo, decision, stop_result={"exit_code": 0, "stdout": "stopped", "stderr": ""}
+        )
+        assert record["stopped_lease_key"] == "sup|acq|exp"
+        assert record["stop_exit_code"] == 0
+        # Marker persisted and reloadable.
+        reloaded = load_lease_expiry_stop(repo)
+        assert reloaded["stopped_lease_key"] == "sup|acq|exp"
+        # Terminal event appended to today's events log.
+        paths = runtime_paths(repo)
+        event_files = sorted(paths["events_dir"].glob("*.jsonl"))
+        assert event_files
+        events = [
+            json.loads(line)
+            for f in event_files
+            for line in f.read_text().strip().splitlines()
+            if line.strip()
+        ]
+        expiry_events = [e for e in events if e.get("event_type") == "coordinator_stopped_on_lease_expiry"]
+        assert len(expiry_events) == 1
+        assert expiry_events[0]["payload"]["stopped_lease_key"] == "sup|acq|exp"
 
 
 # ---------------------------------------------------------------------------

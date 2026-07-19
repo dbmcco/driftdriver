@@ -247,6 +247,138 @@ def write_control_state(
     return normalized
 
 
+# ---------------------------------------------------------------------------
+# Lease-expiry coordinator stop (idempotent transition enforcement)
+# ---------------------------------------------------------------------------
+#
+# When a lease that permitted dispatch transitions to an expired/denied state,
+# an already-running coordinator may otherwise keep dispatching. The helpers
+# below let the runtime loop detect that transition and stop/revokes the
+# coordinator exactly once, persisting terminal evidence keyed by the expired
+# lease identity so repeated cycles do not duplicate the stop.
+
+LEASE_EXPIRY_STOP_FILENAME = "lease-expiry-stop.json"
+
+
+def _lease_is_active_raw(control: Mapping[str, Any]) -> bool:
+    """Recompute whether a lease is active from raw control fields.
+
+    Pure mirror of the lease-active derivation in ``_normalize_control_state``.
+    Used by the expiry evaluator so transition detection does not depend on a
+    precomputed (and possibly stale) ``lease_active`` flag.
+    """
+    owner = str(control.get("lease_owner") or "").strip()
+    if not owner:
+        return False
+    ttl = max(0, int(control.get("lease_ttl_seconds") or 0))
+    if ttl <= 0:
+        return True
+    return _parse_iso_timestamp(str(control.get("lease_expires_at") or "")) > time.time()
+
+
+def _lease_identity(control: Mapping[str, Any]) -> str:
+    """Stable identity for a single lease instance (owner + timestamps)."""
+    owner = str(control.get("lease_owner") or "").strip()
+    acquired = str(control.get("lease_acquired_at") or "").strip()
+    expires = str(control.get("lease_expires_at") or "").strip()
+    return f"{owner}|{acquired}|{expires}"
+
+
+def evaluate_lease_expiry_stop(
+    control: Mapping[str, Any],
+    marker: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Pure decision: should the runtime stop a coordinator for this expiry?
+
+    Returns a decision dict only when an elevated mode (supervise/autonomous)
+    holds an owner-bearing lease that is no longer active AND we have not
+    already recorded a stop for this exact lease identity. Returns ``None`` for
+    active leases, observe/manual modes, missing owners, malformed control, or
+    leases we have already stopped (idempotent).
+
+    Side-effect-free; callers persist the stop via ``record_lease_expiry_stop``.
+    """
+    mode = str(control.get("mode") or "").strip().lower()
+    if mode not in {"supervise", "autonomous"}:
+        return None
+    owner = str(control.get("lease_owner") or "").strip()
+    if not owner:
+        return None
+    if _lease_is_active_raw(control):
+        return None
+    lease_key = _lease_identity(control)
+    prior_key = str((marker or {}).get("stopped_lease_key") or "")
+    if prior_key == lease_key:
+        return None
+    return {
+        "lease_key": lease_key,
+        "reason": "expired_lease",
+        "mode": mode,
+        "lease_owner": owner,
+        "prior_key": prior_key,
+    }
+
+
+def load_lease_expiry_stop(project_dir: Path) -> dict[str, Any]:
+    """Read the persisted lease-expiry stop marker (empty when never stopped)."""
+    paths = runtime_paths(project_dir)
+    return _read_json(paths["dir"] / LEASE_EXPIRY_STOP_FILENAME)
+
+
+def record_lease_expiry_stop(
+    project_dir: Path,
+    decision: Mapping[str, Any],
+    *,
+    stop_result: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist terminal evidence that a coordinator was stopped on expiry.
+
+    Writes a marker keyed by the expired lease identity (so repeated cycles do
+    not duplicate the stop) and appends a terminal event to the runtime events
+    log. Does NOT acquire a new lease or alter the control mode.
+    """
+    paths = runtime_paths(project_dir)
+    repo_dir = paths["wg_dir"].parent.resolve()
+    repo_name = repo_dir.name
+    now_iso = _iso_now()
+    stop = dict(stop_result or {})
+    record: dict[str, Any] = {
+        "repo": repo_name,
+        "stopped_lease_key": str(decision.get("lease_key") or ""),
+        "stopped_at": now_iso,
+        "mode": str(decision.get("mode") or ""),
+        "reason": str(decision.get("reason") or "expired_lease"),
+        "lease_owner": str(decision.get("lease_owner") or ""),
+        "prior_key": str(decision.get("prior_key") or ""),
+        "stop_exit_code": stop.get("exit_code"),
+        "stop_stdout": str(stop.get("stdout") or "")[:500],
+        "stop_stderr": str(stop.get("stderr") or "")[:500],
+    }
+    _write_json(paths["dir"] / LEASE_EXPIRY_STOP_FILENAME, record)
+    event_date = now_iso[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    _append_jsonl(
+        paths["events_dir"] / f"{event_date}.jsonl",
+        {
+            "event_id": f"evt_{uuid.uuid4().hex}",
+            "ts": now_iso,
+            "repo": repo_name,
+            "event_type": "coordinator_stopped_on_lease_expiry",
+            "state": "expired",
+            "worker_id": "",
+            "task_id": "",
+            "runtime": "",
+            "cycle_id": "",
+            "payload": {
+                "stopped_lease_key": record["stopped_lease_key"],
+                "mode": record["mode"],
+                "lease_owner": record["lease_owner"],
+                "stop_exit_code": record["stop_exit_code"],
+            },
+        },
+    )
+    return record
+
+
 def load_runtime_snapshot(project_dir: Path) -> dict[str, Any]:
     return _read_json(runtime_paths(project_dir)["current"])
 

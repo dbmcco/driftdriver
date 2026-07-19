@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from driftdriver.dispatch import (
     build_worker_snapshots as _build_worker_snapshots,
@@ -173,8 +174,53 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
     }
 
 
+def handle_lease_expiry(
+    project_dir: Path, *, control: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Stop/revokes an already-running coordinator once on lease expiry.
+
+    Detects the transition from an active elevated lease to an expired/denied
+    state and issues a best-effort ``wg service stop`` exactly once per expired
+    lease identity. Idempotent across runtime cycles: the persisted marker key
+    prevents a second stop for the same lease. Does not acquire a new lease or
+    change the operator's control mode.
+    """
+    from driftdriver.speedriftd_state import (
+        evaluate_lease_expiry_stop,
+        load_lease_expiry_stop,
+        record_lease_expiry_stop,
+    )
+
+    marker = load_lease_expiry_stop(project_dir)
+    decision = evaluate_lease_expiry_stop(control, marker)
+    if not decision:
+        return None
+
+    paths = runtime_paths(project_dir)
+    stop_result: dict[str, Any] = {"exit_code": None, "stdout": "", "stderr": ""}
+    try:
+        proc = subprocess.run(  # noqa: S603
+            ["wg", "--dir", str(paths["wg_dir"]), "service", "stop"],
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        stop_result = {
+            "exit_code": proc.returncode,
+            "stdout": proc.stdout[:500],
+            "stderr": proc.stderr[:500],
+        }
+    except Exception as exc:
+        stop_result = {"exit_code": None, "stdout": "", "stderr": str(exc)[:200]}
+    return record_lease_expiry_stop(project_dir, decision, stop_result=stop_result)
+
+
 def run_runtime_cycle(project_dir: Path, *, policy: DriftPolicy | None = None) -> dict[str, Any]:
     snapshot = collect_runtime_snapshot(project_dir, policy=policy)
+    expiry = handle_lease_expiry(project_dir, control=snapshot.get("control") or {})
+    if expiry:
+        snapshot["last_lease_expiry_stop"] = expiry
     return write_runtime_snapshot(project_dir, snapshot)
 
 

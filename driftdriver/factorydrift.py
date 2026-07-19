@@ -1256,6 +1256,10 @@ def execute_factory_cycle(
             attempts.append(row)
 
         if kind == "restart_workgraph_service":
+            authority = dispatch_authority(load_control_state(repo_path))
+            if not authority["enabled"]:
+                _done("blocked", reason=f"service start denied: {authority['reason']}")
+                continue
             rc, out, err = _run_cmd(
                 ["wg", "--dir", str(repo_path / ".workgraph"), "service", "start"],
                 cwd=repo_path,

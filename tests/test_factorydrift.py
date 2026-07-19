@@ -469,7 +469,10 @@ class FactoryDriftTests(unittest.TestCase):
             def _fake_run(_cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
                 return responses.pop(0)
 
-            with patch("driftdriver.factorydrift.subprocess.run", side_effect=_fake_run):
+            with patch("driftdriver.factorydrift.subprocess.run", side_effect=_fake_run), patch(
+                "driftdriver.factorydrift.load_control_state",
+                return_value={"mode": "autonomous", "lease_owner": "factory", "lease_active": True},
+            ):
                 execution = execute_factory_cycle(
                     cycle=cycle,
                     snapshot=snapshot,
@@ -524,7 +527,10 @@ class FactoryDriftTests(unittest.TestCase):
             def _fake_run(_cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
                 return responses.pop(0)
 
-            with patch("driftdriver.factorydrift.subprocess.run", side_effect=_fake_run):
+            with patch("driftdriver.factorydrift.subprocess.run", side_effect=_fake_run), patch(
+                "driftdriver.factorydrift.load_control_state",
+                return_value={"mode": "autonomous", "lease_owner": "factory", "lease_active": True},
+            ):
                 execution = execute_factory_cycle(
                     cycle=cycle,
                     snapshot=snapshot,
@@ -540,6 +546,54 @@ class FactoryDriftTests(unittest.TestCase):
             self.assertEqual(cycle["execution_status"], "failed")
             attempts = execution.get("attempts") or []
             self.assertEqual(str(attempts[1]["status"]), "skipped")
+
+    def test_execute_factory_cycle_blocks_service_start_without_active_lease(self) -> None:
+        policy = _policy()
+        cycle = {
+            "cycle_id": "factory-test",
+            "generated_at": "2026-03-05T12:00:00+00:00",
+            "execution_mode": "execute",
+            "execution_status": "planned_only",
+            "policy": {"factory": {"hard_stop_on_failed_verification": True}},
+            "action_plan": [
+                {
+                    "id": "repo-a:restart_workgraph_service:1",
+                    "repo": "repo-a",
+                    "module": "servicedrift",
+                    "kind": "restart_workgraph_service",
+                    "automation_allowed": True,
+                },
+            ],
+            "outcomes": {"planned_actions": 1, "executed_actions": 0},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "repo-a"
+            (repo / ".workgraph").mkdir(parents=True, exist_ok=True)
+            snapshot = {"repos": [{"name": "repo-a", "path": str(repo)}]}
+
+            # Observe mode with no lease -> service start must fail closed.
+            with patch(
+                "driftdriver.factorydrift.load_control_state",
+                return_value={"mode": "observe", "lease_owner": "", "lease_active": False},
+            ), patch("driftdriver.factorydrift.subprocess.run") as fake_run:
+                execution = execute_factory_cycle(
+                    cycle=cycle,
+                    snapshot=snapshot,
+                    policy=policy,
+                    project_dir=root,
+                    emit_followups=False,
+                    max_followups_per_repo=2,
+                    allow_execute_draft_prs=False,
+                )
+
+            # No service-start subprocess issued; denial recorded deterministically.
+            self.assertEqual(fake_run.call_count, 0)
+            self.assertEqual(execution["executed"], 0)
+            self.assertEqual(execution["skipped"], 1)
+            attempts = execution.get("attempts") or []
+            self.assertEqual(str(attempts[0]["status"]), "blocked")
+            self.assertIn("service start denied", str(attempts[0]["reason"]))
 
     def test_execute_factory_cycle_runs_sec_and_quality_actions(self) -> None:
         policy = _policy()
