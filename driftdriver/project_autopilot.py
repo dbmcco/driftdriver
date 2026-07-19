@@ -804,7 +804,18 @@ def dispatch_task(
                 ctx.status = "failed"
                 run.workers[task["id"]] = ctx
                 return ctx
-        stdout, _stderr = process.communicate(timeout=run.config.worker_timeout + 60)
+        try:
+            stdout, _stderr = process.communicate(timeout=run.config.worker_timeout + 60)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            stdout, _stderr = process.communicate()
+            cleanup_error = _unclaim_claimed_task(project_dir, task["id"])
+            ctx.response = f"worker timed out: {exc}"
+            if cleanup_error:
+                ctx.response = f"{ctx.response}; {cleanup_error}"
+            ctx.status = "failed"
+            run.workers[task["id"]] = ctx
+            return ctx
         result = subprocess.CompletedProcess(
             command,
             process.returncode,

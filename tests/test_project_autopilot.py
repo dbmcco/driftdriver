@@ -265,6 +265,49 @@ class TestSessionDriverLifecycle(unittest.TestCase):
         unclaim.assert_called_once_with(["wg", "unclaim", "t1"], cwd=repo)
         self.assertIs(run.workers["t1"], ctx)
 
+    def test_fallback_worker_timeout_kills_reaps_and_unclaims(self):
+        class Process:
+            returncode = -9
+
+            def __init__(self) -> None:
+                self.communicate_calls = 0
+                self.killed = False
+
+            def communicate(self, *, timeout: int | None = None) -> tuple[str, str]:
+                self.communicate_calls += 1
+                if self.communicate_calls == 1:
+                    raise subprocess.TimeoutExpired(["claude"], timeout or 0)
+                return "", ""
+
+            def kill(self) -> None:
+                self.killed = True
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            run = AutopilotRun(config=AutopilotConfig(project_dir=repo, worker_timeout=1))
+            task = {"id": "t1", "title": "Task 1"}
+            active = {"mode": "autonomous", "lease_owner": "agent-a", "lease_active": True}
+            process = Process()
+            with (
+                patch("driftdriver.project_autopilot.load_control_state", return_value=active),
+                patch("driftdriver.project_autopilot.ExecutorShim") as shim,
+                patch("driftdriver.project_autopilot._start_command", return_value=process),
+                patch(
+                    "driftdriver.project_autopilot._run_command",
+                    return_value=subprocess.CompletedProcess(["wg", "unclaim", "t1"], 0, "", ""),
+                ) as unclaim,
+            ):
+                ctx = dispatch_task(task, repo, None, run)
+
+        self.assertEqual(ctx.status, "failed")
+        self.assertIn("timed out", ctx.response)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.communicate_calls, 2)
+        shim.return_value.execute.assert_called_once()
+        unclaim.assert_called_once_with(["wg", "unclaim", "t1"], cwd=repo)
+        self.assertIs(run.workers["t1"], ctx)
+
     def test_dispatch_surfaces_failed_unclaim_after_revocation(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)
