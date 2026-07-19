@@ -7,12 +7,14 @@ import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from driftdriver.speedriftd_state import (
     CONTROL_MODES,
     _append_jsonl,
+    _apply_runtime_gate,
     _default_control,
     _iso_now,
     _normalize_control_state,
@@ -20,6 +22,7 @@ from driftdriver.speedriftd_state import (
     _read_json,
     _safe_slug,
     _write_json,
+    dispatch_authority,
     load_control_state,
     load_runtime_snapshot,
     runtime_paths,
@@ -322,6 +325,64 @@ class TestDefaultControl:
     def test_manual_disables_dispatch(self) -> None:
         ctrl = _default_control("repo", {"default_mode": "manual"})
         assert ctrl["dispatch_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# dispatch_authority
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_authority_denies_observe() -> None:
+    control = {"mode": "observe", "lease_owner": "", "lease_active": False}
+    result = dispatch_authority(control)
+    assert result == {
+        "enabled": False,
+        "mode": "observe",
+        "lease_active": False,
+        "reason": "mode does not permit dispatch",
+    }
+
+
+def test_dispatch_authority_allows_active_supervise_lease() -> None:
+    control = {"mode": "supervise", "lease_owner": "agent-a", "lease_active": True}
+    result = dispatch_authority(control)
+    assert result["enabled"] is True
+    assert result["reason"] == "active lease permits dispatch"
+
+
+def test_dispatch_authority_denies_expired_lease() -> None:
+    control = {"mode": "autonomous", "lease_owner": "agent-a", "lease_active": False}
+    result = dispatch_authority(control)
+    assert result["enabled"] is False
+    assert result["reason"] == "lease is not active"
+
+
+def test_dispatch_authority_denies_missing_owner_and_malformed_mode() -> None:
+    assert dispatch_authority({
+        "mode": "supervise", "lease_owner": "", "lease_active": True,
+    })["reason"] == "lease owner is missing"
+    assert dispatch_authority({
+        "mode": "broken", "lease_owner": "agent-a", "lease_active": True,
+    })["reason"] == "mode does not permit dispatch"
+
+
+def test_runtime_gate_uses_dispatch_authority() -> None:
+    control = {
+        "mode": "supervise",
+        "lease_owner": "agent-a",
+        "lease_active": True,
+        "dispatch_enabled": False,
+        "interactive_service_start": False,
+    }
+    with patch(
+        "driftdriver.speedriftd_state.dispatch_authority",
+        return_value={"enabled": True},
+    ) as authority:
+        result = _apply_runtime_gate(control)
+
+    authority.assert_called_once_with(control)
+    assert result["dispatch_enabled"] is True
+    assert result["interactive_service_start"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from driftdriver.policy import DriftPolicy, load_drift_policy
 from driftdriver.workgraph import find_workgraph_dir
@@ -153,13 +153,35 @@ def _normalize_control_state(raw: dict[str, Any], *, repo_name: str, cfg: dict[s
     return control
 
 
+def dispatch_authority(control: Mapping[str, Any]) -> dict[str, Any]:
+    mode = str(control.get("mode") or "observe").strip().lower()
+    lease_owner = str(control.get("lease_owner") or "").strip()
+    lease_active = bool(control.get("lease_active"))
+    if mode not in {"supervise", "autonomous"}:
+        reason = "mode does not permit dispatch"
+        enabled = False
+    elif not lease_owner:
+        reason = "lease owner is missing"
+        enabled = False
+    elif not lease_active:
+        reason = "lease is not active"
+        enabled = False
+    else:
+        reason = "active lease permits dispatch"
+        enabled = True
+    return {
+        "enabled": enabled,
+        "mode": mode,
+        "lease_active": lease_active,
+        "reason": reason,
+    }
+
+
 def _apply_runtime_gate(control: dict[str, Any]) -> dict[str, Any]:
     """Keep dispatch and service start disabled without an active lease."""
-    mode = str(control.get("mode") or "observe").strip().lower()
-    control["dispatch_enabled"] = mode in {"supervise", "autonomous"} and bool(
-        control.get("lease_active")
-    )
-    control["interactive_service_start"] = bool(control["dispatch_enabled"])
+    dispatch_enabled = dispatch_authority(control)["enabled"]
+    control["dispatch_enabled"] = dispatch_enabled
+    control["interactive_service_start"] = dispatch_enabled
     return control
 
 
