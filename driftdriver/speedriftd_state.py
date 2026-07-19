@@ -88,6 +88,8 @@ def _coerce_lease_ttl(raw: Any) -> tuple[int, bool]:
     """Return a non-negative TTL and whether the raw value was valid."""
     if raw is None or raw == "":
         return 0, True
+    if isinstance(raw, bool):
+        return 0, False
     try:
         return max(0, int(raw)), True
     except (TypeError, ValueError):

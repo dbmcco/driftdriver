@@ -1282,6 +1282,9 @@ def supervise_repo_services(
             directive_log=directive_log,
         )
         if not start_result["authorized"]:
+            # The locked recheck may deny after the optimistic candidate
+            # check; do not make that denial consume the retry cooldown.
+            _SUPERVISOR_LAST_ATTEMPT.pop(key, None)
             denied_rows.append(
                 {
                     "repo": repo_name,

@@ -179,6 +179,35 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
     }
 
 
+def _workgraph_service_running(project_dir: Path) -> bool | None:
+    """Return service state when it can be read, otherwise ``None``."""
+    paths = runtime_paths(project_dir)
+    try:
+        proc = subprocess.run(  # noqa: S603
+            ["wg", "--dir", str(paths["wg_dir"]), "service", "status", "--json"],
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        status = json.loads(proc.stdout or "")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(status, dict):
+        return None
+    if isinstance(status.get("running"), bool):
+        return status["running"]
+    state = str(status.get("status") or "").strip().lower()
+    if state in {"running", "stopped"}:
+        return state == "running"
+    return None
+
+
 def _stop_workgraph_service(project_dir: Path) -> dict[str, Any]:
     """Best-effort stop of the local Workgraph coordinator.
 
@@ -288,7 +317,15 @@ def handle_lease_expiry(
                     "lease_owner": str(marker.get("lease_owner") or ""),
                     "prior_key": str(marker.get("prior_key") or ""),
                 }
-                stop_result = _stop_workgraph_service(project_dir)
+                service_running = _workgraph_service_running(project_dir)
+                if service_running is False:
+                    stop_result = {
+                        "exit_code": 0,
+                        "stdout": "reconciled stopped service state",
+                        "stderr": "",
+                    }
+                else:
+                    stop_result = _stop_workgraph_service(project_dir)
                 return record_lease_expiry_stop(
                     project_dir,
                     reconciled_decision,

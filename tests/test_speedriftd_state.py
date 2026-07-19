@@ -657,6 +657,21 @@ class TestNormalizeControlState:
         )
         assert result["lease_ttl_seconds"] == 0
 
+    def test_boolean_lease_ttl_fails_closed(self) -> None:
+        result = _normalize_control_state(
+            {
+                "mode": "autonomous",
+                "lease_owner": "agent-a",
+                "lease_ttl_seconds": True,
+                "lease_expires_at": _iso_now(time.time() + 3600),
+            },
+            repo_name="test",
+            cfg={},
+        )
+        assert result["lease_ttl_valid"] is False
+        assert result["lease_active"] is False
+        assert dispatch_authority(result)["enabled"] is False
+
 
 # ---------------------------------------------------------------------------
 # load_control_state / write_control_state (integration with disk)

@@ -687,6 +687,38 @@ class EcosystemHubTests(unittest.TestCase):
                 self.assertEqual(second["cooldown_skipped"], 1)
                 self.assertEqual(fake_run.call_count, 1)
 
+    def test_supervise_repo_services_does_not_consume_cooldown_on_locked_denial(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            _SUPERVISOR_LAST_ATTEMPT.clear()
+            payload = [{
+                "name": "repo",
+                "path": str(repo),
+                "exists": True,
+                "workgraph_exists": True,
+                "service_running": False,
+                "in_progress": [{"id": "t1", "title": "T1"}],
+                "ready": [],
+            }]
+            active = {"mode": "supervise", "lease_owner": "supervisor", "lease_active": True}
+            denied = {"mode": "supervise", "lease_owner": "supervisor", "lease_active": False}
+            with (
+                patch(
+                    "driftdriver.speedriftd_state.load_control_state",
+                    side_effect=[active, denied, active, active],
+                ),
+                patch("driftdriver.ecosystem_hub._run", return_value=(0, "started", "")) as fake_run,
+            ):
+                first = supervise_repo_services(repos_payload=payload, cooldown_seconds=60, max_starts=3)
+                second = supervise_repo_services(repos_payload=payload, cooldown_seconds=60, max_starts=3)
+
+        self.assertEqual(first["started"], 0)
+        self.assertEqual(first["denied"][0]["reason"], "service start denied: lease is not active")
+        self.assertEqual(second["attempted"], 1)
+        self.assertEqual(second["started"], 1)
+        fake_run.assert_called_once()
+
     @patch(
         "driftdriver.speedriftd_state.load_control_state",
         return_value={"mode": "supervise", "lease_owner": "stale", "lease_active": False},

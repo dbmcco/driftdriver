@@ -139,6 +139,7 @@ class TestSessionDriverLifecycle(unittest.TestCase):
                     "driftdriver.project_autopilot.launch_worker",
                     return_value={"session_id": "sess-1"},
                 ) as launch,
+                patch("driftdriver.project_autopilot._run_command") as run_command,
                 patch("driftdriver.project_autopilot.converse", return_value="done"),
                 patch("driftdriver.project_autopilot.stop_worker"),
             ):
@@ -149,6 +150,7 @@ class TestSessionDriverLifecycle(unittest.TestCase):
         shim.return_value.execute.assert_called_once()
         self.assertEqual(lock.call_count, 2)
         launch.assert_not_called()
+        run_command.assert_called_once_with(["wg", "unclaim", "t1"], cwd=repo)
         self.assertEqual(run.workers, {})
 
     def test_dispatch_claim_is_serialized_with_authority_check(self):

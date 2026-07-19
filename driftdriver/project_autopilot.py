@@ -695,6 +695,11 @@ def _dispatch_authority(project_dir: Path) -> dict[str, object]:
         return {"enabled": False, "reason": "control state unavailable"}
 
 
+def _unclaim_claimed_task(project_dir: Path, task_id: str) -> None:
+    """Return a claim to Workgraph when admission is revoked before launch."""
+    _run_command(["wg", "unclaim", task_id], cwd=project_dir)
+
+
 def dispatch_task(
     task: dict,
     project_dir: Path,
@@ -756,6 +761,7 @@ def dispatch_task(
         with control_receipt_lock(project_dir):
             authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
+                _unclaim_claimed_task(project_dir, task["id"])
                 return WorkerContext(
                     task_id=task["id"],
                     task_title=task.get("title", ""),
@@ -793,6 +799,7 @@ def dispatch_task(
         with control_receipt_lock(project_dir):
             authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
+                _unclaim_claimed_task(project_dir, task["id"])
                 return WorkerContext(
                     task_id=task["id"],
                     task_title=task.get("title", ""),
