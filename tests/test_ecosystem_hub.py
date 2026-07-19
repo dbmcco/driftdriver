@@ -7,12 +7,14 @@ import socket
 import struct
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import patch
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from pathlib import Path
 
 import driftdriver.ecosystem_hub as ecosystem_hub_module
@@ -649,7 +651,10 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertTrue(candidates[0].working_tree_dirty)
             self.assertTrue(any(name.startswith("src") for name in candidates[0].changed_files))
 
-    @patch("driftdriver.speedriftd_state.load_control_state", return_value={"mode": "supervise"})
+    @patch(
+        "driftdriver.speedriftd_state.load_control_state",
+        return_value={"mode": "supervise", "lease_owner": "supervisor", "lease_active": True},
+    )
     def test_supervise_repo_services_restarts_active_repo_and_applies_cooldown(self, _mock_ctrl: Any) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -677,6 +682,168 @@ class EcosystemHubTests(unittest.TestCase):
                 self.assertEqual(second["attempted"], 0)
                 self.assertEqual(second["cooldown_skipped"], 1)
                 self.assertEqual(fake_run.call_count, 1)
+
+    @patch(
+        "driftdriver.speedriftd_state.load_control_state",
+        return_value={"mode": "supervise", "lease_owner": "stale", "lease_active": False},
+    )
+    def test_supervise_repo_services_skips_repo_without_active_lease(self, _mock_ctrl: Any) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            _SUPERVISOR_LAST_ATTEMPT.clear()
+            payload = [
+                {
+                    "name": "repo",
+                    "path": str(repo),
+                    "exists": True,
+                    "workgraph_exists": True,
+                    "service_running": False,
+                    "in_progress": [{"id": "t1", "title": "T1"}],
+                    "ready": [],
+                }
+            ]
+            with patch("driftdriver.ecosystem_hub._run") as fake_run:
+                result = supervise_repo_services(repos_payload=payload, cooldown_seconds=60, max_starts=3)
+
+            # Expired/missing lease -> no service start attempted.
+            self.assertEqual(result["attempted"], 0)
+            self.assertEqual(result["started"], 0)
+            fake_run.assert_not_called()
+
+    def test_supervise_repo_services_skips_expired_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            _SUPERVISOR_LAST_ATTEMPT.clear()
+            payload = [
+                {
+                    "name": "repo",
+                    "path": str(repo),
+                    "exists": True,
+                    "workgraph_exists": True,
+                    "service_running": False,
+                    "in_progress": [],
+                    "ready": [{"id": "task-1"}],
+                }
+            ]
+            from driftdriver.directives import DirectiveLog
+
+            directive_log = DirectiveLog(repo / "directives")
+            with patch(
+                "driftdriver.speedriftd_state.load_control_state",
+                return_value={"mode": "supervise", "lease_owner": "agent-a", "lease_active": False},
+            ), patch("driftdriver.ecosystem_hub.snapshot._run_cmd") as run, patch(
+                "driftdriver.executor_shim.ExecutorShim.execute"
+            ) as execute:
+                result = supervise_repo_services(
+                    repos_payload=payload,
+                    cooldown_seconds=0,
+                    max_starts=1,
+                    directive_log=directive_log,
+                )
+
+        self.assertEqual(result["attempted"], 0)
+        self.assertEqual(result["restart_candidates"], 0)
+        self.assertEqual(result["cooldown_skipped"], 0)
+        self.assertEqual(result["attempts"][0]["reason"], "service start denied: lease is not active")
+        run.assert_not_called()
+        execute.assert_not_called()
+
+    def test_api_service_start_requires_active_lease(self) -> None:
+        from http.server import ThreadingHTTPServer
+
+        from driftdriver.ecosystem_hub.api import _handler_factory
+        from driftdriver.ecosystem_hub.websocket import LiveStreamHub
+
+        controls = [
+            ({"mode": "observe", "lease_owner": "agent-a", "lease_active": False}, "mode does not permit dispatch"),
+            ({"mode": "supervise", "lease_owner": "agent-a", "lease_active": False}, "lease is not active"),
+        ]
+        routes = ["/api/repo/demo/start", "/api/repo/demo/service/workgraph/start"]
+        for control, reason in controls:
+            for route in routes:
+                with self.subTest(route=route, control=control):
+                    with tempfile.TemporaryDirectory() as td:
+                        root = Path(td)
+                        repo = root / "demo"
+                        repo.mkdir()
+                        (repo / ".workgraph").mkdir()
+                        snapshot_path = root / "snapshot.json"
+                        snapshot_path.write_text(
+                            json.dumps({"repos": [{"name": "demo", "path": str(repo)}]}),
+                            encoding="utf-8",
+                        )
+                        stop_event = threading.Event()
+                        handler = _handler_factory(snapshot_path, snapshot_path, LiveStreamHub(stop_event))
+                        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+                        thread = threading.Thread(target=server.serve_forever, daemon=True)
+                        thread.start()
+                        try:
+                            request = Request(
+                                f"http://127.0.0.1:{server.server_address[1]}{route}",
+                                method="POST",
+                            )
+                            with patch(
+                                "driftdriver.speedriftd_state.load_control_state",
+                                return_value=control,
+                            ), patch("subprocess.run") as run:
+                                try:
+                                    urlopen(request, timeout=5)
+                                except HTTPError as exc:
+                                    self.assertEqual(exc.code, 409)
+                                    body = json.loads(exc.read().decode("utf-8"))
+                                else:
+                                    self.fail("denied service start unexpectedly succeeded")
+                        finally:
+                            server.shutdown()
+                            server.server_close()
+                            thread.join(timeout=2)
+                    self.assertEqual(body, {"error": "dispatch_not_authorized", "repo": "demo", "reason": reason})
+                    run.assert_not_called()
+
+    def test_api_service_start_preserves_active_lease_behavior(self) -> None:
+        from http.server import ThreadingHTTPServer
+
+        from driftdriver.ecosystem_hub.api import _handler_factory
+        from driftdriver.ecosystem_hub.websocket import LiveStreamHub
+
+        for route in ("/api/repo/demo/start", "/api/repo/demo/service/workgraph/start"):
+            with self.subTest(route=route), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                repo = root / "demo"
+                repo.mkdir()
+                (repo / ".workgraph").mkdir()
+                snapshot_path = root / "snapshot.json"
+                snapshot_path.write_text(
+                    json.dumps({"repos": [{"name": "demo", "path": str(repo)}]}),
+                    encoding="utf-8",
+                )
+                stop_event = threading.Event()
+                handler = _handler_factory(snapshot_path, snapshot_path, LiveStreamHub(stop_event))
+                server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    request = Request(
+                        f"http://127.0.0.1:{server.server_address[1]}{route}",
+                        method="POST",
+                    )
+                    completed = subprocess.CompletedProcess(request, 0, stdout="started", stderr="")
+                    with patch(
+                        "driftdriver.speedriftd_state.load_control_state",
+                        return_value={"mode": "supervise", "lease_owner": "agent-a", "lease_active": True},
+                    ), patch("subprocess.run", return_value=completed) as run:
+                        response = urlopen(request, timeout=5)
+                        data = json.loads(response.read().decode("utf-8"))
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=2)
+
+            self.assertEqual(response.status, 200)
+            self.assertEqual(data["returncode"], 0)
+            self.assertEqual(run.call_count, 1)
 
     def test_collect_snapshot_aggregates_and_renders_packets(self) -> None:
         with tempfile.TemporaryDirectory() as td:

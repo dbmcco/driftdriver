@@ -226,6 +226,19 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return str(r.get("path") or "")
         return None
 
+    def _dispatch_authority_for_repo(self, repo_path: str) -> dict[str, Any]:
+        """Resolve the lease-gated dispatch authority for a target repo.
+
+        Every Driftdriver-owned service-start route consults this so that a
+        repo in observe/manual/expired/missing-owner/malformed state fails
+        closed before spawning a ``wg service start`` subprocess.
+        """
+        try:
+            from driftdriver.speedriftd_state import dispatch_authority, load_control_state
+            return dispatch_authority(load_control_state(Path(repo_path)))
+        except Exception as exc:
+            return {"enabled": False, "reason": f"control unavailable: {exc}", "mode": "unknown"}
+
     def _pg_config(self) -> "PostgresConfig":
         from driftdriver.intelligence.db import PostgresConfig as _PgConfig
         return _PgConfig()
@@ -602,7 +615,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 )
             return
 
-        if route.startswith("/api/repo/") and route.endswith("/start"):
+        if route.startswith("/api/repo/") and route.endswith("/start") and not route.endswith("/service/workgraph/start"):
             repo_name = route[len("/api/repo/"):-len("/start")]
             if not repo_name:
                 self._send_json({"error": "missing_repo_name"}, status=HTTPStatus.BAD_REQUEST)
@@ -624,6 +637,13 @@ class _HubHandler(BaseHTTPRequestHandler):
             wg_dir = Path(repo_path) / ".workgraph"
             if not wg_dir.is_dir():
                 self._send_json({"error": "no_workgraph", "repo": repo_name}, status=HTTPStatus.BAD_REQUEST)
+                return
+            authority = self._dispatch_authority_for_repo(repo_path)
+            if not authority.get("enabled"):
+                self._send_json(
+                    {"error": "dispatch_not_authorized", "repo": repo_name, "reason": authority["reason"]},
+                    status=HTTPStatus.CONFLICT,
+                )
                 return
             import subprocess as _sp
             try:
@@ -657,6 +677,13 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return
             if not (Path(repo_path) / ".workgraph").is_dir():
                 self._send_json({"error": "no_workgraph", "repo": repo_name}, status=HTTPStatus.BAD_REQUEST)
+                return
+            authority = self._dispatch_authority_for_repo(repo_path)
+            if not authority.get("enabled"):
+                self._send_json(
+                    {"error": "dispatch_not_authorized", "repo": repo_name, "reason": authority["reason"]},
+                    status=HTTPStatus.CONFLICT,
+                )
                 return
             import subprocess as _sp
             try:

@@ -1194,15 +1194,23 @@ def supervise_repo_services(
         if bool(row.get("service_running")):
             continue
 
-        # Only start services in repos whose speedriftd mode permits it.
         repo_path = Path(repo_path_raw).expanduser()
         try:
-            from driftdriver.speedriftd_state import load_control_state
+            from driftdriver.speedriftd_state import dispatch_authority, load_control_state
             ctrl = load_control_state(repo_path)
-            repo_mode = str(ctrl.get("mode") or "observe").strip().lower()
+            authority = dispatch_authority(ctrl)
         except Exception:
-            repo_mode = "observe"
-        if repo_mode not in ("supervise", "autonomous"):
+            authority = {"enabled": False, "reason": "control state unavailable"}
+        if not authority.get("enabled"):
+            attempt_rows.append(
+                {
+                    "repo": repo_name,
+                    "path": str(repo_path),
+                    "ok": False,
+                    "skipped": True,
+                    "reason": f"service start denied: {authority['reason']}",
+                }
+            )
             continue
 
         in_progress = row.get("in_progress") if isinstance(row.get("in_progress"), list) else []
