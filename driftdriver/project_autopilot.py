@@ -18,6 +18,7 @@ from driftdriver.executor_shim import ExecutorShim
 from driftdriver.manual_owner import apply_manual_owner_policy
 from driftdriver.policy import load_drift_policy
 from driftdriver.planner import DECOMPOSE_PROMPT_TEMPLATE, build_decompose_prompt
+from driftdriver.speedriftd_state import dispatch_authority, load_control_state
 
 SESSION_DRIVER_GLOB = (
     "~/.claude/plugins/cache/superpowers-marketplace/"
@@ -678,6 +679,16 @@ def dispatch_task(
 ) -> WorkerContext:
     """Dispatch a worker for a task. Returns WorkerContext."""
     worker_name = f"ap-{task['id']}"
+    authority = dispatch_authority(load_control_state(project_dir))
+    if not authority["enabled"]:
+        return WorkerContext(
+            task_id=task["id"],
+            task_title=task.get("title", ""),
+            worker_name=worker_name,
+            status="blocked",
+            response=authority["reason"],
+        )
+
     ctx = WorkerContext(
         task_id=task["id"],
         task_title=task.get("title", ""),
@@ -940,8 +951,14 @@ def _run_health_check(run: AutopilotRun) -> None:
 def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
     """Main autopilot loop: dispatch → drift check → loop until done."""
     project_dir = run.config.project_dir
-    scripts_dir = discover_session_driver()
     run.started_at = time.time()
+
+    if not run.config.dry_run:
+        authority = dispatch_authority(load_control_state(project_dir))
+        if not authority["enabled"]:
+            return run
+
+    scripts_dir = discover_session_driver()
 
     # Initialize peer registry if federation is enabled
     peer_registry = None
@@ -955,6 +972,11 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
 
         # Health check running workers before dispatching new ones
         _run_health_check(run)
+
+        if not run.config.dry_run:
+            authority = dispatch_authority(load_control_state(project_dir))
+            if not authority["enabled"]:
+                return run
 
         ready = get_ready_tasks(project_dir)
 
@@ -980,6 +1002,11 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
         local_tasks = [t for t in actionable if t["id"] not in peer_dispatched]
         batch = local_tasks[: run.config.max_parallel]
 
+        if not run.config.dry_run:
+            authority = dispatch_authority(load_control_state(project_dir))
+            if not authority["enabled"]:
+                return run
+
         for task in batch:
             if run.config.dry_run:
                 print(f"[dry-run] Would dispatch: {task['id']} — {task.get('title')}")
@@ -988,6 +1015,9 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
 
             print(f"[autopilot] Dispatching: {task['id']} — {task.get('title')}")
             ctx = dispatch_task(task, project_dir, scripts_dir, run)
+
+            if ctx.status == "blocked":
+                return run
 
             if ctx.status == "failed":
                 run.failed_tasks.add(task["id"])

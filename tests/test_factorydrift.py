@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from driftdriver.factorydrift import (
+    _dispatch_ready_workers,
     build_factory_cycle,
     classify_drift_outcome,
     emit_factory_followups,
@@ -91,6 +92,43 @@ def _policy() -> SimpleNamespace:
 
 
 class FactoryDriftTests(unittest.TestCase):
+    def test_dispatch_ready_workers_denies_before_ready_selection_or_launch(self) -> None:
+        repo_path = Path(tempfile.mkdtemp())
+        try:
+            with patch(
+                "driftdriver.factorydrift.load_control_state",
+                return_value={
+                    "mode": "autonomous",
+                    "lease_owner": "agent-a",
+                    "lease_active": False,
+                },
+            ), patch("driftdriver.project_autopilot.get_ready_tasks") as ready, patch(
+                "driftdriver.project_autopilot.launch_worker"
+            ) as launch:
+                result = _dispatch_ready_workers(
+                    repo_path=repo_path,
+                    cfg={"max_dispatch_per_repo": 2},
+                )
+        finally:
+            repo_path.rmdir()
+
+        self.assertEqual(
+            result,
+            {
+                "ok": False,
+                "status": "blocked",
+                "reason": "lease is not active",
+                "using_session_driver": False,
+                "attempted": 0,
+                "ready_seen": 0,
+                "dispatched": [],
+                "failed": [],
+                "escalated": [],
+            },
+        )
+        ready.assert_not_called()
+        launch.assert_not_called()
+
     def test_resolve_repo_autonomy_applies_repo_override(self) -> None:
         policy = _policy()
         default = resolve_repo_autonomy(policy, "repo-a")

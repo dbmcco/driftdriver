@@ -18,6 +18,7 @@ from driftdriver.outcome import DriftOutcome, write_outcome
 from driftdriver.plandrift import emit_plan_review_tasks, run_workgraph_plan_review
 from driftdriver.qadrift import emit_quality_review_tasks, run_program_quality_scan
 from driftdriver.secdrift import emit_security_review_tasks, run_secdrift_scan
+from driftdriver.speedriftd_state import dispatch_authority, load_control_state
 
 # Session suppression — threshold before brain considers a session stale.
 _SESSION_STALE_SECONDS = 600
@@ -982,6 +983,20 @@ def _dispatch_ready_workers(
     repo_path: Path,
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
+    authority = dispatch_authority(load_control_state(repo_path))
+    if not authority["enabled"]:
+        return {
+            "ok": False,
+            "status": "blocked",
+            "reason": authority["reason"],
+            "using_session_driver": False,
+            "attempted": 0,
+            "ready_seen": 0,
+            "dispatched": [],
+            "failed": [],
+            "escalated": [],
+        }
+
     from driftdriver.project_autopilot import (
         AutopilotConfig,
         AutopilotRun,

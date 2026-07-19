@@ -19,6 +19,7 @@ from driftdriver.project_autopilot import (
     _init_peer_registry,
     _run_health_check,
     _run_peer_dispatch,
+    run_autopilot_loop,
 )
 
 
@@ -52,6 +53,27 @@ class InitPeerRegistryTests(unittest.TestCase):
 
 
 class RunPeerDispatchTests(unittest.TestCase):
+    @patch("driftdriver.project_autopilot._run_peer_dispatch")
+    @patch("driftdriver.project_autopilot._init_peer_registry")
+    @patch("driftdriver.project_autopilot.get_ready_tasks")
+    @patch("driftdriver.project_autopilot.load_control_state")
+    def test_run_loop_denies_before_peer_dispatch_or_ready_selection(
+        self, mock_control, mock_ready, mock_registry, mock_peer_dispatch
+    ) -> None:
+        mock_control.return_value = {
+            "mode": "autonomous",
+            "lease_owner": "agent-a",
+            "lease_active": False,
+        }
+        run = self._make_run()
+
+        result = run_autopilot_loop(run)
+
+        self.assertEqual(result.completed_tasks, set())
+        mock_ready.assert_not_called()
+        mock_registry.assert_not_called()
+        mock_peer_dispatch.assert_not_called()
+
     def _make_run(self, dry_run: bool = False) -> AutopilotRun:
         config = AutopilotConfig(project_dir=Path("/tmp/proj"), dry_run=dry_run)
         return AutopilotRun(config=config)
@@ -179,7 +201,11 @@ class NoPeerDispatchFlagTests(unittest.TestCase):
     @patch("driftdriver.project_autopilot._init_peer_registry")
     @patch("driftdriver.project_autopilot.get_ready_tasks", return_value=[])
     @patch("driftdriver.project_autopilot.discover_session_driver", return_value=None)
-    def test_no_peer_dispatch_skips_registry_init(self, _sd, _ready, mock_init) -> None:
+    @patch(
+        "driftdriver.project_autopilot.load_control_state",
+        return_value={"mode": "autonomous", "lease_owner": "agent-a", "lease_active": True},
+    )
+    def test_no_peer_dispatch_skips_registry_init(self, _control, _sd, _ready, mock_init) -> None:
         config = AutopilotConfig(
             project_dir=Path("/tmp"),
             no_peer_dispatch=True,
