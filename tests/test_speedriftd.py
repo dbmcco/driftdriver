@@ -699,6 +699,56 @@ class LeaseExpiryStopTests(unittest.TestCase):
             self.assertEqual(failure["payload"]["stop_stderr"], "wg unavailable")
             self.assertFalse(failure["payload"]["stop_succeeded"])
 
+    def test_active_to_released_lease_stops_coordinator(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+            write_control_state(
+                repo,
+                mode="autonomous",
+                release_lease=True,
+                reason="operator released lease",
+            )
+
+            with patch(
+                "driftdriver.speedriftd._stop_workgraph_service",
+                return_value={"exit_code": 0, "stdout": "stopped", "stderr": ""},
+            ) as stop:
+                snapshot = run_runtime_cycle(repo)
+
+            stop.assert_called_once_with(repo)
+            self.assertEqual(snapshot["last_lease_expiry_stop"]["reason"], "released_lease")
+            self.assertEqual(snapshot["last_lease_expiry_stop"]["lease_owner"], "speedriftd")
+
+    def test_released_lease_stop_failure_is_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            write_control_state(
+                repo,
+                mode="autonomous",
+                lease_owner="speedriftd",
+                lease_ttl_seconds=120,
+                reason="armed",
+            )
+            run_runtime_cycle(repo)
+            write_control_state(repo, mode="autonomous", release_lease=True, reason="released")
+
+            with patch(
+                "driftdriver.speedriftd._stop_workgraph_service",
+                side_effect=[
+                    {"exit_code": 7, "stdout": "", "stderr": "stop failed"},
+                    {"exit_code": 0, "stdout": "stopped", "stderr": ""},
+                ],
+            ) as stop:
+                first = run_runtime_cycle(repo)
+                second = run_runtime_cycle(repo)
+
+            self.assertEqual(stop.call_count, 2)
+            self.assertEqual(first["last_lease_expiry_stop"]["stop_exit_code"], 7)
+            self.assertEqual(second["last_lease_expiry_stop"]["stop_exit_code"], 0)
+
     def test_active_to_manual_or_observe_does_not_stop_coordinator(self) -> None:
         for mode in ("manual", "observe"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as td:

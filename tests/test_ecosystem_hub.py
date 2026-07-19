@@ -714,6 +714,7 @@ class EcosystemHubTests(unittest.TestCase):
                 second = supervise_repo_services(repos_payload=payload, cooldown_seconds=60, max_starts=3)
 
         self.assertEqual(first["started"], 0)
+        self.assertEqual(first["attempted"], 0)
         self.assertEqual(first["denied"][0]["reason"], "service start denied: lease is not active")
         self.assertEqual(second["attempted"], 1)
         self.assertEqual(second["started"], 1)

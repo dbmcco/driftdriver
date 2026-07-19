@@ -273,14 +273,28 @@ def handle_lease_expiry(
     previous = previous_control or {}
     previous_mode = str(previous.get("mode") or "").strip().lower()
     current_mode = str(control.get("mode") or "").strip().lower()
-    same_lease_failed = (
-        isinstance(previous_stop, Mapping)
-        and str(previous_stop.get("stopped_lease_key") or "") == _lease_identity(control)
-        and previous_stop.get("stop_exit_code") != 0
-    )
     prior_active_transition = (
         previous.get("lease_active") is True
         and previous_mode in {"supervise", "autonomous"}
+    )
+    current_owner = str(control.get("lease_owner") or "").strip()
+    failed_release_transition = (
+        not current_owner
+        and isinstance(previous_stop, Mapping)
+        and bool(str(previous_stop.get("stopped_lease_key") or ""))
+        and previous_stop.get("stop_exit_code") != 0
+    )
+    released_transition = (prior_active_transition or failed_release_transition) and not current_owner
+    release_key = (
+        _lease_identity(previous)
+        if str(previous.get("lease_owner") or "").strip()
+        else str((previous_stop or {}).get("stopped_lease_key") or "")
+    )
+    expected_failed_key = release_key if released_transition else _lease_identity(control)
+    same_lease_failed = (
+        isinstance(previous_stop, Mapping)
+        and str(previous_stop.get("stopped_lease_key") or "") == expected_failed_key
+        and previous_stop.get("stop_exit_code") != 0
     )
     if (
         not (prior_active_transition or same_lease_failed)
@@ -298,14 +312,19 @@ def handle_lease_expiry(
             # but before this process acquired the expiry lock. Never stop a
             # coordinator for an active or replaced lease.
             locked_control = load_control_state(project_dir)
-            if (
-                _lease_is_active_raw(locked_control)
-                or _lease_identity(locked_control) != _lease_identity(control)
-            ):
+            if _lease_is_active_raw(locked_control):
                 return None
-
+            if released_transition:
+                # An empty owner is a meaningful release only if no replacement
+                # lease was acquired before the locked decision.
+                if str(locked_control.get("lease_owner") or "").strip():
+                    return None
+                lease_key = release_key
+            else:
+                if _lease_identity(locked_control) != _lease_identity(control):
+                    return None
+                lease_key = _lease_identity(locked_control)
             marker = load_lease_expiry_stop(project_dir)
-            lease_key = _lease_identity(locked_control)
             if (
                 str(marker.get("stopped_lease_key") or "") == lease_key
                 and marker.get("stop_state") == "stopping"
@@ -333,9 +352,24 @@ def handle_lease_expiry(
                     reconciled=True,
                 )
 
-            decision = evaluate_lease_expiry_stop(locked_control, marker)
-            if not decision:
-                return None
+            if released_transition:
+                decision = {
+                    "lease_key": lease_key,
+                    "reason": "released_lease",
+                    "mode": previous_mode,
+                    "lease_owner": str(
+                        previous.get("lease_owner")
+                        or (previous_stop or {}).get("lease_owner")
+                        or ""
+                    ).strip(),
+                    "prior_key": str(marker.get("stopped_lease_key") or ""),
+                }
+                if str(marker.get("stopped_lease_key") or "") == lease_key:
+                    return None
+            else:
+                decision = evaluate_lease_expiry_stop(locked_control, marker)
+                if not decision:
+                    return None
 
             reserve_lease_expiry_stop(project_dir, decision)
             stop_result = _stop_workgraph_service(project_dir)
