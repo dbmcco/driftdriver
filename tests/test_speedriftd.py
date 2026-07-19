@@ -336,7 +336,24 @@ class LeaseExpiryStopTests(unittest.TestCase):
             lease_ttl_seconds=120,
             reason="armed for dispatch",
         )
+        # Persist the active runtime snapshot before expiring the lease.
+        run_runtime_cycle(repo)
         _expire_active_lease(repo)
+
+    def test_no_prior_snapshot_does_not_stop_preexisting_expired_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+            # Remove the active snapshot: this is an expired lease on the
+            # first observed runtime cycle, not an active-to-expired transition.
+            runtime_paths(repo)["current"].unlink()
+
+            with patch("driftdriver.speedriftd._stop_workgraph_service") as stop:
+                snapshot = run_runtime_cycle(repo)
+
+            self.assertNotIn("last_lease_expiry_stop", snapshot)
+            stop.assert_not_called()
 
     def test_cycle_stops_coordinator_once_on_lease_expiry(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -387,6 +404,61 @@ class LeaseExpiryStopTests(unittest.TestCase):
             ]
             self.assertEqual(len(stop_calls), 1)
 
+    def test_stop_failure_is_recorded_as_terminal_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+
+            with patch(
+                "driftdriver.speedriftd._stop_workgraph_service",
+                return_value={"exit_code": 7, "stdout": "", "stderr": "stop failed"},
+            ) as stop:
+                snapshot = run_runtime_cycle(repo)
+
+            stop.assert_called_once_with(repo)
+            self.assertEqual(snapshot["last_lease_expiry_stop"]["stop_exit_code"], 7)
+            marker = load_lease_expiry_stop(repo)
+            self.assertEqual(marker["stop_stderr"], "stop failed")
+
+    def test_stop_exception_is_recorded_as_terminal_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _write_graph(repo, [])
+            self._arm_then_expire(repo)
+
+            with patch(
+                "driftdriver.speedriftd.subprocess.run",
+                side_effect=OSError("wg unavailable"),
+            ):
+                snapshot = run_runtime_cycle(repo)
+
+            self.assertIsNone(snapshot["last_lease_expiry_stop"]["stop_exit_code"])
+            self.assertEqual(
+                load_lease_expiry_stop(repo)["stop_stderr"], "wg unavailable"
+            )
+
+    def test_active_to_manual_or_observe_does_not_stop_coordinator(self) -> None:
+        for mode in ("manual", "observe"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as td:
+                repo = Path(td)
+                _write_graph(repo, [])
+                write_control_state(
+                    repo,
+                    mode="autonomous",
+                    lease_owner="speedriftd",
+                    lease_ttl_seconds=120,
+                    reason="active",
+                )
+                run_runtime_cycle(repo)
+                write_control_state(repo, mode=mode, reason=f"switched to {mode}")
+
+                with patch("driftdriver.speedriftd._stop_workgraph_service") as stop:
+                    snapshot = run_runtime_cycle(repo)
+
+                self.assertNotIn("last_lease_expiry_stop", snapshot)
+                stop.assert_not_called()
+
     def test_active_lease_does_not_stop_coordinator(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)
@@ -436,6 +508,7 @@ class LeaseExpiryStopTests(unittest.TestCase):
                     lease_ttl_seconds=120,
                     reason="re-armed",
                 )
+                run_runtime_cycle(repo)
                 _expire_active_lease(repo)
                 second = run_runtime_cycle(repo)
 

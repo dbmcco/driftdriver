@@ -22,6 +22,7 @@ from driftdriver.workgraph import load_workgraph
 from driftdriver.speedriftd_state import (
     _iso_now,
     load_control_state,
+    load_runtime_snapshot,
     runtime_paths,
     write_runtime_snapshot,
 )
@@ -174,30 +175,13 @@ def collect_runtime_snapshot(project_dir: Path, *, policy: DriftPolicy | None = 
     }
 
 
-def handle_lease_expiry(
-    project_dir: Path, *, control: Mapping[str, Any]
-) -> dict[str, Any] | None:
-    """Stop/revokes an already-running coordinator once on lease expiry.
+def _stop_workgraph_service(project_dir: Path) -> dict[str, Any]:
+    """Best-effort stop of the local Workgraph coordinator.
 
-    Detects the transition from an active elevated lease to an expired/denied
-    state and issues a best-effort ``wg service stop`` exactly once per expired
-    lease identity. Idempotent across runtime cycles: the persisted marker key
-    prevents a second stop for the same lease. Does not acquire a new lease or
-    change the operator's control mode.
+    Keep command execution behind this private helper so the runtime transition
+    is patchable and failures can be persisted as terminal evidence.
     """
-    from driftdriver.speedriftd_state import (
-        evaluate_lease_expiry_stop,
-        load_lease_expiry_stop,
-        record_lease_expiry_stop,
-    )
-
-    marker = load_lease_expiry_stop(project_dir)
-    decision = evaluate_lease_expiry_stop(control, marker)
-    if not decision:
-        return None
-
     paths = runtime_paths(project_dir)
-    stop_result: dict[str, Any] = {"exit_code": None, "stdout": "", "stderr": ""}
     try:
         proc = subprocess.run(  # noqa: S603
             ["wg", "--dir", str(paths["wg_dir"]), "service", "stop"],
@@ -206,19 +190,62 @@ def handle_lease_expiry(
             text=True,
             timeout=15,
         )
-        stop_result = {
+        return {
             "exit_code": proc.returncode,
             "stdout": proc.stdout[:500],
             "stderr": proc.stderr[:500],
         }
     except Exception as exc:
-        stop_result = {"exit_code": None, "stdout": "", "stderr": str(exc)[:200]}
+        return {"exit_code": None, "stdout": "", "stderr": str(exc)[:200]}
+
+
+def handle_lease_expiry(
+    project_dir: Path,
+    *,
+    control: Mapping[str, Any],
+    previous_control: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Stop an already-running coordinator once on lease expiry transition.
+
+    A stop is considered only when the previous runtime snapshot had an active
+    elevated lease and the current control is denied in an elevated mode. This
+    prevents a first cycle from stopping a coordinator for a pre-existing
+    expired lease. The persisted marker makes the resulting stop idempotent.
+    """
+    from driftdriver.speedriftd_state import (
+        evaluate_lease_expiry_stop,
+        load_lease_expiry_stop,
+        record_lease_expiry_stop,
+    )
+
+    previous = previous_control or {}
+    previous_mode = str(previous.get("mode") or "").strip().lower()
+    current_mode = str(control.get("mode") or "").strip().lower()
+    if (
+        previous.get("lease_active") is not True
+        or previous_mode not in {"supervise", "autonomous"}
+        or current_mode not in {"supervise", "autonomous"}
+        or control.get("lease_active") is not False
+    ):
+        return None
+
+    marker = load_lease_expiry_stop(project_dir)
+    decision = evaluate_lease_expiry_stop(control, marker)
+    if not decision:
+        return None
+
+    stop_result = _stop_workgraph_service(project_dir)
     return record_lease_expiry_stop(project_dir, decision, stop_result=stop_result)
 
 
 def run_runtime_cycle(project_dir: Path, *, policy: DriftPolicy | None = None) -> dict[str, Any]:
+    previous_snapshot = load_runtime_snapshot(project_dir)
     snapshot = collect_runtime_snapshot(project_dir, policy=policy)
-    expiry = handle_lease_expiry(project_dir, control=snapshot.get("control") or {})
+    expiry = handle_lease_expiry(
+        project_dir,
+        control=snapshot.get("control") or {},
+        previous_control=previous_snapshot.get("control") or {},
+    )
     if expiry:
         snapshot["last_lease_expiry_stop"] = expiry
     return write_runtime_snapshot(project_dir, snapshot)
