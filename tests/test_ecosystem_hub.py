@@ -711,6 +711,31 @@ class EcosystemHubTests(unittest.TestCase):
             self.assertEqual(result["started"], 0)
             fake_run.assert_not_called()
 
+    def test_supervise_repo_services_does_not_record_denial_for_non_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            payload = [{
+                "name": "repo",
+                "path": str(repo),
+                "exists": True,
+                "workgraph_exists": True,
+                "service_running": False,
+                "in_progress": [],
+                "ready": [],
+            }]
+            with patch(
+                "driftdriver.speedriftd_state.load_control_state",
+                side_effect=FileNotFoundError("partial workgraph"),
+            ) as load_control:
+                result = supervise_repo_services(
+                    repos_payload=payload, cooldown_seconds=60, max_starts=3
+                )
+
+        self.assertEqual(result["restart_candidates"], 0)
+        self.assertEqual(result["attempts"], [])
+        load_control.assert_not_called()
+
     def test_supervise_repo_services_skips_expired_lease(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td) / "repo"
@@ -744,7 +769,7 @@ class EcosystemHubTests(unittest.TestCase):
                 )
 
         self.assertEqual(result["attempted"], 0)
-        self.assertEqual(result["restart_candidates"], 0)
+        self.assertEqual(result["restart_candidates"], 1)
         self.assertEqual(result["cooldown_skipped"], 0)
         self.assertEqual(result["attempts"][0]["reason"], "service start denied: lease is not active")
         run.assert_not_called()

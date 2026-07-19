@@ -129,6 +129,57 @@ class FactoryDriftTests(unittest.TestCase):
         ready.assert_not_called()
         launch.assert_not_called()
 
+    def test_dispatch_ready_workers_denies_when_control_state_is_unavailable(self) -> None:
+        repo_path = Path(tempfile.mkdtemp())
+        try:
+            with patch(
+                "driftdriver.factorydrift.load_control_state",
+                side_effect=FileNotFoundError("partial workgraph"),
+            ), patch("driftdriver.project_autopilot.get_ready_tasks") as ready, patch(
+                "driftdriver.project_autopilot.launch_worker"
+            ) as launch:
+                result = _dispatch_ready_workers(repo_path=repo_path, cfg={})
+        finally:
+            repo_path.rmdir()
+
+        self.assertEqual(result["reason"], "control state unavailable")
+        self.assertEqual(result["status"], "blocked")
+        ready.assert_not_called()
+        launch.assert_not_called()
+
+    def test_execute_factory_cycle_denies_service_start_when_control_unavailable(self) -> None:
+        policy = _policy()
+        cycle = {
+            "cycle_id": "factory-test",
+            "policy": {"factory": {"hard_stop_on_failed_verification": True}},
+            "action_plan": [{
+                "id": "repo-a:restart_workgraph_service:1",
+                "repo": "repo-a",
+                "module": "servicedrift",
+                "kind": "restart_workgraph_service",
+                "automation_allowed": True,
+            }],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "repo-a"
+            (repo / ".workgraph").mkdir(parents=True)
+            with patch(
+                "driftdriver.factorydrift.load_control_state",
+                side_effect=FileNotFoundError("partial workgraph"),
+            ), patch("driftdriver.factorydrift.subprocess.run") as run:
+                execution = execute_factory_cycle(
+                    cycle=cycle,
+                    snapshot={"repos": [{"name": "repo-a", "path": str(repo)}]},
+                    policy=policy,
+                    project_dir=root,
+                    emit_followups=False,
+                )
+
+        self.assertEqual(execution["executed"], 0)
+        self.assertEqual(execution["attempts"][0]["reason"], "service start denied: control state unavailable")
+        run.assert_not_called()
+
     def test_resolve_repo_autonomy_applies_repo_override(self) -> None:
         policy = _policy()
         default = resolve_repo_autonomy(policy, "repo-a")

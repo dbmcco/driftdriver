@@ -112,6 +112,26 @@ class TestSessionDriverLifecycle(unittest.TestCase):
         mock_shim.return_value.execute.assert_called_once()
         mock_stop.assert_called_once_with(Path("/driver/scripts"), "ap-t1", "sess-1")
 
+    def test_dispatch_denies_when_control_state_is_unavailable_before_claim_or_launch(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            run = AutopilotRun(config=AutopilotConfig(project_dir=repo))
+            task = {"id": "t1", "title": "Task 1"}
+            with patch(
+                "driftdriver.project_autopilot.load_control_state",
+                side_effect=FileNotFoundError("partial workgraph"),
+            ), patch("driftdriver.project_autopilot.DirectiveLog") as log, patch(
+                "driftdriver.project_autopilot.ExecutorShim"
+            ) as shim, patch("driftdriver.project_autopilot.launch_worker") as launch:
+                ctx = dispatch_task(task, repo, None, run)
+
+        self.assertEqual(ctx.status, "blocked")
+        self.assertEqual(ctx.response, "control state unavailable")
+        log.assert_not_called()
+        shim.assert_not_called()
+        launch.assert_not_called()
+        self.assertEqual(run.workers, {})
+
     def test_dispatch_denies_without_active_lease_before_claim_or_launch(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)
@@ -460,6 +480,17 @@ class TestWgEvalScores(unittest.TestCase):
 
 
 class TestDryRun(unittest.TestCase):
+    @patch("driftdriver.project_autopilot.load_control_state")
+    @patch("driftdriver.project_autopilot.get_ready_tasks")
+    def test_unavailable_control_stops_before_ready_selection(self, mock_ready, mock_control):
+        mock_control.side_effect = FileNotFoundError("partial workgraph")
+        run = AutopilotRun(config=AutopilotConfig(project_dir=Path("/project")))
+
+        result = run_autopilot_loop(run)
+
+        self.assertEqual(result.completed_tasks, set())
+        mock_ready.assert_not_called()
+
     @patch("driftdriver.project_autopilot.load_control_state")
     @patch("driftdriver.project_autopilot.get_ready_tasks")
     def test_denied_authority_stops_before_ready_selection(self, mock_ready, mock_control):

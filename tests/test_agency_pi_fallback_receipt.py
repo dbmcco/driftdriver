@@ -55,6 +55,32 @@ def test_agency_pi_fallback_receipt_is_audit_only(
     assert after["lease_owner"] == before["lease_owner"]
 
 
+def test_fallback_receipt_detects_control_change_after_receipt_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".workgraph" / "graph.jsonl").parent.mkdir(parents=True)
+    (tmp_path / ".workgraph" / "graph.jsonl").write_text("", encoding="utf-8")
+    before = {"mode": "observe", "lease_active": False}
+    changed = {"mode": "autonomous", "lease_active": True}
+    calls = iter([before, changed])
+    monkeypatch.setattr(agency_wrapper, "load_control_state", lambda _path: next(calls))
+
+    with pytest.raises(RuntimeError, match="control changed while recording"):
+        record_agency_pi_fallback_receipt(
+            tmp_path,
+            task_id="task",
+            selected_model="anthropic/claude-sonnet-4-5",
+            fallback_model="anthropic/claude-haiku-4-5",
+            reason="agency unavailable",
+            timestamp="2026-07-18T20:00:00+00:00",
+        )
+
+    receipt_path = runtime_paths(tmp_path)["dir"] / "agency-pi-fallback-receipts.jsonl"
+    stored = json.loads(receipt_path.read_text(encoding="utf-8").splitlines()[0])
+    assert stored["control_before"] == before
+    assert stored["control_after"] == before
+
+
 def test_fallback_receipt_rejects_non_live_model_without_touching_control(tmp_path: Path) -> None:
     (tmp_path / ".workgraph" / "graph.jsonl").parent.mkdir(parents=True)
     (tmp_path / ".workgraph" / "graph.jsonl").write_text("", encoding="utf-8")

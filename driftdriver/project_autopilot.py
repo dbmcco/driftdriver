@@ -671,6 +671,13 @@ def trigger_evolve(
     }
 
 
+def _dispatch_authority(project_dir: Path) -> dict[str, object]:
+    try:
+        return dispatch_authority(load_control_state(project_dir))
+    except Exception:
+        return {"enabled": False, "reason": "control state unavailable"}
+
+
 def dispatch_task(
     task: dict,
     project_dir: Path,
@@ -679,7 +686,7 @@ def dispatch_task(
 ) -> WorkerContext:
     """Dispatch a worker for a task. Returns WorkerContext."""
     worker_name = f"ap-{task['id']}"
-    authority = dispatch_authority(load_control_state(project_dir))
+    authority = _dispatch_authority(project_dir)
     if not authority["enabled"]:
         return WorkerContext(
             task_id=task["id"],
@@ -954,7 +961,7 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
     run.started_at = time.time()
 
     if not run.config.dry_run:
-        authority = dispatch_authority(load_control_state(project_dir))
+        authority = _dispatch_authority(project_dir)
         if not authority["enabled"]:
             return run
 
@@ -974,7 +981,7 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
         _run_health_check(run)
 
         if not run.config.dry_run:
-            authority = dispatch_authority(load_control_state(project_dir))
+            authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
                 return run
 
@@ -996,7 +1003,7 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
         peer_dispatched: set[str] = set()
         if peer_registry:
             if not run.config.dry_run:
-                authority = dispatch_authority(load_control_state(project_dir))
+                authority = _dispatch_authority(project_dir)
                 if not authority["enabled"]:
                     return run
             dispatched_ids = _run_peer_dispatch(run, actionable, peer_registry)
@@ -1007,7 +1014,7 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
         batch = local_tasks[: run.config.max_parallel]
 
         if not run.config.dry_run:
-            authority = dispatch_authority(load_control_state(project_dir))
+            authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
                 return run
 

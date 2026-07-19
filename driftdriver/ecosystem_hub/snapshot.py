@@ -1195,6 +1195,12 @@ def supervise_repo_services(
             continue
 
         repo_path = Path(repo_path_raw).expanduser()
+        in_progress = row.get("in_progress") if isinstance(row.get("in_progress"), list) else []
+        ready = row.get("ready") if isinstance(row.get("ready"), list) else []
+        if not in_progress and not ready:
+            continue
+        candidates += 1
+
         try:
             from driftdriver.speedriftd_state import dispatch_authority, load_control_state
             ctrl = load_control_state(repo_path)
@@ -1212,12 +1218,6 @@ def supervise_repo_services(
                 }
             )
             continue
-
-        in_progress = row.get("in_progress") if isinstance(row.get("in_progress"), list) else []
-        ready = row.get("ready") if isinstance(row.get("ready"), list) else []
-        if not in_progress and not ready:
-            continue
-        candidates += 1
 
         key = str(repo_path.resolve())
         last_attempt = _SUPERVISOR_LAST_ATTEMPT.get(key, 0.0)

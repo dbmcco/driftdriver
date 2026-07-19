@@ -978,12 +978,19 @@ def _followup_description(action: dict[str, Any], cycle: dict[str, Any]) -> str:
     )
 
 
+def _dispatch_authority(repo_path: Path) -> dict[str, Any]:
+    try:
+        return dispatch_authority(load_control_state(repo_path))
+    except Exception:
+        return {"enabled": False, "reason": "control state unavailable"}
+
+
 def _dispatch_ready_workers(
     *,
     repo_path: Path,
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    authority = dispatch_authority(load_control_state(repo_path))
+    authority = _dispatch_authority(repo_path)
     if not authority["enabled"]:
         return {
             "ok": False,
@@ -1256,7 +1263,7 @@ def execute_factory_cycle(
             attempts.append(row)
 
         if kind == "restart_workgraph_service":
-            authority = dispatch_authority(load_control_state(repo_path))
+            authority = _dispatch_authority(repo_path)
             if not authority["enabled"]:
                 _done("blocked", reason=f"service start denied: {authority['reason']}")
                 continue
