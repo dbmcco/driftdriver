@@ -581,10 +581,15 @@ class LeaseExpiryStopTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "crash after stop"):
                         run_runtime_cycle(repo)
 
-                second = run_runtime_cycle(repo)
+                with patch(
+                    "driftdriver.speedriftd._workgraph_service_running",
+                    return_value=None,
+                ):
+                    second = run_runtime_cycle(repo)
 
-            self.assertEqual(stop.call_count, 2)
-            self.assertEqual(second["last_lease_expiry_stop"]["stop_exit_code"], 0)
+            self.assertEqual(stop.call_count, 1)
+            self.assertIsNone(second["last_lease_expiry_stop"]["stop_exit_code"])
+            self.assertEqual(load_lease_expiry_stop(repo)["stop_state"], "unknown")
             self.assertTrue(load_lease_expiry_stop(repo)["reconciled"])
 
     def test_interrupted_stop_reconciles_stopped_status_without_duplicate(self) -> None:
@@ -618,9 +623,6 @@ class LeaseExpiryStopTests(unittest.TestCase):
 
     def test_stop_failure_is_recorded_as_terminal_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            repo = Path(td)
-            _write_graph(repo, [])
-            self._arm_then_expire(repo)
             repo = Path(td)
             _write_graph(repo, [])
             self._arm_then_expire(repo)

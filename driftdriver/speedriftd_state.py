@@ -437,7 +437,11 @@ def record_lease_expiry_stop(
         "repo": repo_name,
         "stopped_lease_key": str(decision.get("lease_key") or ""),
         "stopped_at": now_iso,
-        "stop_state": "stopped" if stop.get("exit_code") == 0 else "failed",
+        "stop_state": (
+            "stopped"
+            if stop.get("exit_code") == 0
+            else ("unknown" if stop.get("unknown") is True else "failed")
+        ),
         "reconciled": bool(reconciled),
         "mode": str(decision.get("mode") or ""),
         "reason": str(decision.get("reason") or "expired_lease"),
@@ -448,8 +452,9 @@ def record_lease_expiry_stop(
         "stop_stderr": str(stop.get("stderr") or "")[:500],
     }
     stop_succeeded = stop.get("exit_code") == 0
+    stop_unknown = stop.get("unknown") is True
     marker_path = paths["dir"] / LEASE_EXPIRY_STOP_FILENAME
-    if stop_succeeded:
+    if stop_succeeded or stop_unknown:
         _write_json(marker_path, record)
     else:
         try:
@@ -466,9 +471,13 @@ def record_lease_expiry_stop(
             "event_type": (
                 "coordinator_stopped_on_lease_expiry"
                 if stop_succeeded
-                else "coordinator_stop_failed_on_lease_expiry"
+                else (
+                    "coordinator_stop_unknown_on_lease_expiry"
+                    if stop_unknown
+                    else "coordinator_stop_failed_on_lease_expiry"
+                )
             ),
-            "state": "expired" if stop_succeeded else "stop_failed",
+            "state": "expired" if stop_succeeded else ("unknown" if stop_unknown else "stop_failed"),
             "worker_id": "",
             "task_id": "",
             "runtime": "",
@@ -481,6 +490,7 @@ def record_lease_expiry_stop(
                 "stop_stdout": record["stop_stdout"],
                 "stop_stderr": record["stop_stderr"],
                 "stop_succeeded": stop_succeeded,
+                "stop_unknown": stop_unknown,
                 "reconciled": bool(reconciled),
             },
         },

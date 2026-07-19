@@ -343,6 +343,13 @@ def handle_lease_expiry(
                         "stdout": "reconciled stopped service state",
                         "stderr": "",
                     }
+                elif service_running is None:
+                    stop_result = {
+                        "exit_code": None,
+                        "unknown": True,
+                        "stdout": "reconciled with unverifiable service state; no duplicate stop issued",
+                        "stderr": "",
+                    }
                 else:
                     stop_result = _stop_workgraph_service(project_dir)
                 return record_lease_expiry_stop(
