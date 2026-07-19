@@ -274,7 +274,8 @@ class TestSpawnAgentLeaseGate(unittest.TestCase):
             )
         self.assertEqual(result["status"], "ok")
         cmd = mock_run_cmd.call_args[0][0]
-        self.assertEqual(cmd, ["wg", "spawn", "--executor", "claude", "t1"])
+        # Spawn is bound to the admitted repo via --dir (matches authority target).
+        self.assertEqual(cmd, ["wg", "--dir", str(repo / ".workgraph"), "spawn", "--executor", "claude", "t1"])
 
 
 if __name__ == "__main__":

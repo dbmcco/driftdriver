@@ -175,7 +175,9 @@ def _handle_spawn_agent(d: Directive, *, dry_run: bool, repo_paths: dict[str, st
     if dry_run:
         return {"status": "dry_run", "action": "spawn_agent", "repo": d.params["repo"], "task_id": task_id}
     # Gate ``wg spawn`` by lease authority: a factory brain spawn without an
-    # active supervise/autonomous lease is denied (fail closed).
+    # active supervise/autonomous lease is denied (fail closed). Bind the spawn
+    # to the admitted repo via --dir so the effect target matches the authority
+    # target (the brain process CWD may otherwise point at a different repo).
     authority = load_dispatch_authority(repo_dir)
     if not authority.get("enabled"):
         return {
@@ -185,7 +187,10 @@ def _handle_spawn_agent(d: Directive, *, dry_run: bool, repo_paths: dict[str, st
             "task_id": task_id,
             "reason": authority.get("reason") or "dispatch not authorized",
         }
-    code, output = _run_cmd(["wg", "spawn", "--executor", "claude", task_id], timeout=60)
+    code, output = _run_cmd(
+        ["wg", "--dir", str(repo_dir / ".workgraph"), "spawn", "--executor", "claude", task_id],
+        timeout=60,
+    )
     return {"status": "ok" if code == 0 else "error", "exit_code": code, "output": output}
 
 
