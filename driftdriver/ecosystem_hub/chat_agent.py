@@ -12,6 +12,8 @@ from typing import Any, Generator
 
 import anthropic
 
+from driftdriver.ecosystem_hub import command_guard
+
 _SYSTEM_PROMPT = """You are the Ecosystem Agent — an autonomous operator for the Speedrift dark factory.
 
 You have full visibility into all enrolled repos and can take direct action:
@@ -130,12 +132,18 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "run_command",
-        "description": "Run a shell command in a repo's directory. Use for wg, driftdriver, git, etc.",
+        "description": (
+            "Run an allowlisted command in a repo's directory (wg, driftdriver, git, gh, echo). "
+            "Commands run without a shell; chaining/redirects are rejected. "
+            "Read-only diagnostics run freely. Dispatch verbs (wg service start/spawn, "
+            "wg spawn, wg claim) require an active lease (supervise/autonomous). "
+            "To arm/disarm a repo use arm_repo/disarm_repo; to run convergence use run_attractor."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "repo_name": {"type": "string"},
-                "command": {"type": "string", "description": "Shell command to run"},
+                "command": {"type": "string", "description": "Allowlisted command to run"},
             },
             "required": ["repo_name", "command"],
         },
@@ -481,12 +489,59 @@ class EcosystemAgent:
         snap = self._get_snapshot()
         return audit_services(snap)
 
+    def _repo_dispatch_authority(self, repo_path: Path | str) -> dict:
+        """Resolve lease-gated dispatch authority for a repo. Fails closed.
+
+        Wraps :func:`driftdriver.speedriftd_state.dispatch_authority`. Any error
+        reading control state yields a denial so dispatch can never bypass the
+        lease gate via an unreadable/missing control file.
+        """
+        try:
+            from driftdriver.speedriftd_state import dispatch_authority, load_control_state
+
+            return dispatch_authority(load_control_state(Path(repo_path)))
+        except Exception as exc:  # pragma: no cover - defensive, fail closed
+            return {
+                "enabled": False,
+                "mode": "unknown",
+                "lease_active": False,
+                "reason": f"authority check failed: {exc}",
+            }
+
     def _tool_run_command(self, repo_name: str, command: str) -> dict:
+        # Command boundary: classify against the allowlist before doing anything.
+        # Dangerous/unknown commands are denied even for repos we cannot resolve.
+        decision = command_guard.classify(command)
+        if not decision.allowed:
+            return {
+                "repo": repo_name,
+                "command": command,
+                "denied": True,
+                "reason": decision.reason,
+            }
         path = self._find_repo_path(repo_name)
         if not path:
             return {"error": f"repo path not found for {repo_name}"}
-        result = _run_subprocess(["bash", "-c", command], cwd=path, timeout=60)
-        return {"repo": repo_name, "command": command, **result}
+        # Dispatch verbs (wg service/spawn/claim) require an active lease.
+        if decision.requires_authority:
+            authority = self._repo_dispatch_authority(path)
+            if not authority.get("enabled"):
+                return {
+                    "repo": repo_name,
+                    "command": command,
+                    "denied": True,
+                    "dispatch_denied": True,
+                    "reason": f"dispatch authority denied: {authority.get('reason')}",
+                    "authority": authority,
+                }
+        # Execute the parsed argv directly — never via `bash -c`.
+        result = _run_subprocess(list(decision.argv), cwd=path, timeout=60)
+        return {
+            "repo": repo_name,
+            "command": command,
+            "binary": decision.binary,
+            **result,
+        }
 
     # ------------------------------------------------------------------
     # Context + streaming
