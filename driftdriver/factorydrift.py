@@ -1364,6 +1364,12 @@ def execute_factory_cycle(
                     details=details,
                     allow_hard_stop=False,
                 )
+            elif status == "blocked":
+                _done(
+                    "blocked",
+                    reason=str(dispatch.get("reason") or "session-driver dispatch blocked"),
+                    details=details,
+                )
             elif status == "noop":
                 _done(
                     "skipped",

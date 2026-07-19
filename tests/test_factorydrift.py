@@ -180,6 +180,50 @@ class FactoryDriftTests(unittest.TestCase):
         self.assertEqual(execution["attempts"][0]["reason"], "service start denied: control state unavailable")
         run.assert_not_called()
 
+    def test_execute_factory_cycle_counts_blocked_dispatch_as_skipped(self) -> None:
+        policy = _policy()
+        cycle = {
+            "cycle_id": "factory-blocked-dispatch",
+            "policy": {"factory": {"hard_stop_on_failed_verification": True}},
+            "action_plan": [{
+                "id": "repo-a:dispatch_ready_workers:1",
+                "repo": "repo-a",
+                "module": "sessiondriver",
+                "kind": "dispatch_ready_workers",
+                "automation_allowed": True,
+            }],
+        }
+        blocked = {
+            "ok": False,
+            "status": "blocked",
+            "reason": "lease is not active",
+            "dispatched": [],
+            "failed": [],
+            "escalated": [],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "repo-a"
+            (repo / ".workgraph").mkdir(parents=True)
+            with patch(
+                "driftdriver.factorydrift._dispatch_ready_workers",
+                return_value=blocked,
+            ) as dispatch:
+                execution = execute_factory_cycle(
+                    cycle=cycle,
+                    snapshot={"repos": [{"name": "repo-a", "path": str(repo)}]},
+                    policy=policy,
+                    project_dir=root,
+                    emit_followups=False,
+                )
+
+        self.assertEqual(execution["executed"], 0)
+        self.assertEqual(execution["succeeded"], 0)
+        self.assertEqual(execution["skipped"], 1)
+        self.assertEqual(execution["attempts"][0]["status"], "blocked")
+        self.assertEqual(execution["attempts"][0]["reason"], "lease is not active")
+        dispatch.assert_called_once()
+
     def test_resolve_repo_autonomy_applies_repo_override(self) -> None:
         policy = _policy()
         default = resolve_repo_autonomy(policy, "repo-a")
