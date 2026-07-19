@@ -30,6 +30,8 @@ def record_agency_pi_fallback_receipt(
     fallback = validate_pi_model_spec(fallback_model)
     before = load_control_state(project_dir)
     control = {"mode": before["mode"], "lease_active": before["lease_active"]}
+    after = load_control_state(project_dir)
+    control_after = {"mode": after["mode"], "lease_active": after["lease_active"]}
 
     receipt: dict[str, Any] = {
         "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
@@ -41,33 +43,18 @@ def record_agency_pi_fallback_receipt(
         "fallback_model": fallback,
         "reason": str(reason),
         "control_before": control,
-        "control_after": control,
+        "control_after": control_after,
     }
+    if control_after != control:
+        receipt["receipt_status"] = "invalidated"
+
     receipt_path = runtime_paths(project_dir)["dir"] / "agency-pi-fallback-receipts.jsonl"
     try:
         _append_jsonl(receipt_path, receipt)
     except OSError as exc:
         raise RuntimeError("could not write Agency-to-Pi fallback receipt") from exc
 
-    after = load_control_state(project_dir)
-    control_after = {"mode": after["mode"], "lease_active": after["lease_active"]}
     if control_after != control:
-        correction = dict(receipt)
-        correction.update(
-            {
-                "event_type": "agency_pi_fallback_receipt_correction",
-                "receipt_status": "invalidated",
-                "correction_for_timestamp": receipt["timestamp"],
-                "control_after": control_after,
-            }
-        )
-        try:
-            _append_jsonl(receipt_path, correction)
-        except OSError as exc:
-            raise RuntimeError(
-                "speedriftd control changed while recording Agency fallback; "
-                "could not persist receipt correction"
-            ) from exc
         raise RuntimeError("speedriftd control changed while recording Agency fallback")
     return receipt
 

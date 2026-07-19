@@ -55,7 +55,7 @@ def test_agency_pi_fallback_receipt_is_audit_only(
     assert after["lease_owner"] == before["lease_owner"]
 
 
-def test_fallback_receipt_detects_control_change_after_receipt_write(
+def test_fallback_receipt_persists_control_change_before_receipt_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     (tmp_path / ".workgraph" / "graph.jsonl").parent.mkdir(parents=True)
@@ -77,13 +77,10 @@ def test_fallback_receipt_detects_control_change_after_receipt_write(
 
     receipt_path = runtime_paths(tmp_path)["dir"] / "agency-pi-fallback-receipts.jsonl"
     rows = [json.loads(line) for line in receipt_path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
     assert rows[0]["control_before"] == before
-    assert rows[0]["control_after"] == before
-    assert rows[1]["event_type"] == "agency_pi_fallback_receipt_correction"
-    assert rows[1]["receipt_status"] == "invalidated"
-    assert rows[1]["correction_for_timestamp"] == rows[0]["timestamp"]
-    assert rows[1]["control_before"] == before
-    assert rows[1]["control_after"] == changed
+    assert rows[0]["control_after"] == changed
+    assert rows[0]["receipt_status"] == "invalidated"
 
 
 def test_fallback_receipt_rejects_non_live_model_without_touching_control(tmp_path: Path) -> None:

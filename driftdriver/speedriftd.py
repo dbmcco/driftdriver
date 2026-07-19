@@ -23,6 +23,7 @@ from driftdriver.workgraph import load_workgraph
 
 from driftdriver.speedriftd_state import (
     _iso_now,
+    _lease_identity,
     _lease_is_active_raw,
     load_control_state,
     load_runtime_snapshot,
@@ -239,7 +240,7 @@ def handle_lease_expiry(
     previous_mode = str(previous.get("mode") or "").strip().lower()
     current_mode = str(control.get("mode") or "").strip().lower()
     if (
-        not _lease_is_active_raw(previous)
+        previous.get("lease_active") is not True
         or previous_mode not in {"supervise", "autonomous"}
         or current_mode not in {"supervise", "autonomous"}
         or _lease_is_active_raw(control)
@@ -247,8 +248,18 @@ def handle_lease_expiry(
         return None
 
     with _lease_expiry_lock(project_dir):
+        # Control may have been re-armed after the snapshot was collected but
+        # before this process acquired the expiry lock. Never stop a coordinator
+        # for an active or replaced lease.
+        locked_control = load_control_state(project_dir)
+        if (
+            _lease_is_active_raw(locked_control)
+            or _lease_identity(locked_control) != _lease_identity(control)
+        ):
+            return None
+
         marker = load_lease_expiry_stop(project_dir)
-        decision = evaluate_lease_expiry_stop(control, marker)
+        decision = evaluate_lease_expiry_stop(locked_control, marker)
         if not decision:
             return None
 
