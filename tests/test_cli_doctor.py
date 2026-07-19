@@ -763,7 +763,7 @@ class TestCmdCompact:
         assert len(reschedule_directives) >= 1
         # Check defer_hours is passed in params
         for d in reschedule_directives:
-            assert d.params.get("after_hours") == "12"
+            assert d.params.get("after_hours") == 12
 
     def test_compact_apply_with_errors(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         tasks = [
