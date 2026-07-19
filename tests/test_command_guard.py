@@ -157,6 +157,9 @@ def test_driftdriver_diagnostics_allowed(cmd):
     [
         "driftdriver --dir /repo speedriftd status --set-mode autonomous --lease-owner a --reason b",
         "driftdriver --dir /repo speedriftd status --release-lease --reason b",
+        # Attached `=` form must also be caught (roborev high-severity bypass).
+        "driftdriver --dir /repo speedriftd status --set-mode=autonomous --lease-owner a --reason b",
+        "driftdriver --dir /repo speedriftd status --release-lease=true",
         "driftdriver --dir /repo attractor run --json",
         "driftdriver --dir /repo autopilot",
         "driftdriver --dir /repo install",
@@ -182,6 +185,33 @@ def test_git_read_diagnostics_allowed(cmd):
 def test_git_mutations_rejected(cmd):
     d = classify(cmd)
     assert d.allowed is False
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        # File-write flag under otherwise-read verbs (--output / -o).
+        "git show --output=/etc/evil HEAD",
+        "git diff --output=/tmp/clobber",
+        "git diff -o /tmp/clobber",
+        "git log --output=/tmp/x",
+        # Exec-capable flags.
+        "git diff --ext-diff=evil",
+        "git -c core.x=y show HEAD",
+        "git show -e HEAD",
+    ],
+)
+def test_git_write_exec_flags_rejected(cmd):
+    """Read verbs must not smuggle file-write / exec flags (roborev finding)."""
+    d = classify(cmd)
+    assert d.allowed is False, f"should reject write/exec flag: {cmd!r}"
+
+
+def test_git_read_flags_still_allowed():
+    """Benign read flags on diagnostics must keep working (no over-block)."""
+    for cmd in ["git log --oneline -5", "git diff --stat", "git remote -v", "git status --short"]:
+        d = classify(cmd)
+        assert d.allowed is True, f"should allow: {cmd!r} -> {d.reason}"
 
 
 # ---------------------------------------------------------------------------

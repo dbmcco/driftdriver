@@ -111,6 +111,19 @@ _GIT_DIAGNOSTIC: frozenset[str] = frozenset(
     }
 )
 
+# Flags that grant write/exec capability under otherwise-read git verbs. Even
+# on ``git show``/``git diff``/``git log`` these can write arbitrary files
+# (``--output``/``-o``) or execute arbitrary commands (``--ext-diff``, ``-c``),
+# so they are rejected for any git diagnostic.
+_GIT_DANGEROUS_FLAGS: tuple[str, ...] = (
+    "--output",
+    "-o",
+    "--ext-diff",
+    "-c",
+    "--config-env",
+    "-e",
+)
+
 # gh (subcommand, sub-subcommand) read-only pairs.
 _GH_READ: frozenset[tuple[str, str]] = frozenset(
     {
@@ -207,8 +220,18 @@ def _first_subcommand(argv: tuple[str, ...]) -> str:
     return ""
 
 
-def _has_token(argv: tuple[str, ...], needles: tuple[str, ...]) -> bool:
-    return any(tok in needles for tok in argv)
+def _has_flag(argv: tuple[str, ...], names: tuple[str, ...]) -> bool:
+    """True if any token is one of ``names`` or an attached ``name=value`` form.
+
+    CLIs accept both ``--flag value`` and ``--flag=value``; matching must cover
+    the attached form or mode-mutation flags (e.g. ``--set-mode=autonomous``)
+    would slip past an exact-token check.
+    """
+    for tok in argv:
+        for name in names:
+            if tok == name or tok.startswith(name + "="):
+                return True
+    return False
 
 
 def _classify_wg(argv: tuple[str, ...]) -> CommandDecision:
@@ -239,6 +262,14 @@ def _classify_git(argv: tuple[str, ...]) -> CommandDecision:
     binary = "git"
     sub = _first_subcommand(argv)
     if sub in _GIT_DIAGNOSTIC:
+        if _has_flag(argv, _GIT_DANGEROUS_FLAGS):
+            return CommandDecision(
+                False,
+                False,
+                "git diagnostic carries a write/exec-capable flag",
+                argv,
+                binary,
+            )
         return CommandDecision(True, False, "git read-only diagnostic", argv, binary)
     return CommandDecision(
         False,
@@ -278,7 +309,7 @@ def _classify_driftdriver(argv: tuple[str, ...]) -> CommandDecision:
     if sub == "speedriftd":
         # `speedriftd status` (read) is diagnostic; mode mutations route to
         # the dedicated arm_repo/disarm_repo tools.
-        if _has_token(argv, ("--set-mode", "--release-lease")):
+        if _has_flag(argv, ("--set-mode", "--release-lease")):
             return CommandDecision(
                 False,
                 False,
