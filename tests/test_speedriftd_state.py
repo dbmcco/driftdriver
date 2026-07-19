@@ -730,6 +730,38 @@ class TestRuntimeSnapshot:
         assert loaded["repo"] == "test-repo"
         assert loaded["daemon_state"] == "idle"
 
+    def test_runtime_snapshot_does_not_overwrite_newer_control_state(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _scaffold_repo(tmp_path)
+        current = write_control_state(
+            repo,
+            mode="autonomous",
+            lease_owner="new-owner",
+            source="operator",
+            reason="new lease",
+        )
+        snapshot = {
+            "repo": "test-repo",
+            "updated_at": _iso_now(),
+            "daemon_state": "idle",
+            "active_workers": [],
+            "active_task_ids": [],
+            "stalled_task_ids": [],
+            "runtime_mix": [],
+            "control": {
+                "mode": "autonomous",
+                "lease_owner": "old-owner",
+                "lease_active": True,
+            },
+        }
+
+        write_runtime_snapshot(repo, snapshot)
+
+        persisted = load_control_state(repo)
+        assert persisted["lease_owner"] == current["lease_owner"]
+        assert persisted["reason"] == current["reason"]
+
     def test_write_creates_runtime_dirs(self, tmp_path: Path) -> None:
         repo = _scaffold_repo(tmp_path)
         snap = {

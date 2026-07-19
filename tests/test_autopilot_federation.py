@@ -129,12 +129,50 @@ class RunPeerDispatchTests(unittest.TestCase):
         registry = _FakePeerRegistry(peers, sockets={"workgraph": "/tmp/fake.sock"})
         tasks = [{"id": "t1", "title": "Engine task", "description": "@peer:workgraph build engine"}]
 
-        with patch("driftdriver.wg_ipc.send_ipc", return_value={"ok": True, "task_id": "remote-1"}):
+        with (
+            patch(
+                "driftdriver.project_autopilot._dispatch_authority",
+                return_value={"enabled": True, "reason": "active lease permits dispatch"},
+            ),
+            patch("driftdriver.wg_ipc.send_ipc", return_value={"ok": True, "task_id": "remote-1"}),
+        ):
             dispatched = _run_peer_dispatch(run, tasks, registry)
             self.assertEqual(dispatched, ["t1"])
             self.assertIn("t1", run.completed_tasks)
             self.assertIn("t1", run.workers)
             self.assertEqual(run.workers["t1"].worker_name, "peer-workgraph-t1")
+
+    def test_peer_dispatch_stops_when_authority_expires_between_assignments(self) -> None:
+        run = self._make_run()
+        peers = [PeerInfo(name="workgraph", path="/projects/workgraph")]
+        registry = _FakePeerRegistry(
+            peers,
+            sockets={"workgraph": "/tmp/fake.sock"},
+        )
+        tasks = [
+            {"id": "t1", "title": "First", "description": "@peer:workgraph first"},
+            {"id": "t2", "title": "Second", "description": "@peer:workgraph second"},
+        ]
+        permitted = {"enabled": True, "reason": "active lease permits dispatch"}
+        denied = {"enabled": False, "reason": "lease is not active"}
+
+        with (
+            patch(
+                "driftdriver.project_autopilot._dispatch_authority",
+                side_effect=[permitted, denied],
+            ) as mock_authority,
+            patch(
+                "driftdriver.project_autopilot._dispatch_to_peer",
+                return_value="remote-1",
+            ) as mock_dispatch,
+        ):
+            dispatched = _run_peer_dispatch(run, tasks, registry)
+
+        self.assertEqual(dispatched, ["t1"])
+        self.assertEqual(mock_authority.call_count, 2)
+        mock_dispatch.assert_called_once()
+        self.assertEqual(run.completed_tasks, {"t1"})
+        self.assertNotIn("t2", run.workers)
 
     def test_dry_run_peer_dispatch(self) -> None:
         run = self._make_run(dry_run=True)
@@ -151,7 +189,13 @@ class RunPeerDispatchTests(unittest.TestCase):
         tasks = [{"id": "t1", "title": "Task", "description": "@peer:wg do stuff"}]
 
         from driftdriver.wg_ipc import IpcError
-        with patch("driftdriver.wg_ipc.send_ipc", side_effect=IpcError("conn refused")):
+        with (
+            patch(
+                "driftdriver.project_autopilot._dispatch_authority",
+                return_value={"enabled": True, "reason": "active lease permits dispatch"},
+            ),
+            patch("driftdriver.wg_ipc.send_ipc", side_effect=IpcError("conn refused")),
+        ):
             dispatched = _run_peer_dispatch(run, tasks, registry)
             self.assertEqual(dispatched, [])
 

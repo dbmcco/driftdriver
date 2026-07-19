@@ -894,6 +894,15 @@ def _run_peer_dispatch(
         if not task:
             continue
 
+        if not run.config.dry_run:
+            authority = _dispatch_authority(project_dir)
+            if not authority["enabled"]:
+                print(
+                    f"[autopilot] Peer dispatch denied/blocked: "
+                    f"{authority['reason']}"
+                )
+                return dispatched
+
         if run.config.dry_run:
             print(f"[dry-run] Would dispatch to peer {assignment.peer_name}: {task['id']}")
             dispatched.append(task["id"])

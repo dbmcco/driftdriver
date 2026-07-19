@@ -425,9 +425,9 @@ def write_runtime_snapshot(project_dir: Path, snapshot: dict[str, Any]) -> dict[
     paths["results_dir"].mkdir(parents=True, exist_ok=True)
     paths["workers"].touch(exist_ok=True)
     paths["stalls"].touch(exist_ok=True)
-    with control_receipt_lock(project_dir):
-        _write_json(paths["control"], snapshot.get("control") if isinstance(snapshot.get("control"), dict) else {})
-
+    # Runtime snapshots are observational. Control state is authoritative and
+    # may be changed independently between snapshot collection and persistence;
+    # never write the snapshot's stale control copy back to control.json.
     _write_json(paths["current"], snapshot)
 
     leases = {
