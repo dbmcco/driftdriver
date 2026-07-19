@@ -695,9 +695,16 @@ def _dispatch_authority(project_dir: Path) -> dict[str, object]:
         return {"enabled": False, "reason": "control state unavailable"}
 
 
-def _unclaim_claimed_task(project_dir: Path, task_id: str) -> None:
-    """Return a claim to Workgraph when admission is revoked before launch."""
-    _run_command(["wg", "unclaim", task_id], cwd=project_dir)
+def _unclaim_claimed_task(project_dir: Path, task_id: str) -> str | None:
+    """Return a claim to Workgraph, surfacing cleanup failures to the caller."""
+    try:
+        result = _run_command(["wg", "unclaim", task_id], cwd=project_dir)
+    except Exception as exc:
+        return f"unclaim failed: {exc}"
+    if result.returncode == 0:
+        return None
+    detail = (result.stderr or result.stdout or "command failed").strip()
+    return f"unclaim failed: {detail[:180]}"
 
 
 def dispatch_task(
@@ -761,13 +768,16 @@ def dispatch_task(
         with control_receipt_lock(project_dir):
             authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
-                _unclaim_claimed_task(project_dir, task["id"])
+                cleanup_error = _unclaim_claimed_task(project_dir, task["id"])
+                response = authority["reason"]
+                if cleanup_error:
+                    response = f"{response}; {cleanup_error}"
                 return WorkerContext(
                     task_id=task["id"],
                     task_title=task.get("title", ""),
                     worker_name=worker_name,
                     status="blocked",
-                    response=authority["reason"],
+                    response=response,
                 )
             # Fallback: direct CLI execution (no session-driver). Start the
             # process under the lock, then wait after releasing it.
@@ -780,11 +790,20 @@ def dispatch_task(
                 "-p",
                 prompt,
             ]
-            process = _start_command(
-                command,
-                cwd=project_dir,
-                extra_env=extra_env,
-            )
+            try:
+                process = _start_command(
+                    command,
+                    cwd=project_dir,
+                    extra_env=extra_env,
+                )
+            except Exception as exc:
+                cleanup_error = _unclaim_claimed_task(project_dir, task["id"])
+                ctx.response = f"worker launch failed: {exc}"
+                if cleanup_error:
+                    ctx.response = f"{ctx.response}; {cleanup_error}"
+                ctx.status = "failed"
+                run.workers[task["id"]] = ctx
+                return ctx
         stdout, _stderr = process.communicate(timeout=run.config.worker_timeout + 60)
         result = subprocess.CompletedProcess(
             command,
@@ -799,13 +818,16 @@ def dispatch_task(
         with control_receipt_lock(project_dir):
             authority = _dispatch_authority(project_dir)
             if not authority["enabled"]:
-                _unclaim_claimed_task(project_dir, task["id"])
+                cleanup_error = _unclaim_claimed_task(project_dir, task["id"])
+                response = authority["reason"]
+                if cleanup_error:
+                    response = f"{response}; {cleanup_error}"
                 return WorkerContext(
                     task_id=task["id"],
                     task_title=task.get("title", ""),
                     worker_name=worker_name,
                     status="blocked",
-                    response=authority["reason"],
+                    response=response,
                 )
             # Session-driver path
             worker_info = launch_worker(

@@ -139,7 +139,10 @@ class TestSessionDriverLifecycle(unittest.TestCase):
                     "driftdriver.project_autopilot.launch_worker",
                     return_value={"session_id": "sess-1"},
                 ) as launch,
-                patch("driftdriver.project_autopilot._run_command") as run_command,
+                patch(
+                    "driftdriver.project_autopilot._run_command",
+                    return_value=subprocess.CompletedProcess(["wg", "unclaim", "t1"], 0, "", ""),
+                ) as run_command,
                 patch("driftdriver.project_autopilot.converse", return_value="done"),
                 patch("driftdriver.project_autopilot.stop_worker"),
             ):
@@ -228,6 +231,64 @@ class TestSessionDriverLifecycle(unittest.TestCase):
         self.assertEqual(ctx.status, "completed")
         shim.return_value.execute.assert_called_once()
         popen.assert_called_once()
+
+    def test_fallback_worker_launch_failure_unclaims_task(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            run = AutopilotRun(config=AutopilotConfig(project_dir=repo))
+            task = {"id": "t1", "title": "Task 1"}
+            active = {
+                "mode": "autonomous",
+                "lease_owner": "agent-a",
+                "lease_active": True,
+            }
+            with (
+                patch("driftdriver.project_autopilot.load_control_state", return_value=active),
+                patch("driftdriver.project_autopilot.ExecutorShim") as shim,
+                patch(
+                    "driftdriver.project_autopilot._start_command",
+                    side_effect=FileNotFoundError("claude missing"),
+                ),
+                patch(
+                    "driftdriver.project_autopilot._run_command",
+                    return_value=subprocess.CompletedProcess(
+                        ["wg", "unclaim", "t1"], 0, "", ""
+                    ),
+                ) as unclaim,
+            ):
+                ctx = dispatch_task(task, repo, None, run)
+
+        self.assertEqual(ctx.status, "failed")
+        self.assertIn("claude missing", ctx.response)
+        shim.return_value.execute.assert_called_once()
+        unclaim.assert_called_once_with(["wg", "unclaim", "t1"], cwd=repo)
+        self.assertIs(run.workers["t1"], ctx)
+
+    def test_dispatch_surfaces_failed_unclaim_after_revocation(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / ".workgraph").mkdir()
+            run = AutopilotRun(config=AutopilotConfig(project_dir=repo))
+            task = {"id": "t1", "title": "Task 1"}
+            active = {"mode": "autonomous", "lease_owner": "agent-a", "lease_active": True}
+            denied = {"mode": "autonomous", "lease_owner": "agent-a", "lease_active": False}
+            with (
+                patch("driftdriver.project_autopilot.load_control_state", side_effect=[active, denied]),
+                patch("driftdriver.speedriftd_state.control_receipt_lock") as lock,
+                patch("driftdriver.project_autopilot.ExecutorShim") as shim,
+                patch("driftdriver.project_autopilot._run_command", return_value=subprocess.CompletedProcess(
+                    ["wg", "unclaim", "t1"], 7, "", "permission denied"
+                )) as unclaim,
+            ):
+                ctx = dispatch_task(task, repo, Path("/driver/scripts"), run)
+
+        self.assertEqual(ctx.status, "blocked")
+        self.assertIn("lease is not active", ctx.response)
+        self.assertIn("unclaim failed", ctx.response)
+        self.assertEqual(lock.call_count, 2)
+        shim.return_value.execute.assert_called_once()
+        unclaim.assert_called_once_with(["wg", "unclaim", "t1"], cwd=repo)
 
     def test_dispatch_denies_when_control_state_is_unavailable_before_claim_or_launch(self):
         with tempfile.TemporaryDirectory() as td:
