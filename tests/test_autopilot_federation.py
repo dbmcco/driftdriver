@@ -78,6 +78,44 @@ class RunPeerDispatchTests(unittest.TestCase):
         config = AutopilotConfig(project_dir=Path("/tmp/proj"), dry_run=dry_run)
         return AutopilotRun(config=config)
 
+    @patch("driftdriver.project_autopilot.discover_session_driver", return_value=None)
+    def test_run_loop_denies_before_peer_dispatch_when_lease_revoked(self, _session_driver) -> None:
+        active = {
+            "mode": "autonomous",
+            "lease_owner": "agent-a",
+            "lease_active": True,
+        }
+        denied = {
+            "mode": "autonomous",
+            "lease_owner": "agent-a",
+            "lease_active": False,
+        }
+        run = self._make_run()
+        registry = _FakePeerRegistry([PeerInfo(name="wg", path="/wg")])
+        tasks = [{"id": "t1", "title": "Task", "description": "@peer:wg do stuff"}]
+
+        with (
+            patch(
+                "driftdriver.project_autopilot.load_control_state",
+                side_effect=[active, active, denied],
+            ) as mock_control,
+            patch(
+                "driftdriver.project_autopilot._init_peer_registry",
+                return_value=registry,
+            ),
+            patch(
+                "driftdriver.project_autopilot.get_ready_tasks",
+                return_value=tasks,
+            ),
+            patch("driftdriver.project_autopilot._run_peer_dispatch") as mock_peer_dispatch,
+        ):
+            result = run_autopilot_loop(run)
+
+        self.assertEqual(mock_control.call_count, 3)
+        mock_peer_dispatch.assert_not_called()
+        self.assertEqual(result.completed_tasks, set())
+        self.assertEqual(result.workers, {})
+
     def test_no_peer_annotations_returns_empty(self) -> None:
         run = self._make_run()
         registry = _FakePeerRegistry([PeerInfo(name="wg", path="/wg")])

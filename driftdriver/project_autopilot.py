@@ -995,6 +995,10 @@ def run_autopilot_loop(run: AutopilotRun) -> AutopilotRun:
         # Phase 1: Dispatch @peer:-annotated tasks to remote repos
         peer_dispatched: set[str] = set()
         if peer_registry:
+            if not run.config.dry_run:
+                authority = dispatch_authority(load_control_state(project_dir))
+                if not authority["enabled"]:
+                    return run
             dispatched_ids = _run_peer_dispatch(run, actionable, peer_registry)
             peer_dispatched = set(dispatched_ids)
 
