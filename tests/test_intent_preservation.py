@@ -62,7 +62,9 @@ def test_existing_claim_agent_field_reaches_wg_without_being_dropped(tmp_path: P
         reason="claim for execution",
     )
 
-    with patch("driftdriver.executor_shim.subprocess.run") as run:
+    with patch("driftdriver.executor_shim.subprocess.run") as run, \
+         patch("driftdriver.executor_shim.load_dispatch_authority") as auth:
+        auth.return_value = {"enabled": True, "reason": "active lease permits dispatch"}
         run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         assert shim.execute(directive) == "completed"
 

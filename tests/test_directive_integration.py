@@ -76,9 +76,11 @@ class TestDirectiveIntegration(unittest.TestCase):
             # Note: shim.execute appends a second copy to pending, so we check completed
             self.assertEqual(len(log.read_completed()), 1)
 
+    @patch("driftdriver.executor_shim.load_dispatch_authority")
     @patch("driftdriver.executor_shim.subprocess.run")
-    def test_supervise_mode_allows_start_service_blocks_create_task(self, mock_run: MagicMock) -> None:
+    def test_supervise_mode_allows_start_service_blocks_create_task(self, mock_run: MagicMock, mock_authority: MagicMock) -> None:
         """Supervise mode allows service directives but blocks task creation."""
+        mock_authority.return_value = {"enabled": True, "reason": "active lease permits dispatch"}
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         allowed = directives_allowed_for_mode("supervise")
 
