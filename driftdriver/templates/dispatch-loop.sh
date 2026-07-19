@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# ABOUTME: Hardened dispatch loop for graphwork/workgraph#4 — daemon auto-dispatch silently fails.
-# ABOUTME: Polls `wg ready`, spawns agents, emits JSONL events, heartbeat, hung-command watchdog.
+# ABOUTME: Hardened, lease-aware dispatch loop for graphwork/workgraph#4.
+# ABOUTME: Polls `wg ready`, spawns agents only under an active dispatch lease (authority-gated),
+# ABOUTME: emits JSONL events, heartbeat, hung-command watchdog.
 
 set -euo pipefail
 
 MAX_AGENTS="${WG_MAX_AGENTS:-2}"
 POLL_INTERVAL="${WG_POLL_INTERVAL:-30}"
 EXECUTOR="${WG_EXECUTOR:-pi}"
-REPO_NAME="$(basename "$(pwd)")"
+PROJECT_DIR="${WG_PROJECT_DIR:-$(pwd)}"
+REPO_NAME="$(basename "$PROJECT_DIR")"
 NOTIFY_SCRIPT="${WG_NOTIFY_SCRIPT:-/Users/braydon/projects/experiments/driftdriver/scripts/notify-macos.sh}"
 
 EVENTS_FILE=".workgraph/service/runtime/events.jsonl"
@@ -36,6 +38,19 @@ notify() {
   local title="$1" msg="$2"
   [ -x "$NOTIFY_SCRIPT" ] && "$NOTIFY_SCRIPT" "$title" "$msg" &
   wg notify "$title: $msg" 2>/dev/null &
+}
+
+# Check whether this repo currently grants dispatch authority: an active lease
+# in supervise/autonomous mode. Fails closed on any error — no authority, no spawn.
+has_dispatch_authority() {
+  local status mode lease
+  status="$(driftdriver --dir "$PROJECT_DIR" --json speedriftd status 2>/dev/null || printf '{}')"
+  mode="$(printf '%s\n' "$status" | jq -r '.control.mode // "observe"' 2>/dev/null || echo "observe")"
+  lease="$(printf '%s\n' "$status" | jq -r '.control.lease_active // false' 2>/dev/null || echo "false")"
+  if [[ "$mode" == "supervise" || "$mode" == "autonomous" ]] && [[ "$lease" == "true" ]]; then
+    return 0
+  fi
+  return 1
 }
 
 alive_count() {
@@ -85,6 +100,20 @@ emit_event "loop.started"
 CYCLE=0
 while true; do
   heartbeat
+
+  # Authority gate: only dispatch when the repo grants an active dispatch lease.
+  # Session-start/dark-factory arm the lease (the authority-gated caller); if it
+  # expires or returns to observe, stop spawning rather than spinning unattended.
+  if ! has_dispatch_authority; then
+    log "No dispatch authority (lease inactive or mode=observe). Stopping loop."
+    emit_event "authority.revoked"
+    notify "$REPO_NAME" "Dispatch loop stopped — no dispatch authority"
+    # Clean exit — clear crash trap, emit exited event
+    trap - EXIT
+    emit_event "loop.exited" "\"reason\":\"no_authority\""
+    exit 0
+  fi
+
   ALIVE=$(alive_count)
 
   if [ "$ALIVE" -ge "$MAX_AGENTS" ]; then
