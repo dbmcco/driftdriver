@@ -1,5 +1,5 @@
 # ABOUTME: Tests for cli.py fixes - _repair_wrappers NameError and new subcommands
-# ABOUTME: Verifies bug fix and wire/profile/ready/ecosystem-hub subcommand wiring
+# ABOUTME: Verifies bug fix and wire/profile/ready subcommand wiring
 
 from __future__ import annotations
 
@@ -73,13 +73,11 @@ def test_upstream_tracker_accepts_no_write_flags_and_run_compatibility():
     direct = p.parse_args([
         "upstream-tracker",
         "--no-tasks",
-        "--no-write-adoptions",
         "--no-write-pins",
         "--no-write-state",
         "--no-compatibility-checks",
     ])
     assert direct.no_tasks is True
-    assert direct.no_write_adoptions is True
     assert direct.no_write_pins is True
     assert direct.no_write_state is True
     assert direct.no_compatibility_checks is True
@@ -96,17 +94,6 @@ def test_upstream_tracker_accepts_no_write_flags_and_run_compatibility():
     assert legacy.no_write_pins is True
     assert legacy.no_write_state is True
     assert legacy.action == "run"
-
-
-def test_ecosystem_hub_subcommand_delegates():
-    """CLI must expose ecosystem-hub and forward args to driftdriver.ecosystem_hub.main."""
-    from driftdriver.cli import main
-
-    with patch("driftdriver.ecosystem_hub.main", return_value=0) as mock_main:
-        rc = main(["ecosystem-hub", "--project-dir", "/tmp/demo", "status"])
-
-    assert rc == 0
-    mock_main.assert_called_once_with(["--project-dir", "/tmp/demo", "status"])
 
 
 def test_speedriftd_status_forces_refresh_after_control_change(tmp_path):

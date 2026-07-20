@@ -238,23 +238,6 @@ def test_session_start_uses_driftdriver_record_event():
     )
 
 
-def test_session_start_uses_shared_ecosystem_hub_cli():
-    """session-start.sh must use the driftdriver ecosystem-hub CLI, not a repo-local script path."""
-    path = HANDLERS_DIR / "session-start.sh"
-    if not path.exists():
-        return
-    content = path.read_text()
-    assert "driftdriver \"${HUB_ARGS[@]}\"" in content, (
-        "session-start.sh must invoke the shared driftdriver ecosystem-hub CLI"
-    )
-    assert 'ECOSYSTEM_HUB_AUTOSTART:-0' in content, (
-        "session-start.sh must not auto-start ecosystem hub unless explicitly enabled"
-    )
-    assert "scripts/ecosystem_hub_daemon.sh" not in content, (
-        "session-start.sh must not depend on a repo-local ecosystem_hub_daemon.sh path"
-    )
-
-
 def test_session_start_uses_runtime_control_before_service_start():
     """session-start.sh must refresh speedriftd status and gate service start on control mode."""
     path = HANDLERS_DIR / "session-start.sh"

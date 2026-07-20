@@ -58,10 +58,9 @@ class TestLaneDimensionMap:
         "plandrift",
         "secdrift",
         "northstardrift",
-        "factorydrift",
     ]
 
-    def test_all_six_lanes_present(self):
+    def test_all_five_lanes_present(self):
         for lane in self.EXPECTED_LANES:
             assert lane in LANE_DIMENSION_MAP, f"Missing lane: {lane}"
 

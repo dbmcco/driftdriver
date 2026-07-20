@@ -195,44 +195,5 @@ class DispatchLoopFunctionalTests(unittest.TestCase):
         self.assertIn("task-A", spawns[0])
 
 
-class DispatchLoopInstallRegressionTests(unittest.TestCase):
-    """Install paths must ship the lease-aware template verbatim."""
-
-    def test_directives_enroll_installs_lease_aware_dispatch_loop(self) -> None:
-        """The factory-brain enroll directive installs the authority-gated loop."""
-        from driftdriver.factory_brain.directives import (
-            Directive,
-            execute_directive,
-        )
-
-        with tempfile.TemporaryDirectory() as td:
-            repo_dir = Path(td) / "enroll-repo"
-            (repo_dir / ".workgraph").mkdir(parents=True)
-            d = Directive(action="enroll", params={"repo": str(repo_dir)})
-            result = execute_directive(
-                d, dry_run=False, repo_paths={"enroll-repo": str(repo_dir)}
-            )
-            self.assertEqual(result["status"], "ok")
-            installed = repo_dir / ".workgraph" / "executors" / "dispatch-loop.sh"
-            self.assertTrue(installed.exists(), "dispatch-loop.sh was not installed")
-            text = installed.read_text(encoding="utf-8")
-            self.assertIn("has_dispatch_authority", text)
-            self.assertIn(".control.lease_active", text)
-            # Stale-daemon cleanup must survive the copy.
-            self.assertIn("wg service stop", text)
-
-    def test_template_and_installed_copy_stay_in_sync(self) -> None:
-        """The hub install source must point at this same lease-aware template."""
-        from driftdriver.factory_brain import hub_integration
-
-        self.assertTrue(hub_integration._DISPATCH_LOOP_TEMPLATE.exists())
-        self.assertEqual(
-            hub_integration._DISPATCH_LOOP_TEMPLATE.resolve(),
-            TEMPLATE.resolve(),
-        )
-        text = hub_integration._DISPATCH_LOOP_TEMPLATE.read_text(encoding="utf-8")
-        self.assertIn("has_dispatch_authority", text)
-
-
 if __name__ == "__main__":
     unittest.main()

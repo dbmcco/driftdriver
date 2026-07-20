@@ -53,10 +53,6 @@ LANE_DIMENSION_MAP: dict[str, dict] = {
         "primary": "strategic_alignment",
         "secondary": ["efficiency", "completeness"],
     },
-    "factorydrift": {
-        "primary": "coordination_overhead",
-        "secondary": ["efficiency", "blocking_impact"],
-    },
 }
 
 

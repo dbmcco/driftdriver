@@ -96,7 +96,7 @@ class TestDirectiveIntegration(unittest.TestCase):
 
             # Execute an allowed directive
             d = Directive(
-                source="ecosystem_hub",
+                source="driftdriver",
                 repo="paia-shell",
                 action=Action.START_SERVICE,
                 params={"repo": str(wg_dir)},

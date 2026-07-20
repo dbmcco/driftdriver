@@ -628,54 +628,6 @@ def test_run_pass1_can_skip_writing_pins_and_state(tmp_path: Path) -> None:
     assert not (pins_path.parent / "upstream-tracker-last.json").exists()
 
 
-def test_build_adoption_cycle_summarizes_pass1_results() -> None:
-    from driftdriver.upstream_tracker import build_adoption_cycle
-
-    cycle = build_adoption_cycle(
-        [
-            {
-                "repo": "graphwork/workgraph",
-                "branch": "main",
-                "new_sha": "abc12345",
-                "upstream_ref": "origin/main",
-                "adopted_ref": "main",
-                "tracking_status": "tracking-adopted-line",
-                "action": "auto_adopt",
-                "compatibility": {"status": "passed", "checks": [{"name": "wg-cli", "ok": True}]},
-            },
-            {
-                "repo": "danshapiro/freshell",
-                "branch": "main",
-                "new_sha": "fff11111",
-                "upstream_ref": "origin/main",
-                "adopted_ref": "origin/main",
-                "tracking_status": "tracking-upstream",
-                "action": "auto_adopt",
-                "compatibility": {"status": "passed", "checks": [{"name": "freshell-session-contract", "ok": True}]},
-            },
-            {
-                "repo": "agentbureau/agency",
-                "branch": "main",
-                "new_sha": "def67890",
-                "upstream_ref": "origin/main",
-                "adopted_ref": "main",
-                "tracking_status": "tracking-upstream",
-                "action": "needs_update",
-                "compatibility": {"status": "failed", "checks": [{"name": "agency", "ok": False}]},
-                "wg_task_id": "upstream-agency-sync",
-            },
-        ]
-    )
-
-    assert cycle["counts"]["adopted"] == 1
-    assert cycle["counts"]["needs_update"] == 1
-    assert cycle["counts"]["tracking"] == 1
-    assert cycle["items"][0]["status"] == "tracking"
-    assert cycle["items"][1]["status"] == "adopted"
-    assert cycle["items"][2]["status"] == "needs_update"
-    assert cycle["items"][2]["wg_task_id"] == "upstream-agency-sync"
-
-
 # --- Pass 2 tests ---
 
 from driftdriver.upstream_tracker import run_pass2
@@ -727,26 +679,6 @@ def test_build_snapshot_entry_with_pass2_finding(tmp_path: Path) -> None:
     entry = build_snapshot_entry(repos, state_dir=tmp_path)
     assert len(entry["pass2_findings"]) == 1
     assert entry["pass2_findings"][0]["category"] == "unpushed-work"
-
-
-# --- Server integration: _run_upstream_pass1 ---
-
-def test_run_upstream_pass1_skips_missing_config(tmp_path: Path) -> None:
-    """_run_upstream_pass1 does nothing if upstream-config.toml is absent."""
-    from driftdriver.ecosystem_hub.server import _run_upstream_pass1
-    # Should complete silently with no state file written
-    _run_upstream_pass1(tmp_path)
-    assert not (tmp_path / ".driftdriver" / "upstream-tracker-last.json").exists()
-
-
-def test_run_upstream_pass1_skips_empty_config(tmp_path: Path) -> None:
-    """_run_upstream_pass1 does nothing if external_repos list is empty."""
-    from driftdriver.ecosystem_hub.server import _run_upstream_pass1
-    dd_dir = tmp_path / ".driftdriver"
-    dd_dir.mkdir()
-    (dd_dir / "upstream-config.toml").write_text("[global]\n", encoding="utf-8")
-    _run_upstream_pass1(tmp_path)
-    assert not (dd_dir / "upstream-tracker-last.json").exists()
 
 
 # --- lag_window_check tests ---

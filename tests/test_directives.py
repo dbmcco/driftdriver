@@ -38,7 +38,7 @@ class TestDirective(unittest.TestCase):
 
     def test_directive_from_json(self) -> None:
         d = Directive(
-            source="ecosystem_hub",
+            source="driftdriver",
             repo="paia-os",
             action=Action.START_SERVICE,
             params={},
@@ -46,7 +46,7 @@ class TestDirective(unittest.TestCase):
         )
         blob = d.to_json()
         restored = Directive.from_json(blob)
-        self.assertEqual(restored.source, "ecosystem_hub")
+        self.assertEqual(restored.source, "driftdriver")
         self.assertEqual(restored.action, Action.START_SERVICE)
         self.assertEqual(restored.repo, "paia-os")
 

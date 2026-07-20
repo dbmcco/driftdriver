@@ -358,20 +358,6 @@ def cmd_install(args: argparse.Namespace) -> int:
         subprocess.check_call([str(wg_dir / "coredrift"), "--dir", str(project_dir), "ensure-contracts", "--apply"])
         ensured_contracts = True
 
-    # Signal the factory brain that this repo exists (best-effort, never fails install).
-    try:
-        from driftdriver.factory_brain.events import EVENTS_REL_PATH, emit_event
-
-        events_file = project_dir / EVENTS_REL_PATH
-        emit_event(
-            events_file,
-            kind="repo.discovered",
-            repo=project_dir.name,
-            payload={"path": str(project_dir), "source": "driftdriver-install"},
-        )
-    except Exception:
-        pass
-
     result = InstallResult(
         wrote_drifts=wrote_drifts,
         wrote_driver=wrote_driver,

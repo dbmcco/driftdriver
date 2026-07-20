@@ -112,7 +112,6 @@ INTERNAL_LANES: dict[str, str] = {
     "qadrift": "driftdriver.qadrift",
     "secdrift": "driftdriver.secdrift",
     "plandrift": "driftdriver.plandrift",
-    "factorydrift": "driftdriver.factorydrift",
     "northstardrift": "driftdriver.northstardrift",
     "evolverdrift": "driftdriver.evolverdrift",
     "debatedrift": "driftdriver.debatedrift.lane",

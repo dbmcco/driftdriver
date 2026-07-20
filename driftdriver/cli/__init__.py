@@ -80,7 +80,6 @@ from .decisions_cmd import cmd_decisions, handle_decisions_answer, handle_decisi
 from .install_cmd import cmd_install
 from .run import (
     _invoke_check_json,
-    cmd_factory,
     cmd_orchestrate,
     cmd_run,
 )
@@ -130,7 +129,7 @@ def cmd_upstream_tracker(args: argparse.Namespace) -> int:
         print(f"error: upstream config not found: {config_path}", file=sys.stderr)
         return ExitCode.usage
 
-    from driftdriver.upstream_tracker import run_pass1, write_adoption_cycle
+    from driftdriver.upstream_tracker import run_pass1
 
     config = _read_toml_file(config_path)
     emit_tasks = not bool(args.no_tasks)
@@ -144,11 +143,6 @@ def cmd_upstream_tracker(args: argparse.Namespace) -> int:
     )
 
     adoption_cycle = None
-    if not bool(args.no_write_adoptions):
-        adoption_cycle = write_adoption_cycle(
-            project_dir / ".workgraph" / "service" / "ecosystem-hub",
-            results,
-        )
 
     payload = {
         "project_dir": str(project_dir),
@@ -563,15 +557,6 @@ def cmd_decompose(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_ecosystem_hub_proxy(args: argparse.Namespace) -> int:
-    from driftdriver.ecosystem_hub import main as ecosystem_hub_main
-
-    forwarded = list(getattr(args, "ecosystem_hub_args", []) or [])
-    if not forwarded:
-        forwarded = ["--help"]
-    return int(ecosystem_hub_main(forwarded))
-
-
 def cmd_intent_set(args: argparse.Namespace) -> int:
     from driftdriver.cli.intent_cmd import handle_intent_set
     return handle_intent_set(args)
@@ -616,31 +601,6 @@ def cmd_reaper(args: argparse.Namespace) -> int:
         return 0
 
     return 1
-
-
-def cmd_brain_status(args: argparse.Namespace) -> int:
-    from driftdriver.factory_brain.cli import handle_brain_status
-    return handle_brain_status(args)
-
-
-def cmd_brain_roster(args: argparse.Namespace) -> int:
-    from driftdriver.factory_brain.cli import handle_brain_roster
-    return handle_brain_roster(args)
-
-
-def cmd_brain_log(args: argparse.Namespace) -> int:
-    from driftdriver.factory_brain.cli import handle_brain_log
-    return handle_brain_log(args)
-
-
-def cmd_brain_enroll(args: argparse.Namespace) -> int:
-    from driftdriver.factory_brain.cli import handle_brain_enroll
-    return handle_brain_enroll(args)
-
-
-def cmd_brain_unenroll(args: argparse.Namespace) -> int:
-    from driftdriver.factory_brain.cli import handle_brain_unenroll
-    return handle_brain_unenroll(args)
 
 
 def cmd_llm_spend(args: argparse.Namespace) -> int:
@@ -734,302 +694,6 @@ def cmd_watchdog(args: argparse.Namespace) -> int:
             print(f"  Top agent: {result.top_agent}")
 
     return 1 if result.action.value == "kill" else 0
-
-
-def cmd_factory_report(args: argparse.Namespace) -> int:
-    """Build and write the deterministic daily factory report."""
-    from driftdriver.factory_report import (
-        build_factory_report,
-        send_factory_report_notification,
-        write_factory_daily_report,
-    )
-
-    project_dir = Path(args.dir) if getattr(args, "dir", None) else Path.cwd()
-    tail_str = getattr(args, "last", "24h")
-    tail_hours = float(tail_str.rstrip("h"))
-    dry_run = getattr(args, "dry_run", False)
-    use_json = getattr(args, "json", False)
-
-    report = build_factory_report(project_dir, tail_hours=tail_hours)
-
-    if dry_run:
-        print(json.dumps(report, indent=2))
-        return 0
-
-    out_path = write_factory_daily_report(project_dir, report)
-
-    if use_json:
-        print(json.dumps({"written": str(out_path), "report": report}, indent=2))
-        return 0
-
-    findings = report.get("findings", {}).get("summary", {})
-    spend = report.get("llm_spend", {})
-    gated = report.get("gated_calls", {})
-    completed = report.get("completed_drift_tasks", [])
-
-    print(f"Factory Daily Report — {report['report_date']}")
-    print(f"  Written to:          {out_path}")
-    print(f"  Findings produced:   {findings.get('total', 0)}")
-    print(f"  Drift tasks done:    {len(completed)}")
-    print(f"  LLM spend:           ${spend.get('total_cost_usd', 0):.4f}")
-    print(f"  Gated calls skipped: {gated.get('total_skipped', 0)}")
-
-    send_factory_report_notification(report, out_path)
-    return 0
-
-
-def cmd_attractor(args: argparse.Namespace) -> int:
-    """Manage attractor convergence targets."""
-    from driftdriver.attractors import load_attractors_from_dir, resolve_attractor
-    from driftdriver.attractor_loop import CircuitBreakers
-
-    action = args.action
-    project_dir = Path(args.dir) if args.dir else Path.cwd()
-    use_json = getattr(args, "json", False)
-
-    pkg_root = Path(__file__).resolve().parent.parent
-    attractors_dir = pkg_root / "attractors"
-
-    # -- list: show all available attractors --
-    if action == "list":
-        registry = load_attractors_from_dir(attractors_dir) if attractors_dir.is_dir() else {}
-        if use_json:
-            entries = [
-                {"id": a.id, "description": a.description, "extends": a.extends}
-                for a in registry.values()
-            ]
-            print(json.dumps(entries, indent=2))
-        else:
-            if not registry:
-                print("No attractors found.")
-            else:
-                for a in registry.values():
-                    extends = f" (extends {a.extends})" if a.extends else ""
-                    print(f"  {a.id}{extends} — {a.description}")
-        return 0
-
-    # -- status: show current attractor state for this repo --
-    if action == "status":
-        wg_dir = project_dir / ".workgraph"
-        current_run = wg_dir / "service" / "attractor" / "current-run.json"
-        policy_path = wg_dir / "drift-policy.toml"
-
-        status: dict[str, Any] = {"configured_target": ""}
-        if policy_path.exists():
-            import tomllib
-            try:
-                data = tomllib.loads(policy_path.read_text(encoding="utf-8"))
-                status["configured_target"] = str(
-                    (data.get("attractor") or {}).get("target", "")
-                )
-            except Exception:
-                pass
-
-        if current_run.exists():
-            try:
-                run_data = json.loads(current_run.read_text(encoding="utf-8"))
-                status["last_run"] = run_data
-            except (json.JSONDecodeError, OSError):
-                status["last_run"] = None
-        else:
-            status["last_run"] = None
-
-        if use_json:
-            print(json.dumps(status, indent=2))
-        else:
-            target = status["configured_target"]
-            print(f"Attractor target: {target or '(none)'}")
-            run = status.get("last_run")
-            if run:
-                print(f"Last run status:  {run.get('status', '?')}")
-                print(f"Attractor:        {run.get('attractor', '?')}")
-                print(f"Passes:           {len(run.get('passes', []))}")
-                print(f"Escalations:      {run.get('escalation_count', 0)}")
-            else:
-                print("Last run:         (none)")
-        return 0
-
-    # -- set: update the repo's attractor target in drift-policy.toml --
-    if action == "set":
-        target = args.target
-        if not target:
-            print("Error: attractor set requires a target name", file=sys.stderr)
-            return 1
-
-        # Validate target exists
-        registry = load_attractors_from_dir(attractors_dir) if attractors_dir.is_dir() else {}
-        if target not in registry:
-            print(f"Error: unknown attractor '{target}'. Use 'attractor list' to see available.", file=sys.stderr)
-            return 1
-
-        wg_dir = project_dir / ".workgraph"
-        policy_path = wg_dir / "drift-policy.toml"
-        if not policy_path.exists():
-            from driftdriver.policy import ensure_drift_policy
-            ensure_drift_policy(wg_dir)
-
-        content = policy_path.read_text(encoding="utf-8")
-        import re as _re
-
-        # Update or append [attractor] section
-        attractor_re = _re.compile(
-            r'(\[attractor\]\s*\n(?:[^\[]*?)?)(?=\n\[|\Z)',
-            _re.DOTALL,
-        )
-        new_section = f'[attractor]\ntarget = "{target}"\n'
-        if attractor_re.search(content):
-            content = attractor_re.sub(new_section, content)
-        else:
-            content = content.rstrip() + f"\n\n{new_section}"
-
-        policy_path.write_text(content, encoding="utf-8")
-        print(f"Set attractor target to '{target}'")
-        return 0
-
-    # -- plan: dry-run one attractor pass (diagnose + plan, no execute) --
-    if action == "plan":
-        wg_dir = project_dir / ".workgraph"
-        policy_path = wg_dir / "drift-policy.toml"
-        if not policy_path.exists():
-            print("Error: no drift-policy.toml found. Run 'driftdriver install' first.", file=sys.stderr)
-            return 1
-
-        import tomllib
-        try:
-            data = tomllib.loads(policy_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            print(f"Error reading policy: {exc}", file=sys.stderr)
-            return 1
-
-        attractor_cfg = data.get("attractor") if isinstance(data.get("attractor"), dict) else None
-        if not attractor_cfg or not str(attractor_cfg.get("target", "")).strip():
-            print("No attractor target configured. Use 'driftdriver attractor set <target>' first.", file=sys.stderr)
-            return 1
-
-        target = str(attractor_cfg["target"]).strip()
-        registry = load_attractors_from_dir(attractors_dir) if attractors_dir.is_dir() else {}
-        try:
-            attractor = resolve_attractor(target, registry)
-        except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 1
-
-        from driftdriver.attractor_planner import build_convergence_plan
-        from driftdriver.bundles import load_bundles_from_dir
-        bundles_dir = pkg_root / "bundles"
-        bundles = load_bundles_from_dir(bundles_dir) if bundles_dir.is_dir() else []
-
-        # Diagnose via driftdriver check --json
-        from driftdriver.lane_contract import LaneFinding, LaneResult as _LR
-        rc_proc = subprocess.run(
-            [sys.executable, "-m", "driftdriver.cli", "--dir", str(project_dir), "check", "--json"],
-            capture_output=True,
-            text=True,
-            cwd=str(project_dir),
-        )
-        try:
-            check_data = json.loads(rc_proc.stdout) if rc_proc.stdout.strip() else {}
-        except (json.JSONDecodeError, TypeError):
-            check_data = {}
-
-        lane_results: dict[str, _LR] = {}
-        lanes_raw = check_data.get("lanes") if isinstance(check_data.get("lanes"), dict) else {}
-        for lane_name, lane_data in lanes_raw.items():
-            if not isinstance(lane_data, dict):
-                continue
-            findings = []
-            for f in lane_data.get("findings", []):
-                if isinstance(f, dict):
-                    findings.append(LaneFinding(
-                        message=str(f.get("message", "")),
-                        severity=str(f.get("severity", "info")),
-                        tags=list(f.get("tags", [])),
-                    ))
-            lane_results[lane_name] = _LR(
-                lane=lane_name,
-                findings=findings,
-                exit_code=int(lane_data.get("exit_code", 0)),
-                summary=str(lane_data.get("summary", "")),
-            )
-
-        plan = build_convergence_plan(
-            attractor=attractor,
-            lane_results=lane_results,
-            bundles=bundles,
-            repo=project_dir.name,
-            pass_number=0,
-        )
-
-        plan_dict = {
-            "attractor": plan.attractor,
-            "repo": plan.repo,
-            "pass_number": plan.pass_number,
-            "bundles": [
-                {"bundle_id": inst.bundle_id, "tasks": inst.tasks}
-                for inst in plan.bundle_instances
-            ],
-            "budget_cost": plan.budget_cost,
-            "escalation_count": len(plan.escalations),
-        }
-
-        if use_json:
-            print(json.dumps(plan_dict, indent=2))
-        else:
-            print(f"Attractor: {plan.attractor}")
-            print(f"Bundles to apply: {len(plan.bundle_instances)}")
-            for inst in plan.bundle_instances:
-                print(f"  - {inst.bundle_id} ({len(inst.tasks)} tasks)")
-            print(f"Budget cost: {plan.budget_cost}")
-            if plan.escalations:
-                print(f"Escalations: {len(plan.escalations)}")
-                for esc in plan.escalations:
-                    print(f"  - {esc.reason}: {esc.suggested_action}")
-        return 0
-
-    # -- run: execute the full attractor loop --
-    if action == "run":
-        from driftdriver.factorydrift import _maybe_run_attractor_loop
-        import tomllib
-
-        wg_dir = project_dir / ".workgraph"
-        policy_path = wg_dir / "drift-policy.toml"
-        if not policy_path.exists():
-            print("Error: no drift-policy.toml found. Run 'driftdriver install' first.", file=sys.stderr)
-            return 1
-
-        try:
-            policy_dict = tomllib.loads(policy_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            print(f"Error reading policy: {exc}", file=sys.stderr)
-            return 1
-
-        run = _maybe_run_attractor_loop(
-            repo_name=project_dir.name,
-            repo_path=project_dir,
-            policy=policy_dict,
-        )
-
-        if run is None:
-            print("No attractor target configured. Use 'driftdriver attractor set <target>' first.", file=sys.stderr)
-            return 1
-
-        result = {
-            "status": run.status,
-            "attractor": run.attractor,
-            "passes": len(run.passes),
-            "escalation_count": len(run.escalations),
-        }
-
-        if use_json:
-            print(json.dumps(result, indent=2))
-        else:
-            print(f"Attractor: {run.attractor}")
-            print(f"Status:    {run.status}")
-            print(f"Passes:    {len(run.passes)}")
-            print(f"Escalations: {len(run.escalations)}")
-        return 0
-
-    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -1515,11 +1179,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Do not emit WorkGraph tasks for stale or risky upstream changes",
     )
     upstream_tracker.add_argument(
-        "--no-write-adoptions",
-        action="store_true",
-        help="Do not write .workgraph/service/ecosystem-hub/upstream-adoptions.json",
-    )
-    upstream_tracker.add_argument(
         "--no-write-pins",
         action="store_true",
         help="Do not write .driftdriver/upstream-pins.toml",
@@ -1571,35 +1230,6 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--max-next", type=int, default=3, help="Max queued next actions to print (default: 3)")
     run_p.add_argument("--json", action="store_true", help="JSON output")
     run_p.set_defaults(func=cmd_run)
-
-    factory = sub.add_parser("factory", help="Generate one autonomous factory cycle plan + decision ledger")
-    factory.add_argument(
-        "--workspace-root",
-        default="",
-        help="Workspace root containing ecosystem repos (default: parent of project dir)",
-    )
-    factory.add_argument(
-        "--ecosystem-toml",
-        default="",
-        help="Path to ecosystem.toml (default: <workspace-root>/speedrift-ecosystem/ecosystem.toml)",
-    )
-    factory.add_argument(
-        "--central-repo",
-        default="",
-        help="Override central register repo path (default: policy reporting.central_repo)",
-    )
-    factory.add_argument("--skip-updates", action="store_true", help="Skip remote update checks for this cycle")
-    factory.add_argument("--max-next", type=int, default=5, help="Max next-work items per repo for snapshot context")
-    factory.add_argument("--plan-only", action="store_true", help="Force plan-only mode for this cycle")
-    factory.add_argument("--execute", action="store_true", help="Run execute mode with deterministic safe handlers")
-    factory.add_argument("--force", action="store_true", help="Run even when [factory].enabled is false")
-    factory.add_argument("--emit-followups", action="store_true", help="Create/update local corrective workgraph tasks")
-    factory.add_argument("--execute-draft-prs", action="store_true", help="Allow factory executor to open upstream draft PRs")
-    factory.add_argument("--no-write-ledger", action="store_true", help="Do not write local/central decision ledger")
-    factory.add_argument("--write", default="", help="Write JSON payload to this path")
-    factory.add_argument("--max-prompts", type=int, default=8, help="Max prompts to print in text mode")
-    factory.add_argument("--json", action="store_true", help="JSON output")
-    factory.set_defaults(func=cmd_factory)
 
     orch = sub.add_parser("orchestrate", help="Run continuous drift monitor+redirect loops (delegates to coredrift)")
     orch.add_argument("--interval", type=int, default=30, help="Monitor poll interval seconds (default: 30)")
@@ -1808,29 +1438,6 @@ def _build_parser() -> argparse.ArgumentParser:
     presence_p.add_argument("--max-age", type=int, default=600, help="Max heartbeat age in seconds (for gc/list)")
     presence_p.set_defaults(func=cmd_presence)
 
-    ecosystem_hub_p = sub.add_parser("ecosystem-hub", help="Proxy to the ecosystem hub service manager")
-    ecosystem_hub_p.add_argument("ecosystem_hub_args", nargs=argparse.REMAINDER, help="Arguments for ecosystem hub")
-    ecosystem_hub_p.set_defaults(func=cmd_ecosystem_hub_proxy)
-
-    # -- Factory brain commands --
-    brain_status_p = sub.add_parser("brain-status", help="Show factory brain state summary")
-    brain_status_p.set_defaults(func=cmd_brain_status)
-
-    brain_roster_p = sub.add_parser("brain-roster", help="Show enrolled repos in the factory brain")
-    brain_roster_p.set_defaults(func=cmd_brain_roster)
-
-    brain_log_p = sub.add_parser("brain-log", help="Show recent factory brain reasoning log")
-    brain_log_p.set_defaults(func=cmd_brain_log)
-
-    brain_enroll_p = sub.add_parser("brain-enroll", help="Manually enroll a repo in the factory brain")
-    brain_enroll_p.add_argument("path", help="Path to the repo to enroll")
-    brain_enroll_p.add_argument("--target", default="onboarded", help="Attractor target (default: onboarded)")
-    brain_enroll_p.set_defaults(func=cmd_brain_enroll)
-
-    brain_unenroll_p = sub.add_parser("brain-unenroll", help="Manually unenroll a repo from the factory brain")
-    brain_unenroll_p.add_argument("name", help="Repo name to unenroll")
-    brain_unenroll_p.set_defaults(func=cmd_brain_unenroll)
-
     # -- LLM spend commands --
     llm_spend_p = sub.add_parser("llm-spend", help="Query LLM token spend log")
     llm_spend_p.add_argument("--tail", default="24h", help="Time window (e.g. 24h, 1h, 72h)")
@@ -1869,23 +1476,6 @@ def _build_parser() -> argparse.ArgumentParser:
     watchdog_p.add_argument("action", choices=["run"], help="Watchdog action")
     watchdog_p.add_argument("--json", action="store_true", help="JSON output")
     watchdog_p.set_defaults(func=cmd_watchdog)
-
-    factory_report_p = sub.add_parser("factory-report", help="Build deterministic daily factory report (no LLM)")
-    factory_report_p.add_argument("--last", default="24h", help="Time window (e.g. 24h, 48h, 72h)")
-    factory_report_p.add_argument("--dry-run", action="store_true", help="Print report JSON without writing or notifying")
-    factory_report_p.add_argument("--json", action="store_true", help="JSON output on write")
-    factory_report_p.set_defaults(func=cmd_factory_report)
-
-    # -- Attractor commands --
-    attractor_p = sub.add_parser("attractor", help="Manage attractor convergence targets")
-    attractor_p.add_argument(
-        "action",
-        choices=["status", "plan", "run", "list", "set"],
-        help="status | plan | run | list | set",
-    )
-    attractor_p.add_argument("target", nargs="?", default="", help="Attractor target name (for 'set')")
-    attractor_p.add_argument("--json", action="store_true", help="JSON output")
-    attractor_p.set_defaults(func=cmd_attractor)
 
     # -- Reaper commands --
     reaper_p = sub.add_parser("reaper", help="Zombie process reaper for stale claude --print processes")
@@ -1949,29 +1539,6 @@ def main(argv: list[str] | None = None) -> int:
             wire_idx = -1
         if wire_idx != -1:
             forwarded = forwarded[:wire_idx] + forwarded[wire_idx + 1:]
-    if forwarded:
-        try:
-            hub_idx = forwarded.index("ecosystem-hub")
-        except ValueError:
-            hub_idx = -1
-        if hub_idx != -1:
-            from driftdriver.ecosystem_hub import main as ecosystem_hub_main
-
-            prefix = forwarded[:hub_idx]
-            hub_args = forwarded[hub_idx + 1 :]
-            if "--project-dir" not in hub_args:
-                if "--dir" in prefix:
-                    idx = prefix.index("--dir")
-                    if idx + 1 < len(prefix):
-                        hub_args = ["--project-dir", prefix[idx + 1], *hub_args]
-                else:
-                    for item in prefix:
-                        if item.startswith("--dir="):
-                            hub_args = ["--project-dir", item.split("=", 1)[1], *hub_args]
-                            break
-            if not hub_args:
-                hub_args = ["--help"]
-            return int(ecosystem_hub_main(hub_args))
     p = _build_parser()
     args = p.parse_args(forwarded)
     return int(args.func(args))
