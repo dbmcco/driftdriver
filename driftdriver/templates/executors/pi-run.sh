@@ -39,15 +39,30 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Build the provider-qualified model spec (provider/id). Pass through unchanged
-# if already qualified (contains '/') or if no provider was supplied.
+# Build the provider-qualified model spec. When WG supplies a provider and a
+# bare model id (e.g. provider=zai, model=glm-5.2), emit separate --provider
+# and --model flags so pi can resolve a custom provider via the auto-loaded
+# @worksgood/pi extension. Also export the WG Pi bridge env vars the extension
+# needs to register the custom endpoint/key. Pass through unchanged if already
+# qualified (contains '/') or if no provider was supplied.
 MODEL_ARGS=()
 SELECTED_MODEL="$MODEL"
 if [[ -n "$MODEL" ]]; then
   if [[ "$MODEL" != */* && -n "$PROVIDER" ]]; then
     SELECTED_MODEL="$PROVIDER/$MODEL"
+    MODEL_ARGS+=(--provider "$PROVIDER" --model "$MODEL")
+    # Bridge custom providers into pi's model registry.
+    export WG_PI_PROVIDER="$PROVIDER"
+    export WG_MODEL="$PROVIDER:$MODEL"
+    case "$PROVIDER" in
+      zai)
+        export WG_PI_BASE_URL="${WG_PI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}"
+        export WG_PI_API_KEY="${WG_PI_API_KEY:-${ZAI_API_KEY:-}}"
+        ;;
+    esac
+  else
+    MODEL_ARGS+=(--model "$SELECTED_MODEL")
   fi
-  MODEL_ARGS+=(--model "$SELECTED_MODEL")
 fi
 if [[ -n "$FALLBACK_MODEL" && "$FALLBACK_MODEL" != */* && -n "$PROVIDER" ]]; then
   FALLBACK_MODEL="$PROVIDER/$FALLBACK_MODEL"
