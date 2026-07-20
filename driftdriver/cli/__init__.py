@@ -78,6 +78,7 @@ from .doctor import (
 )
 from .decisions_cmd import cmd_decisions, handle_decisions_answer, handle_decisions_pending, format_decisions_text
 from .install_cmd import cmd_install
+from .upgrade_cmd import cmd_upgrade
 from .run import (
     _invoke_check_json,
     cmd_orchestrate,
@@ -1525,6 +1526,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     from driftdriver.tmux_monitor.cli import register_tmux_monitor_parser
     register_tmux_monitor_parser(sub)
+
+    upgrade_p = sub.add_parser(
+        "upgrade",
+        help="Apply pending driftdriver migrations to this repo (or --fleet)",
+    )
+    upgrade_p.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
+    upgrade_p.add_argument("--fleet", action="store_true", help="Apply across all repos with .workgraph/ under --root")
+    upgrade_p.add_argument("--root", default=None, help="Root dir for --fleet (default: cwd)")
+    upgrade_p.set_defaults(func=cmd_upgrade)
 
     return p
 
