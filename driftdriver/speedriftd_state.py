@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 from driftdriver.policy import DriftPolicy, load_drift_policy
-from driftdriver.workgraph import find_workgraph_dir
+from driftdriver.workgraph import WorkgraphDirectoryConflictError, find_workgraph_dir
 
 CONTROL_MODES = {"manual", "observe", "supervise", "autonomous"}
 CONTROL_RECEIPT_LOCK_FILENAME = "control-receipt.lock"
@@ -238,6 +238,8 @@ def load_dispatch_authority(project_dir: Path) -> dict[str, Any]:
     """
     try:
         return dispatch_authority(load_control_state(project_dir))
+    except WorkgraphDirectoryConflictError:
+        raise
     except Exception:
         return {"enabled": False, "reason": "control state unavailable"}
 

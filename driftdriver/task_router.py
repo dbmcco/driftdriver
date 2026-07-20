@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from driftdriver.manual_owner import apply_manual_owner_policy
 from driftdriver.policy import load_drift_policy
 from driftdriver.speedriftd_state import load_dispatch_authority
-from driftdriver.workgraph import resolve_workgraph_dir
+from driftdriver.workgraph import WorkgraphDirectoryConflictError, resolve_workgraph_dir
 
 
 @dataclass
@@ -534,6 +534,8 @@ def _dispatch_admission(repo_path: Path) -> tuple[bool, str]:
     """Lease-gate Workgraph dispatch effects; fail closed without an active lease."""
     try:
         authority = load_dispatch_authority(repo_path)
+    except WorkgraphDirectoryConflictError:
+        raise
     except Exception:
         return False, "control state unavailable"
     if authority.get("enabled"):

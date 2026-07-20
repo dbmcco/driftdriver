@@ -29,9 +29,14 @@ from driftdriver.task_router import (
 from driftdriver.workgraph import WorkgraphDirectoryConflictError
 
 
-def _grant_active_lease(repo: Path, *, owner: str = "test-suite") -> None:
-    """Write a control.json granting an active supervise lease for routing tests."""
-    control_path = repo / ".workgraph" / "service" / "runtime" / "control.json"
+def _grant_active_lease(repo: Path, *, owner: str = "test-suite", wg_dir: Path | None = None) -> None:
+    """Write a control.json granting an active supervise lease for routing tests.
+
+    By default the lease is written under ``repo/.workgraph``; pass ``wg_dir`` to
+    target a canonically resolved graph directory (e.g. ``.wg``).
+    """
+    target = wg_dir if wg_dir is not None else repo / ".workgraph"
+    control_path = target / "service" / "runtime" / "control.json"
     control_path.parent.mkdir(parents=True, exist_ok=True)
     control_path.write_text(json.dumps({
         "repo": repo.name,
@@ -1174,6 +1179,7 @@ tag_match = "agent:samantha"
                 encoding="utf-8",
             )
             (wg_dir / "drift-policy.toml").write_bytes(toml)
+            _grant_active_lease(repo, wg_dir=wg_dir)
             config = load_routing_config(wg_dir / "drift-policy.toml")
             results = route_ready_tasks(repo, config)
 
@@ -1202,6 +1208,7 @@ tag_match = "agent:samantha"
                     "\n".join(json.dumps(t) for t in tasks) + "\n",
                     encoding="utf-8",
                 )
+            _grant_active_lease(repo)
             config = RoutingConfig(
                 enabled=True, default_executor="wg-daemon", executors={}
             )
@@ -1325,6 +1332,7 @@ tag_match = "agent:samantha"
             # A truly uninitialized candidate dir with no graph at all.
             (workspace / "empty-repo").mkdir()
 
+            _grant_active_lease(workspace / "wg-repo", wg_dir=wg_dir)
             config = load_routing_config(wg_dir / "drift-policy.toml")
             summary = route_ecosystem(workspace, config)
 
