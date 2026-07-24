@@ -39,6 +39,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Normalize the model spec the dispatcher actually sends. The wg dispatcher
+# passes a colon-qualified route like "--model zai:glm-5.2" (and may leave an
+# executor prefix like "pi:zai:glm-5.2"). pi's CLI cannot resolve a bare
+# "zai:glm-5.2"; it needs --provider zai --model glm-5.2 PLUS the WG_PI_*
+# bridge env so the @worksgood/pi extension registers the custom endpoint.
+# Strip an executor prefix, then split a colon-form spec into separate
+# PROVIDER/MODEL so the qualified-build block below fires.
+if [[ "$MODEL" == pi:* ]]; then
+  MODEL="${MODEL#pi:}"
+fi
+if [[ -z "$PROVIDER" && -n "$MODEL" && "$MODEL" == *:* ]]; then
+  PROVIDER="${MODEL%%:*}"
+  MODEL="${MODEL#*:}"
+fi
+
 # Build the provider-qualified model spec. When WG supplies a provider and a
 # bare model id (e.g. provider=zai, model=glm-5.2), emit separate --provider
 # and --model flags so pi can resolve a custom provider via the auto-loaded
