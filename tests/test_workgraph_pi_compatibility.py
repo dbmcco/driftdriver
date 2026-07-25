@@ -94,6 +94,8 @@ def test_pi_executor_preserves_selected_and_fallback_model_specs(tmp_path: Path)
     invocation = json.loads(capture.read_text(encoding="utf-8"))
     assert invocation["argv"] == [
         "-p",
+        "--mode",
+        "json",
         "--model",
         "anthropic/claude-opus-4-8",
         "deterministic compatibility prompt",

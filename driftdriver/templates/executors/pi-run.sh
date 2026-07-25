@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ABOUTME: WorkGraph executor wrapper that drives `pi` (pi-coding-agent) in print mode.
 # ABOUTME: Reads the rendered task prompt from stdin (the wg custom-executor contract)
-# ABOUTME: and runs it non-interactively via `pi -p`. Peer of codex-run.sh / claude-run.sh.
+# ABOUTME: and runs it non-interactively via `pi -p --mode json`. Peer of codex-run.sh / claude-run.sh.
 
 set -euo pipefail
 
@@ -116,9 +116,10 @@ export PAIA_AVERY="${PAIA_AVERY:-0}"
 # Resolve the pi binary. Honor PI_BIN / PI_CMD overrides, else rely on PATH.
 PI_BIN="${PI_BIN:-${PI_CMD:-pi}}"
 
-# Run pi non-interactively. Prompt is a positional argument (pi -p "<prompt>").
+# Run pi non-interactively in streaming JSON mode. The generated Workgraph
+# wrapper tees stdout into raw_stream.jsonl for liveness and pi-stream-bridge.
 set +e
-"$PI_BIN" -p "${MODEL_ARGS[@]}" "${THINKING_ARGS[@]}" "$PROMPT"
+"$PI_BIN" -p --mode json "${MODEL_ARGS[@]}" "${THINKING_ARGS[@]}" "$PROMPT"
 EXIT_CODE=$?
 set -e
 
