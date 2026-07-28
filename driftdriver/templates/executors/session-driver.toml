@@ -18,7 +18,7 @@ template = """
 1. Run pre-check: ./.workgraph/drifts check --task {{task_id}} --write-log
 2. Implement the task following TDD (RED->GREEN->REFACTOR)
 3. Run post-check: ./.workgraph/drifts check --task {{task_id}} --write-log --create-followups
-4. Mark complete: wg done {{task_id}}
+4. Mark complete: commit, push, then wg done {{task_id}} (push is required)
 
 ## Speedrift vNext Envelope
 - Treat Agency as the preferred composition layer when the task declares an `agencydrift` block; if Agency is unavailable and fallback is safe, record the fallback with `wg log {{task_id}}`.

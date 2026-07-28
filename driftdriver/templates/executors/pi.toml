@@ -38,6 +38,6 @@ ask questions. Make decisions autonomously, log key decisions with
 ## Workgraph Rules
 - Stay focused on this task.
 - Log progress: wg log {{task_id}} "message"
-- When complete: wg done {{task_id}}
+- When complete: commit and push your work, then run wg done {{task_id}} — a successful git push is required. If wg done rejects with a push error, fix the push and re-run.
 - If blocked: wg fail {{task_id}} --reason "description"
 """
