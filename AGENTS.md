@@ -11,6 +11,7 @@ Run: `./.workgraph/handlers/task-claimed.sh --cli codex`
 
 ### Before Completing a Task
 Run: `./.workgraph/handlers/task-completing.sh --cli codex`
+- `wg done` enforces a successful `git push origin main` by default. If the push fails (network, permissions, non-FF), the task stays open. Fix the push, then re-run `wg done`. Do not bypass this with config overrides.
 
 ### On Error
 Run: `./.workgraph/handlers/agent-error.sh --cli codex`
@@ -26,12 +27,14 @@ Run: `./.workgraph/handlers/agent-error.sh --cli codex`
 - `speedriftd` is the repo-local runtime supervisor. Interactive sessions do not own dispatch by default.
 - PlanForge handoffs should include unit tests, integration tests, UX tests or waivers, Agency usage, roborev/review obligations, bounded adversarial review, and detailed small-model-ready implementation steps.
 - Default posture is `observe`. Do not use `wg service start` as a generic way to kick off autonomous work.
+- `supervise` and `autonomous` require an explicit non-empty lease owner and reason; expired or missing leases fail closed to observe-only dispatch.
 - Refresh repo runtime state before acting: `driftdriver --dir "$PWD" --json speedriftd status --refresh`
 - If the user wants background execution in this repo, arm it explicitly:
   - `driftdriver --dir "$PWD" speedriftd status --set-mode supervise --lease-owner <agent-name> --reason "explicit repo supervision requested"`
   - `driftdriver --dir "$PWD" speedriftd status --set-mode autonomous --lease-owner <agent-name> --reason "explicit autonomous execution requested"`
 - When the task is complete or the repo should stop self-dispatching, return it to passive mode:
   - `driftdriver --dir "$PWD" speedriftd status --set-mode observe --release-lease --reason "return repo to observation"`
+- Verify the gate after changes: `driftdriver --dir "$PWD" --json speedriftd status --refresh`; service start is allowed only when mode is elevated and `control.lease_active` is true.
 - To see the broader ecosystem hub and current port 8777 URLs:
   - `cd /Users/braydon/projects/experiments/driftdriver && scripts/ecosystem_hub_daemon.sh url`
 
@@ -89,6 +92,25 @@ Check this before starting repo work so same-repo agents do not conflict.
 - Bundles are matched to findings automatically; unmatched findings escalate.
 - Check status: `driftdriver attractor status --json`
 - Run convergence: `driftdriver attractor run --json`
+
+## Model Routing and Fleet Health
+
+### Model Tiers
+Tasks are routed to models by cost tier. The planner assigns the cheapest sufficient model:
+- **Fast** (free, local): `ollama:gemma4:26b` — simple leaf tasks, refactors, mechanical changes
+- **Standard** (lower cost): `kimi-coding:kimi-for-coding`, `zai:glm-5.2` — normal implementation work
+- **Premium** (higher cost): `kimi-coding:k3`, `openai-codex:gpt-5.5` — architecture, critical paths, complex reasoning
+
+**Prohibited:** `anthropic/*` models are NOT available for workgraph-dispatched tasks. Never assign them.
+**Conditional:** `lunaroute/*` models depend on a third-party server. Never use as default or fallback.
+
+### Fleet Health
+Query fleet health in one call:
+```bash
+wg health --json    # structured output for agents
+wg health           # human-readable summary
+```
+This surfaces spawn-pause state, provider health, watchdog classifications, circuit-breaker proximity, and reap proximity that `wg status` does not expose.
 
 ## Automatic Loops
 
