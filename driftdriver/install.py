@@ -796,6 +796,7 @@ def ensure_executor_guidance(
     executors_dir.mkdir(parents=True, exist_ok=True)
     install_claude_executor_support(wg_dir)
     install_pi_executor_support(wg_dir)
+    install_worktree_setup(wg_dir)
 
     created = False
     claude_path = executors_dir / "claude.toml"
@@ -998,6 +999,22 @@ def install_pi_executor_support(wg_dir: Path) -> bool:
     wrote_runner = _write_text_if_changed(runner_dst, _template_text("executors", "pi-run.sh"))
     _make_executable(runner_dst)
     return wrote_runner
+
+
+def install_worktree_setup(wg_dir: Path) -> bool:
+    """
+    Install the worktree-setup.sh hook into the workgraph control plane.
+
+    Workgraph calls this script after creating an isolated agent worktree.
+    It symlinks .workgraph into the worktree so executors, drifts, and
+    handlers resolve normally. Without it, isolated worktrees lack the
+    control plane (.workgraph is gitignored) and the pi executor fails
+    pre-launch verification.
+    """
+    setup_dst = wg_dir / "worktree-setup.sh"
+    wrote = _write_text_if_changed(setup_dst, _template_text("worktree-setup.sh"))
+    _make_executable(setup_dst)
+    return wrote
 
 
 def ensure_amplifier_executor(wg_dir: Path, *, bundle_name: str = "speedrift") -> tuple[bool, bool]:
