@@ -394,6 +394,7 @@ def build_decompose_prompt(
             'objective = "The task title"\n'
             'non_goals = ["Things explicitly out of scope"]\n'
             'touch = ["src/file1.ts", "src/file2.ts"]\n'
+            'creates = ["src/new_file.py"]\n'
             'acceptance = ["Acceptance criterion 1", "Acceptance criterion 2"]\n'
             "max_files = 15\n"
             "max_loc = 500\n"
@@ -401,6 +402,9 @@ def build_decompose_prompt(
             "````\n"
             "Include the wg-contract block as the FIRST thing in the description "
             "field. Put the human-readable instructions after it.\n"
+            "List files the task will CREATE under `creates` and files it will "
+            "MODIFY under `touch` — grounding checks treat undeclared missing "
+            "touch paths as potential errors.\n"
         )
     else:
         raise ValueError(f"Unknown bundle mode: {bundle.mode!r}")

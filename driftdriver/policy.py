@@ -193,12 +193,13 @@ def _default_existdrift_cfg() -> dict[str, Any]:
     return {
         "enabled": True,
         "interval_seconds": 14400,
-        "severity_missing_path": "warning",
+        "severity_grounding_error": "warning",
+        "severity_collision": "high",
         "severity_outside_repo": "high",
-        "severity_unknown_symbol": "info",
         "max_findings": 40,
         "symbol_check": True,
         "min_symbol_len": 4,
+        "interpretation_model": "hermes3:8b",
         "emit_followups": False,
     }
 
@@ -466,12 +467,13 @@ def _default_policy_text() -> str:
         "[existdrift]\n"
         "enabled = true\n"
         "interval_seconds = 14400\n"
-        "severity_missing_path = \"warning\"\n"
+        "severity_grounding_error = \"warning\"\n"
+        "severity_collision = \"high\"\n"
         "severity_outside_repo = \"high\"\n"
-        "severity_unknown_symbol = \"info\"\n"
         "max_findings = 40\n"
         "symbol_check = true\n"
         "min_symbol_len = 4\n"
+        "interpretation_model = \"hermes3:8b\"\n"
         "emit_followups = false\n"
         "\n"
         "[northstardrift]\n"
@@ -949,17 +951,17 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     existdrift_raw = data.get("existdrift") if isinstance(data.get("existdrift"), dict) else {}
     existdrift = _default_existdrift_cfg()
     existdrift["enabled"] = bool(existdrift_raw.get("enabled", existdrift["enabled"]))
-    existdrift["severity_missing_path"] = str(
-        existdrift_raw.get("severity_missing_path", existdrift["severity_missing_path"])
-        or existdrift["severity_missing_path"]
+    existdrift["severity_grounding_error"] = str(
+        existdrift_raw.get("severity_grounding_error", existdrift["severity_grounding_error"])
+        or existdrift["severity_grounding_error"]
+    )
+    existdrift["severity_collision"] = str(
+        existdrift_raw.get("severity_collision", existdrift["severity_collision"])
+        or existdrift["severity_collision"]
     )
     existdrift["severity_outside_repo"] = str(
         existdrift_raw.get("severity_outside_repo", existdrift["severity_outside_repo"])
         or existdrift["severity_outside_repo"]
-    )
-    existdrift["severity_unknown_symbol"] = str(
-        existdrift_raw.get("severity_unknown_symbol", existdrift["severity_unknown_symbol"])
-        or existdrift["severity_unknown_symbol"]
     )
     existdrift["max_findings"] = max(
         1, int(existdrift_raw.get("max_findings", existdrift["max_findings"]))
@@ -969,6 +971,10 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
     )
     existdrift["min_symbol_len"] = max(
         2, int(existdrift_raw.get("min_symbol_len", existdrift["min_symbol_len"]))
+    )
+    existdrift["interpretation_model"] = str(
+        existdrift_raw.get("interpretation_model", existdrift["interpretation_model"])
+        or existdrift["interpretation_model"]
     )
     existdrift["emit_followups"] = bool(
         existdrift_raw.get("emit_followups", existdrift["emit_followups"])

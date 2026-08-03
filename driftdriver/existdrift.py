@@ -1,6 +1,6 @@
-# ABOUTME: existdrift — pre-build grounding lane.
-# ABOUTME: Verifies plan↔reality (touch paths, repo boundary, symbols) and
-# ABOUTME: builds evidence bundles that ground planner prompts.
+# ABOUTME: existdrift — model-mediated pre-build grounding lane.
+# ABOUTME: Three layers: evidence (pure code), interpretation (model-mediated),
+# ABOUTME: findings (deterministic policy). No heuristic intent inference.
 from __future__ import annotations
 
 import json
@@ -10,9 +10,10 @@ import subprocess
 from datetime import datetime, timezone
 from hashlib import sha1
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from driftdriver.drift_task_guard import guarded_add_drift_task
+from driftdriver.local_llm import call_ollama as _default_caller, _DEFAULT_MODEL
 
 _SEVERITY_RANK = {
     "critical": 4,
@@ -24,24 +25,29 @@ _SEVERITY_RANK = {
 
 _ACTIVE_STATES = {"open", "ready", "in-progress"}
 
-# Exclude patterns for directory traversal and symbol search.
 _EXCLUDE_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     ".workgraph", "dist", "build", ".mypy_cache", ".pytest_cache",
     ".ruff_cache", "target", "Cargo",
 }
 
-# Regex to extract a wg-contract fenced block from a description.
 _WG_CONTRACT_RE = re.compile(
     r"```wg-contract\s*\n(.*?)```",
     re.DOTALL,
 )
 
-# Regex to extract backticked identifiers from description text.
 _SYMBOL_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_.]{3,})`")
 
-# Documents we look for in evidence bundles.
 _DOC_FILES = ("NORTH_STAR.md", "AGENTS.md", "CLAUDE.md", "README.md")
+
+_VALID_JUDGMENTS = frozenset({
+    "create-intended", "grounding-error", "collision-risk", "acceptable",
+})
+
+
+# ---------------------------------------------------------------------------
+# Timestamp and fingerprint helpers
+# ---------------------------------------------------------------------------
 
 
 def _iso_now() -> str:
@@ -53,16 +59,22 @@ def _fingerprint(parts: list[str]) -> str:
     return sha1(key.encode("utf-8")).hexdigest()  # noqa: S324
 
 
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+
 def _default_existdrift_cfg() -> dict[str, Any]:
     return {
         "enabled": True,
         "interval_seconds": 14400,
-        "severity_missing_path": "warning",
+        "severity_grounding_error": "warning",
+        "severity_collision": "high",
         "severity_outside_repo": "high",
-        "severity_unknown_symbol": "info",
         "max_findings": 40,
         "symbol_check": True,
         "min_symbol_len": 4,
+        "interpretation_model": _DEFAULT_MODEL,
         "emit_followups": False,
     }
 
@@ -72,12 +84,21 @@ def _normalize_cfg(raw: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "enabled": bool(r.get("enabled", True)),
         "interval_seconds": max(0, int(r.get("interval_seconds", 14400))),
-        "severity_missing_path": str(r.get("severity_missing_path", "warning") or "warning"),
-        "severity_outside_repo": str(r.get("severity_outside_repo", "high") or "high"),
-        "severity_unknown_symbol": str(r.get("severity_unknown_symbol", "info") or "info"),
+        "severity_grounding_error": str(
+            r.get("severity_grounding_error", "warning") or "warning"
+        ),
+        "severity_collision": str(
+            r.get("severity_collision", "high") or "high"
+        ),
+        "severity_outside_repo": str(
+            r.get("severity_outside_repo", "high") or "high"
+        ),
         "max_findings": max(1, int(r.get("max_findings", 40))),
         "symbol_check": bool(r.get("symbol_check", True)),
         "min_symbol_len": max(2, int(r.get("min_symbol_len", 4))),
+        "interpretation_model": str(
+            r.get("interpretation_model", _DEFAULT_MODEL) or _DEFAULT_MODEL
+        ),
         "emit_followups": bool(r.get("emit_followups", False)),
     }
 
@@ -90,8 +111,7 @@ def _normalize_cfg(raw: dict[str, Any] | None) -> dict[str, Any]:
 def _read_workgraph_tasks(
     repo_path: Path,
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """Read workgraph tasks from graph.jsonl. Reuses plandrift's reader if available."""
-    # Try importing plandrift's reader first to avoid duplication.
+    """Read workgraph tasks from graph.jsonl."""
     try:
         from driftdriver.plandrift import _read_workgraph_tasks as _pdr
 
@@ -99,7 +119,6 @@ def _read_workgraph_tasks(
     except Exception:
         pass
 
-    # Fallback: mirror the pattern directly.
     graph = repo_path / ".workgraph" / "graph.jsonl"
     if not graph.exists():
         return {}, [".workgraph/graph.jsonl missing"]
@@ -140,42 +159,35 @@ def _read_workgraph_tasks(
 
 
 # ---------------------------------------------------------------------------
-# Contract and symbol extraction
+# Contract extraction (generalized for touch and creates)
 # ---------------------------------------------------------------------------
 
 
-def _extract_contract_touch(description: str) -> list[str]:
-    """Extract the ``touch`` list from a wg-contract fenced block.
+def _extract_contract_key(description: str, key: str) -> list[str]:
+    """Extract a list-valued key from a wg-contract fenced block.
 
-    Tolerates parse failure by returning an empty list.  Falls back to
-    scanning the raw description for ``touch = [...]`` TOML-like syntax if
-    the fenced block is malformed.
+    Falls back to regex parsing if TOML parsing fails.
     """
-    # Try the fenced block first.
     match = _WG_CONTRACT_RE.search(description)
     body = match.group(1) if match else description
 
-    # Quick TOML parse for the touch key.
     try:
         import tomllib
 
-        # tomllib requires a top-level table; wrap if needed.
         parsed = tomllib.loads(body)
-        raw_touch = parsed.get("touch")
-        if isinstance(raw_touch, list):
-            return [str(p).strip() for p in raw_touch if str(p).strip()]
+        raw = parsed.get(key)
+        if isinstance(raw, list):
+            return [str(p).strip() for p in raw if str(p).strip()]
     except Exception:
         pass
 
-    # Regex fallback: find touch = ["a", "b"]
-    touch_match = re.search(
-        r'touch\s*=\s*\[([^\]]*)\]',
+    # Regex fallback: key = ["a", "b"]
+    key_match = re.search(
+        rf'{key}\s*=\s*\[([^\]]*)\]',
         body,
     )
-    if touch_match:
-        inner = touch_match.group(1)
-        paths = re.findall(r'"([^"]+)"', inner)
-        return paths
+    if key_match:
+        return re.findall(r'"([^"]+)"', key_match.group(1))
     return []
 
 
@@ -217,7 +229,6 @@ def _check_symbol_exists(symbol: str, repo_path: Path) -> bool:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
-    # Fallback: grep
     grep = shutil.which("grep")
     if grep:
         try:
@@ -233,7 +244,6 @@ def _check_symbol_exists(symbol: str, repo_path: Path) -> bool:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
-    # Last resort: Python file scan of top-level source dirs.
     try:
         for src_dir in [repo_path / "src", repo_path, repo_path / "lib"]:
             if not src_dir.exists():
@@ -257,12 +267,10 @@ def _check_symbol_exists(symbol: str, repo_path: Path) -> bool:
 
 
 def _resolve_path(repo_path: Path, touch_path: str) -> Path:
-    """Resolve a touch path relative to repo_path, normalising ``../`` escapes."""
     return (repo_path / touch_path).resolve()
 
 
 def _is_outside_repo(repo_path: Path, touch_path: str) -> bool:
-    """Return True if a touch path resolves outside the repo root."""
     resolved = _resolve_path(repo_path, touch_path)
     try:
         resolved.relative_to(repo_path.resolve())
@@ -271,25 +279,331 @@ def _is_outside_repo(repo_path: Path, touch_path: str) -> bool:
         return True
 
 
-def _suggest_nearest(repo_path: Path, touch_path: str) -> str:
-    """Suggest a nearest sibling if the parent directory exists."""
+def _nearest_existing_parent(repo_path: Path, touch_path: str) -> str:
+    """Return the nearest existing parent directory relative to repo, or ''."""
     full = repo_path / touch_path
     parent = full.parent
     if parent.exists() and parent != repo_path:
-        siblings = sorted(
-            f.name for f in parent.iterdir() if f.is_file()
-        )[:5]
-        if siblings:
-            rel_parent = parent.relative_to(repo_path)
-            return (
-                f"Parent `{rel_parent}/` exists with: {', '.join(siblings)}. "
-                f"Confirm the path or declare the file as new."
-            )
-    return "Confirm the path or declare the file as new."
+        try:
+            return str(parent.relative_to(repo_path.resolve()))
+        except ValueError:
+            return str(parent)
+    return ""
 
 
 # ---------------------------------------------------------------------------
-# Main scan
+# Layer 1: Evidence collection (pure code, zero judgment)
+# ---------------------------------------------------------------------------
+
+
+def collect_evidence(
+    repo_path: Path,
+    tasks: dict[str, dict[str, Any]],
+    cfg: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Collect pure filesystem facts for each active task with a wg-contract.
+
+    Produces a list of evidence rows, one per qualifying task. Each row
+    contains touch_facts, creates_facts, and symbol_facts — all boolean
+    facts with no severity, no recommendation, no inference.
+    """
+    min_symbol_len = int(cfg.get("min_symbol_len", 4))
+    do_symbols = bool(cfg.get("symbol_check", True))
+    rows: list[dict[str, Any]] = []
+
+    for task in tasks.values():
+        status = str(task.get("status") or "open").strip().lower()
+        if status not in _ACTIVE_STATES:
+            continue
+
+        description = str(task.get("description") or "")
+        touch_paths = _extract_contract_key(description, "touch")
+        creates_paths = _extract_contract_key(description, "creates")
+
+        # --- touch_facts ---
+        touch_facts: list[dict[str, Any]] = []
+        for tp in touch_paths:
+            outside = _is_outside_repo(repo_path, tp)
+            exists = (repo_path / tp).exists() if not outside else False
+            touch_facts.append({
+                "path": tp,
+                "exists": exists,
+                "outside_repo": outside,
+                "nearest_existing_parent": _nearest_existing_parent(repo_path, tp),
+            })
+
+        # --- creates_facts ---
+        creates_facts: list[dict[str, Any]] = []
+        for cp in creates_paths:
+            creates_facts.append({
+                "path": cp,
+                "already_exists": (repo_path / cp).exists(),
+            })
+
+        # --- symbol_facts ---
+        symbol_facts: list[dict[str, Any]] = []
+        if do_symbols:
+            symbols = _extract_symbols(description, min_len=min_symbol_len)
+            for sym in symbols:
+                symbol_facts.append({
+                    "symbol": sym,
+                    "found": _check_symbol_exists(sym, repo_path),
+                })
+
+        rows.append({
+            "task_id": str(task.get("id") or ""),
+            "title": str(task.get("title") or ""),
+            "declared_touch": touch_paths,
+            "declared_creates": creates_paths,
+            "touch_facts": touch_facts,
+            "creates_facts": creates_facts,
+            "symbol_facts": symbol_facts,
+        })
+
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Layer 2: Interpretation (model-mediated)
+# ---------------------------------------------------------------------------
+
+
+def _select_items_for_interpretation(row: dict[str, Any]) -> list[dict[str, str]]:
+    """Select items that need model interpretation from an evidence row.
+
+    An item needs interpretation iff:
+    - touch fact: exists=False AND path NOT in declared_creates
+    - creates fact: already_exists=True
+    - symbol fact: found=False
+
+    outside_repo facts are excluded — they go straight to the findings layer.
+    """
+    declared_creates = set(row.get("declared_creates", []))
+    items: list[dict[str, str]] = []
+
+    for tf in row.get("touch_facts", []):
+        if tf["outside_repo"]:
+            continue
+        if not tf["exists"] and tf["path"] not in declared_creates:
+            fact_str = "Path does not exist on disk (not declared in creates)"
+            if tf.get("nearest_existing_parent"):
+                fact_str += f"; nearest existing parent: {tf['nearest_existing_parent']}"
+            items.append({
+                "task_id": row["task_id"],
+                "type": "touch-path-missing",
+                "item": tf["path"],
+                "fact": fact_str,
+            })
+
+    for cf in row.get("creates_facts", []):
+        if cf["already_exists"]:
+            items.append({
+                "task_id": row["task_id"],
+                "type": "creates-collision",
+                "item": cf["path"],
+                "fact": "File already exists but task declares creating it",
+            })
+
+    for sf in row.get("symbol_facts", []):
+        if not sf["found"]:
+            items.append({
+                "task_id": row["task_id"],
+                "type": "unknown-symbol",
+                "item": sf["symbol"],
+                "fact": "Symbol not found in any source file in the repo",
+            })
+
+    return items
+
+
+def _build_interpretation_prompt(
+    evidence_rows: list[dict[str, Any]],
+    all_items: list[dict[str, str]],
+) -> str:
+    """Build the prompt that asks the model to interpret grounding facts."""
+    lines: list[str] = [
+        "You are a grounding analyst for a workgraph task planner. Review the "
+        "following filesystem facts and classify each item that needs attention.",
+        "",
+        "For each item, provide a judgment from these categories:",
+        '- "create-intended": The path/symbol will be created by this task\'s own work.',
+        '- "grounding-error": The reference appears to be a mistake (wrong path, typo, hallucinated API).',
+        '- "collision-risk": The task declares creating a file that already exists; may overwrite.',
+        '- "acceptable": The reference is fine (e.g., a symbol defined by a prerequisite task).',
+        "",
+        "TASKS AND FACTS:",
+        "",
+    ]
+
+    for row in evidence_rows:
+        tid = row["task_id"]
+        title = row.get("title", "")
+        lines.append(f"Task: {title} (task_id: {tid})")
+        lines.append(f"  Declared touch paths (files to modify): {row.get('declared_touch', [])}")
+        lines.append(f"  Declared creates paths (files to create): {row.get('declared_creates', [])}")
+        lines.append("")
+        task_items = [i for i in all_items if i["task_id"] == tid]
+        if task_items:
+            lines.append("  Items needing judgment:")
+            for idx, item in enumerate(task_items, 1):
+                lines.append(f"  {idx}. {item['item']} — {item['fact']}")
+        else:
+            lines.append("  (no items need judgment)")
+        lines.append("")
+
+    lines.extend([
+        "Respond with ONLY a JSON array. Each element:",
+        '{"task_id": "...", "item": "...", "judgment": "create-intended|grounding-error|collision-risk|acceptable", "rationale": "brief explanation", "suggested_fix": "what to do (empty if acceptable)"}',
+    ])
+    return "\n".join(lines)
+
+
+def _validate_interp_response(raw: str) -> list[dict[str, Any]] | None:
+    """Parse and validate the model's interpretation response.
+
+    Returns a list of judgment dicts on success, or None if the response
+    is unparseable or schema-invalid.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+
+    # Try direct parse
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        # Try extracting from code fence
+        if "```" in text:
+            start = text.find("```")
+            end = text.rfind("```")
+            candidate = text[start:end]
+            # Strip fence markers and language tags
+            candidate = re.sub(r"^```[a-z]*\n?", "", candidate)
+            candidate = re.sub(r"\n?```$", "", candidate)
+            try:
+                data = json.loads(candidate.strip())
+            except json.JSONDecodeError:
+                return None
+        else:
+            # Try brace/bracket span
+            first_bracket = text.find("[")
+            last_bracket = text.rfind("]")
+            if first_bracket >= 0 and last_bracket > first_bracket:
+                try:
+                    data = json.loads(text[first_bracket:last_bracket + 1])
+                except json.JSONDecodeError:
+                    return None
+            else:
+                return None
+
+    if not isinstance(data, list):
+        return None
+
+    for item in data:
+        if not isinstance(item, dict):
+            return None
+        judgment = item.get("judgment")
+        if judgment not in _VALID_JUDGMENTS:
+            return None
+        if "item" not in item or "task_id" not in item:
+            return None
+
+    return data
+
+
+def _mark_uninterpreted(
+    items: list[dict[str, str]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Mark all items uninterpreted when the model is unavailable or invalid.
+
+    Not a substitute judgment: code never decides; it labels the absence of
+    interpretation so the findings layer reports raw facts at info severity.
+    """
+    result: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        tid = item["task_id"]
+        result.setdefault(tid, []).append({
+            "task_id": tid,
+            "item": item["item"],
+            "type": item.get("type", ""),
+            "judgment": "uninterpreted",
+            "rationale": "model interpretation unavailable",
+            "suggested_fix": "",
+            "raw_facts": item.get("fact", ""),
+        })
+    return result
+
+
+def interpret_evidence(
+    evidence_rows: list[dict[str, Any]],
+    *,
+    cfg: dict[str, Any],
+    caller: Callable[..., str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Interpret grounding evidence using a local model.
+
+    Item selection is mechanical. The model provides judgments. On invalid
+    response, one repair round-trip is attempted. Still invalid → uninterpreted.
+
+    Returns a dict mapping task_id to a list of judgment dicts.
+    """
+    # Select items that need interpretation
+    all_items: list[dict[str, str]] = []
+    for row in evidence_rows:
+        all_items.extend(_select_items_for_interpretation(row))
+
+    if not all_items:
+        return {}
+
+    if caller is None:
+        caller = _default_caller
+
+    model = cfg.get("interpretation_model", _DEFAULT_MODEL)
+    prompt = _build_interpretation_prompt(evidence_rows, all_items)
+
+    # Initial call
+    try:
+        raw = caller(model, prompt)
+    except Exception:
+        return _mark_uninterpreted(all_items)
+
+    parsed = _validate_interp_response(raw)
+    if parsed is not None:
+        return _group_by_task(parsed)
+
+    # Repair round-trip
+    repair_prompt = (
+        prompt
+        + "\n\nYour previous response was invalid (not valid JSON array or "
+        "missing required fields/judgment values). Please respond with ONLY "
+        "a valid JSON array using the exact schema specified above."
+    )
+    try:
+        raw = caller(model, repair_prompt)
+    except Exception:
+        return _mark_uninterpreted(all_items)
+
+    parsed = _validate_interp_response(raw)
+    if parsed is not None:
+        return _group_by_task(parsed)
+
+    # Still invalid → uninterpreted
+    return _mark_uninterpreted(all_items)
+
+
+def _group_by_task(
+    judgments: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Group a flat list of judgment dicts by task_id."""
+    result: dict[str, list[dict[str, Any]]] = {}
+    for j in judgments:
+        tid = str(j.get("task_id") or "")
+        result.setdefault(tid, []).append(j)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Layer 3: Findings (deterministic policy)
 # ---------------------------------------------------------------------------
 
 
@@ -297,15 +611,12 @@ def scan_grounding(
     repo_path: Path,
     *,
     cfg: dict[str, Any] | None = None,
+    caller: Callable[..., str] | None = None,
 ) -> dict[str, Any]:
     """Scan workgraph tasks for plan↔reality mismatches.
 
-    Checks three things for each active task:
-    a. Missing touch paths (with all-new heuristic).
-    b. Touch paths outside the repo boundary.
-    c. Unknown backticked symbols.
-
-    Returns a report dict mirroring plandrift's shape.
+    Three-layer pipeline: collect evidence → interpret via model → map to
+    findings via deterministic policy. No heuristic intent inference.
     """
     c = _normalize_cfg(cfg)
     if not c["enabled"]:
@@ -332,21 +643,23 @@ def scan_grounding(
     repo_name = repo_path.name
     tasks, errors = _read_workgraph_tasks(repo_path)
 
+    # Layer 1: Collect evidence
+    evidence_rows = collect_evidence(repo_path, tasks, c)
+
+    # Layer 2: Interpret via model
+    interpretations = interpret_evidence(evidence_rows, cfg=c, caller=caller)
+
+    # Layer 3: Map to findings (deterministic policy)
     findings: list[dict[str, Any]] = []
 
-    for task in tasks.values():
-        task_id = str(task.get("id") or "")
-        task_title = str(task.get("title") or "")
-        status = str(task.get("status") or "open").strip().lower()
-        if status not in _ACTIVE_STATES:
-            continue
+    for row in evidence_rows:
+        task_id = row["task_id"]
+        task_title = row.get("title", "")
 
-        description = str(task.get("description") or "")
-        touch_paths = _extract_contract_touch(description)
-
-        # --- Check b: outside-repo paths (highest severity, check first) ---
+        # --- outside-repo paths: direct finding, no model needed ---
         outside_paths = [
-            p for p in touch_paths if _is_outside_repo(repo_path, p)
+            tf["path"] for tf in row.get("touch_facts", [])
+            if tf["outside_repo"]
         ]
         if outside_paths:
             findings.append({
@@ -366,81 +679,66 @@ def scan_grounding(
                 ),
             })
 
-        # --- Check a: missing touch paths ---
-        # Skip outside-repo paths for the missing check (already flagged).
-        inside_paths = [
-            p for p in touch_paths if not _is_outside_repo(repo_path, p)
-        ]
-        missing = [
-            p for p in inside_paths
-            if not (repo_path / p).exists()
-        ]
-        existing = [p for p in inside_paths if (repo_path / p).exists()]
+        # --- interpreted items: map judgment → severity per cfg ---
+        task_interps = interpretations.get(task_id, [])
+        for interp in task_interps:
+            judgment = str(interp.get("judgment") or "")
+            item = str(interp.get("item") or "")
 
-        if missing:
-            all_new = len(existing) == 0 and len(missing) > 0
-            if all_new:
+            if judgment in ("create-intended", "acceptable"):
+                continue  # no finding
+
+            if judgment == "uninterpreted":
+                raw_facts = interp.get("raw_facts", "")
                 findings.append({
                     "fingerprint": _fingerprint(
-                        [repo_name, task_id, "missing-touch-path", "all-new"]
+                        [repo_name, task_id, "uninterpreted-grounding", item]
                     ),
-                    "category": "missing-touch-path",
+                    "category": "uninterpreted-grounding",
                     "severity": "info",
-                    "title": "Task appears to create entirely new files",
+                    "title": "Grounding item needs manual review",
                     "evidence": (
-                        f"task={task_id} ({task_title}); "
-                        f"all-new paths (none exist yet): {missing}"
+                        f"task={task_id} ({task_title}); item={item}; "
+                        f"facts={raw_facts}"
                     ),
                     "recommendation": (
-                        f"Confirm these are intentional new files: "
-                        f"{', '.join(missing)}"
+                        "model interpretation unavailable — review manually"
                     ),
                 })
-            else:
-                for mp in missing:
-                    suggestion = _suggest_nearest(repo_path, mp)
-                    findings.append({
-                        "fingerprint": _fingerprint(
-                            [repo_name, task_id, "missing-touch-path", mp]
-                        ),
-                        "category": "missing-touch-path",
-                        "severity": c["severity_missing_path"],
-                        "title": "Task references non-existent path",
-                        "evidence": f"task={task_id} ({task_title}); path={mp}",
-                        "recommendation": suggestion,
-                    })
-
-        # --- Check c: unknown symbols ---
-        if c["symbol_check"]:
-            symbols = _extract_symbols(
-                description,
-                min_len=c["min_symbol_len"],
-            )
-            unknown: list[str] = []
-            for sym in symbols:
-                if not _check_symbol_exists(sym, repo_path):
-                    unknown.append(sym)
-            if unknown:
+            elif judgment == "grounding-error":
+                suggested = str(interp.get("suggested_fix") or "")
                 findings.append({
                     "fingerprint": _fingerprint(
-                        [repo_name, task_id, "unknown-symbol", ",".join(sorted(unknown))]
+                        [repo_name, task_id, "grounding-error", item]
                     ),
-                    "category": "unknown-symbol",
-                    "severity": c["severity_unknown_symbol"],
-                    "title": "Description references symbols not found in repo",
-                    "evidence": f"task={task_id} ({task_title}); unknown symbols: {unknown}",
-                    "recommendation": (
-                        f"Verify these identifiers exist or will be created: "
-                        f"{', '.join(unknown)}"
+                    "category": "grounding-error",
+                    "severity": c["severity_grounding_error"],
+                    "title": "Task references potentially non-existent path or symbol",
+                    "evidence": f"task={task_id} ({task_title}); item={item}",
+                    "recommendation": suggested or "Verify this reference against the codebase.",
+                })
+            elif judgment == "collision-risk":
+                suggested = str(interp.get("suggested_fix") or "")
+                findings.append({
+                    "fingerprint": _fingerprint(
+                        [repo_name, task_id, "creates-collision", item]
+                    ),
+                    "category": "creates-collision",
+                    "severity": c["severity_collision"],
+                    "title": "Task declares creating a file that already exists",
+                    "evidence": f"task={task_id} ({task_title}); item={item}",
+                    "recommendation": suggested or (
+                        "File already exists; update the contract to use "
+                        "`touch` instead of `creates`."
                     ),
                 })
 
-    # Deduplicate by fingerprint.
+    # Deduplicate by fingerprint
     deduped: dict[str, dict[str, Any]] = {}
-    for row in findings:
-        fp = str(row.get("fingerprint") or "").strip()
+    for f in findings:
+        fp = str(f.get("fingerprint") or "").strip()
         if fp and fp not in deduped:
-            deduped[fp] = row
+            deduped[fp] = f
 
     ordered = sorted(
         deduped.values(),
@@ -455,8 +753,8 @@ def scan_grounding(
     top_findings = ordered[:max_f]
 
     counts: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-    for row in ordered:
-        sev = str(row.get("severity") or "").lower()
+    for f in ordered:
+        sev = str(f.get("severity") or "").lower()
         if sev in counts:
             counts[sev] += 1
 
@@ -492,7 +790,7 @@ def scan_grounding(
 
 
 # ---------------------------------------------------------------------------
-# Evidence bundle (for planner prompt grounding)
+# Evidence bundle (for planner prompt grounding) — pure filesystem
 # ---------------------------------------------------------------------------
 
 
@@ -604,7 +902,7 @@ def build_evidence_bundle(
 
 
 # ---------------------------------------------------------------------------
-# High-level entry point (mirrors plandrift.run_workgraph_plan_review)
+# High-level entry point
 # ---------------------------------------------------------------------------
 
 
@@ -615,15 +913,14 @@ def run_existdrift_check(
     repo_snapshot: dict[str, Any] | None = None,
     policy_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run existdrift grounding check, mirroring plandrift's calling convention."""
+    """Run existdrift grounding check."""
     report = scan_grounding(repo_path, cfg=policy_cfg)
-    # Override repo name to match caller convention.
     report["repo"] = repo_name
     return report
 
 
 # ---------------------------------------------------------------------------
-# Lane wrapper (run_as_lane for check.py integration)
+# Lane wrapper
 # ---------------------------------------------------------------------------
 
 _LANE_SEVERITY_MAP = {
@@ -679,7 +976,7 @@ def run_as_lane(project_dir: Path) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Followup task emission (mirrors plandrift.emit_plan_review_tasks)
+# Followup task emission
 # ---------------------------------------------------------------------------
 
 

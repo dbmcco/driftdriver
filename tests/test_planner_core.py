@@ -246,6 +246,7 @@ class BuildDecomposePromptTests(unittest.TestCase):
         prompt = build_decompose_prompt("Build X", bundle=BUNDLE_DECOMPOSE_CLI)
         self.assertIn("wg-contract", prompt)
         self.assertIn("JSON", prompt)
+        self.assertIn("creates", prompt)
 
     def test_emit_json_contains_task_count_hint(self) -> None:
         prompt = build_decompose_prompt("Build X", bundle=BUNDLE_DECOMPOSE_CLI)
