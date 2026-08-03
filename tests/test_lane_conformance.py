@@ -43,6 +43,7 @@ INTERNAL_LANES = {
     "qadrift": "driftdriver.qadrift",
     "secdrift": "driftdriver.secdrift",
     "plandrift": "driftdriver.plandrift",
+    "existdrift": "driftdriver.existdrift",
     "northstardrift": "driftdriver.northstardrift",
     "evolverdrift": "driftdriver.evolverdrift",
     "debatedrift": "driftdriver.debatedrift.lane",

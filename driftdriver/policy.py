@@ -189,6 +189,20 @@ def _default_plandrift_cfg() -> dict[str, Any]:
     }
 
 
+def _default_existdrift_cfg() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "interval_seconds": 14400,
+        "severity_missing_path": "warning",
+        "severity_outside_repo": "high",
+        "severity_unknown_symbol": "info",
+        "max_findings": 40,
+        "symbol_check": True,
+        "min_symbol_len": 4,
+        "emit_followups": False,
+    }
+
+
 def _default_northstardrift_cfg() -> dict[str, Any]:
     return {
         "enabled": True,
@@ -290,6 +304,7 @@ class DriftPolicy:
     sessiondriver: dict[str, Any]
     speedriftd: dict[str, Any]
     plandrift: dict[str, Any]
+    existdrift: dict[str, Any]
     northstardrift: dict[str, Any]
     evolverdrift: dict[str, Any]
     bridge: dict[str, Any]
@@ -448,6 +463,17 @@ def _default_policy_text() -> str:
         "allow_tmux_fallback = true\n"
         "hard_stop_on_critical = false\n"
         "\n"
+        "[existdrift]\n"
+        "enabled = true\n"
+        "interval_seconds = 14400\n"
+        "severity_missing_path = \"warning\"\n"
+        "severity_outside_repo = \"high\"\n"
+        "severity_unknown_symbol = \"info\"\n"
+        "max_findings = 40\n"
+        "symbol_check = true\n"
+        "min_symbol_len = 4\n"
+        "emit_followups = false\n"
+        "\n"
         "[northstardrift]\n"
         "enabled = true\n"
         "emit_review_tasks = true\n"
@@ -552,6 +578,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             sessiondriver=_default_sessiondriver_cfg(),
             speedriftd=_default_speedriftd_cfg(),
             plandrift=_default_plandrift_cfg(),
+            existdrift=_default_existdrift_cfg(),
             northstardrift=_default_northstardrift_cfg(),
             evolverdrift=_default_evolverdrift_cfg(),
             bridge=_default_bridge_cfg(),
@@ -593,6 +620,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
             sessiondriver=_default_sessiondriver_cfg(),
             speedriftd=_default_speedriftd_cfg(),
             plandrift=_default_plandrift_cfg(),
+            existdrift=_default_existdrift_cfg(),
             northstardrift=_default_northstardrift_cfg(),
             evolverdrift=_default_evolverdrift_cfg(),
             bridge=_default_bridge_cfg(),
@@ -918,6 +946,34 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         plandrift_raw.get("hard_stop_on_critical", plandrift["hard_stop_on_critical"])
     )
 
+    existdrift_raw = data.get("existdrift") if isinstance(data.get("existdrift"), dict) else {}
+    existdrift = _default_existdrift_cfg()
+    existdrift["enabled"] = bool(existdrift_raw.get("enabled", existdrift["enabled"]))
+    existdrift["severity_missing_path"] = str(
+        existdrift_raw.get("severity_missing_path", existdrift["severity_missing_path"])
+        or existdrift["severity_missing_path"]
+    )
+    existdrift["severity_outside_repo"] = str(
+        existdrift_raw.get("severity_outside_repo", existdrift["severity_outside_repo"])
+        or existdrift["severity_outside_repo"]
+    )
+    existdrift["severity_unknown_symbol"] = str(
+        existdrift_raw.get("severity_unknown_symbol", existdrift["severity_unknown_symbol"])
+        or existdrift["severity_unknown_symbol"]
+    )
+    existdrift["max_findings"] = max(
+        1, int(existdrift_raw.get("max_findings", existdrift["max_findings"]))
+    )
+    existdrift["symbol_check"] = bool(
+        existdrift_raw.get("symbol_check", existdrift["symbol_check"])
+    )
+    existdrift["min_symbol_len"] = max(
+        2, int(existdrift_raw.get("min_symbol_len", existdrift["min_symbol_len"]))
+    )
+    existdrift["emit_followups"] = bool(
+        existdrift_raw.get("emit_followups", existdrift["emit_followups"])
+    )
+
     northstardrift_raw = data.get("northstardrift") if isinstance(data.get("northstardrift"), dict) else {}
     northstardrift = _default_northstardrift_cfg()
     northstardrift["enabled"] = bool(northstardrift_raw.get("enabled", northstardrift["enabled"]))
@@ -1133,6 +1189,7 @@ def load_drift_policy(wg_dir: Path) -> DriftPolicy:
         sessiondriver=sessiondriver,
         speedriftd=speedriftd,
         plandrift=plandrift,
+        existdrift=existdrift,
         northstardrift=northstardrift,
         evolverdrift=evolverdrift,
         bridge=bridge,

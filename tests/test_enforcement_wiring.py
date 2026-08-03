@@ -49,6 +49,7 @@ def _make_policy(enforcement_overrides: dict[str, Any] | None = None) -> DriftPo
         sessiondriver={"enabled": False},
         speedriftd={"enabled": False},
         plandrift={"enabled": False},
+        existdrift={"enabled": False},
         northstardrift={"enabled": False},
         evolverdrift={"enabled": False},
         bridge={"enabled": False},
