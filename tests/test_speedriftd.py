@@ -12,7 +12,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from driftdriver.project_autopilot import AutopilotConfig, AutopilotRun, WorkerContext
 import driftdriver.speedriftd as speedriftd
 from driftdriver.speedriftd import (
     collect_runtime_snapshot,
@@ -50,32 +49,20 @@ def _write_graph(repo: Path, tasks: list[dict]) -> None:
     (wg_dir / "graph.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
-def _write_run_state(repo: Path, run: AutopilotRun) -> None:
-    """Write autopilot run state as JSON (inlined from deleted autopilot_state)."""
+def _write_run_state(repo: Path, *, goal: str = "", workers: dict | None = None) -> None:
+    """Write autopilot run state as JSON for speedriftd snapshot tests."""
     import time
     d = repo / ".workgraph" / ".autopilot"
     d.mkdir(parents=True, exist_ok=True)
     state = {
         "ts": time.time(),
-        "goal": run.config.goal,
-        "loop_count": run.loop_count,
-        "completed_tasks": sorted(run.completed_tasks),
-        "failed_tasks": sorted(run.failed_tasks),
-        "escalated_tasks": sorted(run.escalated_tasks),
-        "started_at": run.started_at,
-        "workers": {
-            tid: {
-                "task_id": ctx.task_id,
-                "task_title": ctx.task_title,
-                "worker_name": ctx.worker_name,
-                "session_id": ctx.session_id,
-                "started_at": ctx.started_at,
-                "status": ctx.status,
-                "drift_fail_count": ctx.drift_fail_count,
-                "drift_findings": ctx.drift_findings,
-            }
-            for tid, ctx in run.workers.items()
-        },
+        "goal": goal,
+        "loop_count": 0,
+        "completed_tasks": [],
+        "failed_tasks": [],
+        "escalated_tasks": [],
+        "started_at": 0.0,
+        "workers": workers or {},
     }
     (d / "run-state.json").write_text(json.dumps(state, indent=2))
 
@@ -92,22 +79,22 @@ class SpeedriftdTests(unittest.TestCase):
                     {"id": "impl", "title": "Implement", "status": "in-progress"},
                 ],
             )
-            config = AutopilotConfig(project_dir=repo, goal="Ship runtime")
-            run = AutopilotRun(
-                config=config,
-                started_at=100.0,
+            _write_run_state(
+                repo,
+                goal="Ship runtime",
                 workers={
-                    "impl": WorkerContext(
-                        task_id="impl",
-                        task_title="Implement",
-                        worker_name="ap-impl",
-                        session_id="sess-123",
-                        started_at=100.0,
-                        status="running",
-                    )
+                    "impl": {
+                        "task_id": "impl",
+                        "task_title": "Implement",
+                        "worker_name": "ap-impl",
+                        "session_id": "sess-123",
+                        "started_at": 100.0,
+                        "status": "running",
+                        "drift_fail_count": 0,
+                        "drift_findings": [],
+                    }
                 },
             )
-            _write_run_state(repo, run)
 
             with patch("driftdriver.dispatch.check_worker_liveness") as fake_health:
                 fake_health.return_value.status = "alive"
@@ -148,21 +135,22 @@ class SpeedriftdTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)
             _write_graph(repo, [{"id": "impl", "title": "Implement", "status": "in-progress"}])
-            config = AutopilotConfig(project_dir=repo, goal="Ship runtime")
-            run = AutopilotRun(
-                config=config,
+            _write_run_state(
+                repo,
+                goal="Ship runtime",
                 workers={
-                    "impl": WorkerContext(
-                        task_id="impl",
-                        task_title="Implement",
-                        worker_name="ap-impl",
-                        session_id="sess-dead",
-                        started_at=100.0,
-                        status="running",
-                    )
+                    "impl": {
+                        "task_id": "impl",
+                        "task_title": "Implement",
+                        "worker_name": "ap-impl",
+                        "session_id": "sess-dead",
+                        "started_at": 100.0,
+                        "status": "running",
+                        "drift_fail_count": 0,
+                        "drift_findings": [],
+                    }
                 },
             )
-            _write_run_state(repo, run)
 
             with patch("driftdriver.dispatch.check_worker_liveness") as fake_health:
                 fake_health.return_value.status = "dead"
@@ -263,21 +251,22 @@ class SpeedriftdTests(unittest.TestCase):
                     {"id": "ready-task", "title": "Waiting", "status": "open"},
                 ],
             )
-            config = AutopilotConfig(project_dir=repo, goal="test")
-            run = AutopilotRun(
-                config=config,
+            _write_run_state(
+                repo,
+                goal="test",
                 workers={
-                    "impl": WorkerContext(
-                        task_id="impl",
-                        task_title="Implement",
-                        worker_name="ap-impl",
-                        session_id="sess-456",
-                        started_at=100.0,
-                        status="running",
-                    )
+                    "impl": {
+                        "task_id": "impl",
+                        "task_title": "Implement",
+                        "worker_name": "ap-impl",
+                        "session_id": "sess-456",
+                        "started_at": 100.0,
+                        "status": "running",
+                        "drift_fail_count": 0,
+                        "drift_findings": [],
+                    }
                 },
             )
-            _write_run_state(repo, run)
             write_control_state(
                 repo,
                 mode="autonomous",

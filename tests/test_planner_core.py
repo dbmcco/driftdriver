@@ -10,7 +10,6 @@ from types import SimpleNamespace
 
 from driftdriver.planner_core import (
     BUILTIN_PATTERNS,
-    BUNDLE_AUTOPILOT,
     BUNDLE_DECOMPOSE_CLI,
     BUNDLE_QUALITY_SPEC,
     DEFAULT_MODEL_ROUTE_POLICY,
@@ -76,9 +75,9 @@ class PlannedNodeTests(unittest.TestCase):
 
 
 class PolicyBundleTests(unittest.TestCase):
-    def test_bundle_autopilot_is_agent_executes(self) -> None:
-        self.assertEqual(BUNDLE_AUTOPILOT.mode, "agent-executes")
-        self.assertEqual(BUNDLE_AUTOPILOT.name, "autopilot")
+    def test_agent_executes_mode_inline_bundle(self) -> None:
+        bundle = PolicyBundle(name="test", mode="agent-executes")
+        self.assertEqual(bundle.mode, "agent-executes")
 
     def test_bundle_decompose_cli_is_emit_json(self) -> None:
         self.assertEqual(BUNDLE_DECOMPOSE_CLI.mode, "emit-json")
@@ -219,22 +218,22 @@ class ValidateModelRoutesTests(unittest.TestCase):
 
 class BuildDecomposePromptTests(unittest.TestCase):
     def test_agent_executes_contains_goal(self) -> None:
-        prompt = build_decompose_prompt("Build a REST API", bundle=BUNDLE_AUTOPILOT)
+        prompt = build_decompose_prompt("Build a REST API", bundle=PolicyBundle(name="test", mode="agent-executes"))
         self.assertIn("REST API", prompt)
 
     def test_agent_executes_contains_coredrift_instruction(self) -> None:
-        prompt = build_decompose_prompt("Do something", bundle=BUNDLE_AUTOPILOT)
+        prompt = build_decompose_prompt("Do something", bundle=PolicyBundle(name="test", mode="agent-executes"))
         self.assertIn("coredrift ensure-contracts", prompt)
 
     def test_agent_executes_contains_project_dir(self) -> None:
         prompt = build_decompose_prompt(
-            "Do something", project_dir=Path("/my/repo"), bundle=BUNDLE_AUTOPILOT,
+            "Do something", project_dir=Path("/my/repo"), bundle=PolicyBundle(name="test", mode="agent-executes"),
         )
         self.assertIn("/my/repo", prompt)
 
     def test_agent_executes_contains_context(self) -> None:
         prompt = build_decompose_prompt(
-            "Do something", context="Extra context here", bundle=BUNDLE_AUTOPILOT,
+            "Do something", context="Extra context here", bundle=PolicyBundle(name="test", mode="agent-executes"),
         )
         self.assertIn("Extra context here", prompt)
 

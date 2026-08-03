@@ -100,7 +100,7 @@ Tasks in `waiting` status (set via `wg wait <task-id> --until <condition>`) are 
 
 ### Prompt Evolution (wg evolve)
 
-The autopilot loop detects recurring drift patterns across tasks. When the same finding appears in 3+ distinct tasks, it triggers `wg evolve run` to evolve the coordinator prompt — teaching agents to avoid the pattern in future work.
+The drift loop detects recurring patterns across tasks. When the same finding appears in 3+ distinct tasks, it triggers `wg evolve run` to evolve the coordinator prompt — teaching agents to avoid the pattern in future work.
 
 ### Outcome Feedback Loop
 
@@ -161,7 +161,7 @@ When Workgraph's agency layer provides evaluation scores (individual quality, or
 - `.workgraph/output/{task_id}` files (avg_score, evaluation lines)
 - `wg show {task_id}` output (evaluation score/grade entries)
 
-This is a read-only integration — autopilot does not control Workgraph's evaluation cascade.
+This is a read-only integration — the drift loop does not control Workgraph's evaluation cascade.
 
 ## Ecosystem Map
 
@@ -420,40 +420,21 @@ Config template:
 cp docs/ecosystem-review.example.json ./.workgraph/.driftdriver/ecosystem-review.json
 ```
 
-## Project Autopilot
+## Planning
 
-Full-loop autonomous execution: goal → task decomposition → parallel worker dispatch → drift checks → milestone review → report.
+Generate a quality-aware workgraph task graph from a spec file:
 
 ```bash
-# Decompose a goal and execute it end-to-end
-driftdriver autopilot --goal "Build user authentication system"
+# Plan from a spec (creates workgraph tasks)
+driftdriver plan --spec-file spec.md --model sonnet
 
-# Skip decomposition, use existing workgraph tasks
-driftdriver autopilot --goal "Complete remaining tasks" --skip-decompose
-
-# Dry run — show what would be dispatched without executing
-driftdriver autopilot --goal "Add API pagination" --dry-run
-
-# Control parallelism and timeouts
-driftdriver autopilot --goal "Refactor data layer" --max-parallel 2 --worker-timeout 3600
-
-# Skip the post-loop milestone review
-driftdriver autopilot --goal "Quick fix" --skip-decompose --skip-review
+# Dry run — show the plan without creating tasks
+driftdriver plan --spec-file spec.md --dry-run
 ```
 
-The autopilot:
-1. **Decomposes** the goal into Workgraph tasks (via claude-session-driver worker or direct CLI)
-2. **Dispatches** workers for each ready task, respecting dependencies
-3. **Drift-checks** after each task completes; creates follow-up tasks on findings (guarded: dedup + 3/lane cap)
-4. **Learns** — detects recurring drift patterns across tasks and triggers `wg evolve` to evolve coordinator prompts
-5. **Escalates** to human only when drift failures exceed threshold (default: 3)
-6. **Reviews** the milestone with an evidence-based verification worker, incorporating Workgraph agency evaluation scores when available
-7. **Notifies** via terminal/webhook/wg-notify when findings cross significance thresholds
-8. **Reports** results to `.workgraph/.autopilot/latest-report.md`
+The planner produces a structured task graph with quality patterns (e2e-breakfix, ux-eval, data-eval, contract-test, northstar-checkpoint), risk classification, and verification commands baked into each task.
 
-State is persisted to `.workgraph/.autopilot/` (run-state.json, workers.jsonl).
-
-Repo-local runtime supervision is separate from autopilot planning:
+Repo-local runtime supervision:
 
 ```bash
 driftdriver speedriftd once
@@ -472,12 +453,6 @@ Control model:
 - `autonomous`: repo is armed for daemon-led dispatch/supervision
 
 The current default is `observe`. This is intentional: interactive hooks should not silently claim scheduler authority or spawn competing workers.
-
-Shell wrapper with SIGTERM handling and PID tracking:
-
-```bash
-scripts/project_autopilot.sh /path/to/project "Your goal here" 4
-```
 
 ## Use Tools Separately
 
@@ -1081,27 +1056,9 @@ driftdriver doctor --fix  # auto-fix common issues
 ./.workgraph/handlers/agent-error.sh --cli claude-code
 ```
 
-### Autopilot (Full Autonomous Loop)
+### Planning (spec → task graph)
 
 ```bash
-# Decompose + execute + drift-check + review
-driftdriver autopilot --goal "Build user authentication system"
-
-# Use existing tasks, skip decomposition
-driftdriver autopilot --goal "Complete remaining tasks" --skip-decompose
-
-# Dry run (plan only, no execution)
-driftdriver autopilot --goal "Add API pagination" --dry-run
-
-# Control parallelism
-driftdriver autopilot --goal "Refactor data layer" --max-parallel 2 --worker-timeout 3600
+driftdriver plan --spec-file spec.md --model sonnet
+driftdriver plan --spec-file spec.md --dry-run
 ```
-
-The autopilot:
-1. Decomposes goals into workgraph tasks
-2. Dispatches parallel workers respecting dependencies
-3. Drift-checks after each task (guarded: dedup + 3/lane cap)
-4. Detects recurring patterns → triggers `wg evolve` for prompt evolution
-5. Escalates to human when drift failures exceed threshold
-6. Notifies via configured channels when findings cross significance thresholds
-7. Writes report to `.workgraph/.autopilot/latest-report.md`

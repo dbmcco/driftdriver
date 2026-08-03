@@ -18,7 +18,7 @@ from driftdriver.dispatch import (
     latest_worker_events as _latest_worker_events,
 )
 from driftdriver.policy import DriftPolicy, load_drift_policy
-from driftdriver.project_autopilot import get_ready_tasks
+from driftdriver.ready_tasks import get_ready_tasks
 from driftdriver.workgraph import load_workgraph, resolve_workgraph_dir
 
 from driftdriver.speedriftd_state import (

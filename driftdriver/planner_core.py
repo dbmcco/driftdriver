@@ -173,7 +173,6 @@ class PolicyBundle:
     extra_instructions: str = ""
 
 
-BUNDLE_AUTOPILOT = PolicyBundle(name="autopilot", mode="agent-executes")
 BUNDLE_DECOMPOSE_CLI = PolicyBundle(
     name="decompose-cli", mode="emit-json", task_count_hint="3-8",
 )

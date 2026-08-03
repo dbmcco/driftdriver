@@ -539,26 +539,6 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_decompose(args: argparse.Namespace) -> int:
-    from driftdriver.decompose import decompose_goal
-    from driftdriver.directives import DirectiveLog
-
-    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
-    log = DirectiveLog(wg_dir / "service" / "directives")
-    result = decompose_goal(
-        goal=args.goal,
-        wg_dir=wg_dir,
-        directive_log=log,
-        repo=args.repo,
-        context=args.context,
-    )
-    if getattr(args, "json", False):
-        print(json.dumps(result))
-    else:
-        print(f"Decomposed into {result['task_count']} tasks")
-    return 0
-
-
 def cmd_intent_set(args: argparse.Namespace) -> int:
     from driftdriver.cli.intent_cmd import handle_intent_set
     return handle_intent_set(args)
@@ -788,170 +768,6 @@ def cmd_speedriftd(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Autopilot command
-# ---------------------------------------------------------------------------
-
-def _autopilot_dir(project_dir: Path) -> Path:
-    """Get the autopilot state directory."""
-    return project_dir / ".workgraph" / ".autopilot"
-
-
-def _ensure_autopilot_dir(project_dir: Path) -> Path:
-    """Ensure autopilot state directory exists and return it."""
-    d = _autopilot_dir(project_dir)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _save_worker_event(project_dir: Path, worker: Any, event: str) -> None:
-    """Append a worker event to workers.jsonl."""
-    import time as _time
-
-    d = _ensure_autopilot_dir(project_dir)
-    entry = {
-        "ts": _time.time(),
-        "event": event,
-        "task_id": worker.task_id,
-        "task_title": worker.task_title,
-        "worker_name": worker.worker_name,
-        "session_id": worker.session_id,
-        "started_at": worker.started_at,
-        "status": worker.status,
-        "drift_fail_count": worker.drift_fail_count,
-        "drift_findings": worker.drift_findings,
-    }
-    with open(d / "workers.jsonl", "a") as f:
-        f.write(json.dumps(entry) + "\n")
-
-
-def _save_run_state(project_dir: Path, run: Any) -> None:
-    """Save current run state as JSON snapshot."""
-    import time as _time
-
-    d = _ensure_autopilot_dir(project_dir)
-    state = {
-        "ts": _time.time(),
-        "goal": run.config.goal,
-        "loop_count": run.loop_count,
-        "completed_tasks": sorted(run.completed_tasks),
-        "failed_tasks": sorted(run.failed_tasks),
-        "escalated_tasks": sorted(run.escalated_tasks),
-        "started_at": run.started_at,
-        "workers": {
-            tid: {
-                "task_id": ctx.task_id,
-                "task_title": ctx.task_title,
-                "worker_name": ctx.worker_name,
-                "session_id": ctx.session_id,
-                "started_at": ctx.started_at,
-                "status": ctx.status,
-                "drift_fail_count": ctx.drift_fail_count,
-                "drift_findings": ctx.drift_findings,
-            }
-            for tid, ctx in run.workers.items()
-        },
-    }
-    (d / "run-state.json").write_text(json.dumps(state, indent=2))
-
-
-def _clear_run_state(project_dir: Path) -> None:
-    """Remove run state files (for fresh start)."""
-    d = _autopilot_dir(project_dir)
-    for name in ("run-state.json", "workers.jsonl"):
-        f = d / name
-        if f.exists():
-            f.unlink()
-
-
-def cmd_autopilot(args: argparse.Namespace) -> int:
-    """Run the project autopilot."""
-    from driftdriver.project_autopilot import (
-        AutopilotConfig,
-        AutopilotRun,
-        decompose_goal,
-        discover_session_driver,
-        generate_report,
-        run_autopilot_loop,
-        run_milestone_review,
-    )
-
-    project_dir = Path(args.dir) if args.dir else Path.cwd()
-    wg_dir = project_dir / ".workgraph"
-    if not wg_dir.exists():
-        print("Error: no .workgraph found. Run `wg init --model claude:opus` first.", file=sys.stderr)
-        return 1
-
-    config = AutopilotConfig(
-        project_dir=project_dir,
-        max_parallel=args.max_parallel,
-        worker_timeout=args.worker_timeout,
-        dry_run=args.dry_run,
-        goal=args.goal,
-        no_peer_dispatch=args.no_peer_dispatch,
-    )
-
-    # Step 1: Decompose goal into workgraph tasks (unless --skip-decompose)
-    if not args.skip_decompose:
-        print(f"[autopilot] Decomposing goal: {args.goal}")
-        scripts_dir = discover_session_driver()
-        response = decompose_goal(args.goal, project_dir, scripts_dir)
-        print(f"[autopilot] Decomposition complete:\n{response[:500]}")
-
-        # Ensure contracts on new tasks
-        coredrift = wg_dir / "coredrift"
-        if coredrift.exists():
-            subprocess.run(
-                [str(coredrift), "ensure-contracts", "--apply"],
-                capture_output=True,
-                text=True,
-                cwd=str(project_dir),
-            )
-
-    # Clear previous state for fresh run
-    _clear_run_state(project_dir)
-
-    # Step 2: Run autopilot loop
-    run = AutopilotRun(config=config)
-    print("[autopilot] Starting execution loop...")
-    run = run_autopilot_loop(run)
-
-    # Persist worker events for completed workers
-    for tid, ctx in run.workers.items():
-        _save_worker_event(project_dir, ctx, ctx.status)
-
-    # Save final run state
-    _save_run_state(project_dir, run)
-
-    # Step 3: Milestone review -- evidence-based verification
-    if run.completed_tasks and not args.skip_review:
-        scripts_dir = discover_session_driver()
-        review = run_milestone_review(run, scripts_dir)
-        review_file = (wg_dir / ".autopilot" / "milestone-review.md")
-        review_file.parent.mkdir(parents=True, exist_ok=True)
-        review_file.write_text(review)
-        print(f"[autopilot] Milestone review saved to: {review_file}")
-
-    # Step 4: Generate report
-    report = generate_report(run)
-    report_path = wg_dir / ".autopilot"
-    report_path.mkdir(parents=True, exist_ok=True)
-    report_file = report_path / "latest-report.md"
-    report_file.write_text(report)
-
-    print(f"\n{report}")
-    print(f"Report saved to: {report_file}")
-
-    if run.escalated_tasks:
-        print("\n[autopilot] Some tasks need human judgment. Review the report above.")
-        return 3
-
-    if run.failed_tasks:
-        return 1
-
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # Peer federation commands
 # ---------------------------------------------------------------------------
 
@@ -995,13 +811,13 @@ def cmd_peer_health_cli(args: argparse.Namespace) -> int:
 
 
 def cmd_health_workers_cli(args: argparse.Namespace) -> int:
-    """Check liveness of autopilot workers."""
+    """Check liveness of speedrift workers."""
     from driftdriver.wire import cmd_health_workers
 
     project_dir = Path(args.dir) if args.dir else Path.cwd()
     workers = cmd_health_workers(project_dir)
     if not workers:
-        print("No workers found (no autopilot state).")
+        print("No workers found (no run state).")
         return 0
 
     print(f"{'Task ID':<20} {'Session':<30} {'Status':<12} {'Last Event':<20} {'Count'}")
@@ -1342,22 +1158,6 @@ def _build_parser() -> argparse.ArgumentParser:
     plan_p.add_argument("--model", default="sonnet", help="LLM model (default: sonnet)")
     plan_p.set_defaults(func=cmd_plan)
 
-    decompose_p = sub.add_parser("decompose", help="Decompose a goal into workgraph tasks via LLM")
-    decompose_p.add_argument("--goal", required=True, help="High-level goal to decompose")
-    decompose_p.add_argument("--repo", default="", help="Repo name for directive metadata")
-    decompose_p.add_argument("--context", default="", help="Additional context for LLM")
-    decompose_p.set_defaults(func=cmd_decompose)
-
-    autopilot_p = sub.add_parser("autopilot", help="Run project autopilot: goal -> tasks -> workers -> drift -> done")
-    autopilot_p.add_argument("--goal", required=True, help="High-level goal to decompose and execute")
-    autopilot_p.add_argument("--max-parallel", type=int, default=4, help="Max parallel workers (default: 4)")
-    autopilot_p.add_argument("--worker-timeout", type=int, default=1800, help="Worker timeout in seconds (default: 1800)")
-    autopilot_p.add_argument("--dry-run", action="store_true", help="Print plan without dispatching workers")
-    autopilot_p.add_argument("--skip-decompose", action="store_true", help="Skip goal decomposition, use existing wg tasks")
-    autopilot_p.add_argument("--skip-review", action="store_true", help="Skip milestone review after completion")
-    autopilot_p.add_argument("--no-peer-dispatch", action="store_true", help="Disable cross-repo peer dispatch")
-    autopilot_p.set_defaults(func=cmd_autopilot)
-
     speedriftd_p = sub.add_parser("speedriftd", help="Run the repo-local runtime supervisor shell")
     speedriftd_p.add_argument(
         "action",
@@ -1418,7 +1218,7 @@ def _build_parser() -> argparse.ArgumentParser:
     peer_health_p = sub.add_parser("peer-health", help="Check health of all known peers")
     peer_health_p.set_defaults(func=cmd_peer_health_cli)
 
-    health_workers_p = sub.add_parser("health-workers", help="Check liveness of autopilot workers")
+    health_workers_p = sub.add_parser("health-workers", help="Check liveness of speedrift workers")
     health_workers_p.set_defaults(func=cmd_health_workers_cli)
 
     # -- Reporting commands --

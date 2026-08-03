@@ -1,5 +1,5 @@
 # ABOUTME: Tests for signal-gate integration in driftdriver's own LLM call sites.
-# ABOUTME: Validates that quality_planner, decompose, and evaluator respect should_fire() gating.
+# ABOUTME: Validates that quality_planner and evaluator respect should_fire() gating.
 
 from __future__ import annotations
 
@@ -119,84 +119,6 @@ class TestQualityPlannerGate:
 
 
 # ---------------------------------------------------------------------------
-# decompose — signal gate integration
-# ---------------------------------------------------------------------------
-
-
-class TestDecomposeGate:
-    """decompose.decompose_goal should skip LLM when gate says no."""
-
-    def _setup_wg_dir(self, tmp_path: Path, gate_enabled: bool = True) -> Path:
-        wg_dir = tmp_path / ".workgraph"
-        wg_dir.mkdir(parents=True, exist_ok=True)
-        policy = wg_dir / "drift-policy.toml"
-        policy.write_text(
-            f"[signal_gates]\ndecompose = {str(gate_enabled).lower()}\n",
-            encoding="utf-8",
-        )
-        # Create directive log dir
-        (wg_dir / "service" / "directives").mkdir(parents=True, exist_ok=True)
-        return wg_dir
-
-    @patch("driftdriver.decompose._call_llm")
-    def test_skips_llm_when_gate_suppresses(self, mock_llm: MagicMock, tmp_path: Path) -> None:
-        from driftdriver.decompose import decompose_goal
-        from driftdriver.directives import DirectiveLog
-
-        wg_dir = self._setup_wg_dir(tmp_path, gate_enabled=True)
-        log = DirectiveLog(wg_dir / "service" / "directives")
-
-        # First call — fires
-        mock_llm.return_value = [{"id": "t1", "title": "Task 1", "description": "Do thing", "after": []}]
-        with patch("driftdriver.decompose.ExecutorShim") as mock_shim_cls:
-            mock_shim_cls.return_value.execute.return_value = "completed"
-            decompose_goal(goal="Build X", wg_dir=wg_dir, directive_log=log, context="some context")
-        assert mock_llm.call_count == 1
-
-        # Second call with same goal+context — gate should suppress
-        mock_llm.reset_mock()
-        with patch("driftdriver.decompose.ExecutorShim") as mock_shim_cls:
-            result = decompose_goal(goal="Build X", wg_dir=wg_dir, directive_log=log, context="some context")
-        assert mock_llm.call_count == 0
-        assert result["task_count"] == 0
-
-    @patch("driftdriver.decompose._call_llm")
-    def test_fires_llm_when_goal_changes(self, mock_llm: MagicMock, tmp_path: Path) -> None:
-        from driftdriver.decompose import decompose_goal
-        from driftdriver.directives import DirectiveLog
-
-        wg_dir = self._setup_wg_dir(tmp_path, gate_enabled=True)
-        log = DirectiveLog(wg_dir / "service" / "directives")
-
-        mock_llm.return_value = [{"id": "t1", "title": "Task 1", "description": "Do thing", "after": []}]
-        with patch("driftdriver.decompose.ExecutorShim") as mock_shim_cls:
-            mock_shim_cls.return_value.execute.return_value = "completed"
-            decompose_goal(goal="Build X", wg_dir=wg_dir, directive_log=log, context="ctx")
-
-        # Change goal
-        mock_llm.reset_mock()
-        mock_llm.return_value = [{"id": "t2", "title": "Task 2", "description": "Do other", "after": []}]
-        with patch("driftdriver.decompose.ExecutorShim") as mock_shim_cls:
-            mock_shim_cls.return_value.execute.return_value = "completed"
-            decompose_goal(goal="Build Y", wg_dir=wg_dir, directive_log=log, context="ctx")
-        assert mock_llm.call_count == 1
-
-    @patch("driftdriver.decompose._call_llm")
-    def test_no_gate_when_disabled(self, mock_llm: MagicMock, tmp_path: Path) -> None:
-        from driftdriver.decompose import decompose_goal
-        from driftdriver.directives import DirectiveLog
-
-        wg_dir = self._setup_wg_dir(tmp_path, gate_enabled=False)
-        log = DirectiveLog(wg_dir / "service" / "directives")
-
-        mock_llm.return_value = []
-        with patch("driftdriver.decompose.ExecutorShim"):
-            decompose_goal(goal="Build X", wg_dir=wg_dir, directive_log=log, context="ctx")
-            decompose_goal(goal="Build X", wg_dir=wg_dir, directive_log=log, context="ctx")
-        assert mock_llm.call_count == 2
-
-
-# ---------------------------------------------------------------------------
 # evaluator — signal gate integration
 # ---------------------------------------------------------------------------
 
@@ -276,33 +198,3 @@ class TestGateSuppressionTracking:
         suppression_entries = [e for e in entries if e.get("finding_type") == "signal_gate_suppressed"]
         assert len(suppression_entries) >= 1
         assert suppression_entries[0]["lane"] == "quality_planner"
-
-    def test_decompose_records_suppression(self, tmp_path: Path) -> None:
-        """When decompose gate suppresses, a finding is recorded."""
-        from driftdriver.decompose import decompose_goal
-        from driftdriver.directives import DirectiveLog
-
-        wg_dir = tmp_path / ".workgraph"
-        wg_dir.mkdir(parents=True, exist_ok=True)
-        (wg_dir / "service" / "directives").mkdir(parents=True, exist_ok=True)
-        policy = wg_dir / "drift-policy.toml"
-        policy.write_text(
-            "[signal_gates]\ndecompose = true\n",
-            encoding="utf-8",
-        )
-        log = DirectiveLog(wg_dir / "service" / "directives")
-
-        with patch("driftdriver.decompose._call_llm") as mock_llm:
-            mock_llm.return_value = [{"id": "t1", "title": "T1", "description": "D", "after": []}]
-            with patch("driftdriver.decompose.ExecutorShim") as mock_shim_cls:
-                mock_shim_cls.return_value.execute.return_value = "completed"
-                decompose_goal(goal="Build X", wg_dir=wg_dir, directive_log=log, context="ctx")
-                # Second call — suppressed
-                decompose_goal(goal="Build X", wg_dir=wg_dir, directive_log=log, context="ctx")
-
-        ledger = wg_dir / "finding-ledger.jsonl"
-        assert ledger.exists()
-        entries = [json.loads(line) for line in ledger.read_text().strip().splitlines()]
-        suppression_entries = [e for e in entries if e.get("finding_type") == "signal_gate_suppressed"]
-        assert len(suppression_entries) >= 1
-        assert suppression_entries[0]["lane"] == "decompose"
