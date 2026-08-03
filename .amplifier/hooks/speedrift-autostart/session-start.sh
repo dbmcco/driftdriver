@@ -35,11 +35,13 @@ fi
 if command -v driftdriver >/dev/null 2>&1; then
   SPEEDRIFT_STATUS="$(driftdriver --dir "$PROJECT_DIR" --json speedriftd status --refresh 2>/dev/null || echo '{}')"
   CONTROL_MODE="$(printf '%s\n' "$SPEEDRIFT_STATUS" | jq -r '.control.mode // "observe"' 2>/dev/null || echo 'observe')"
+  LEASE_ACTIVE="$(printf '%s\n' "$SPEEDRIFT_STATUS" | jq -r '.control.lease_active // false' 2>/dev/null || echo 'false')"
 else
   CONTROL_MODE="observe"
+  LEASE_ACTIVE="false"
 fi
 
-if [[ "$CONTROL_MODE" == "supervise" || "$CONTROL_MODE" == "autonomous" ]]; then
+if [[ ("$CONTROL_MODE" == "supervise" || "$CONTROL_MODE" == "autonomous") && "$LEASE_ACTIVE" == "true" ]]; then
   if command -v wg >/dev/null 2>&1; then
     wg --dir "$PROJECT_DIR/.workgraph" service start --executor amplifier >/dev/null 2>&1 || \
       wg --dir "$PROJECT_DIR/.workgraph" service start >/dev/null 2>&1 || true
