@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import unittest
 from pathlib import Path
@@ -17,7 +19,10 @@ from driftdriver.planner_core import (
     PlannedNode,
     PolicyBundle,
     RouteViolation,
+    agency_fence,
+    apply_agency_fences,
     build_decompose_prompt,
+    insert_review_gates,
     materialize_plan,
     parse_plan_output,
     validate_model_routes,
@@ -391,6 +396,256 @@ class MaterializePlanTests(unittest.TestCase):
         node = PlannedNode(id="bare", title="Bare task")
         materialize_plan([node], Path("/repo"), runner=runner)
         self.assertNotIn("-d", calls[0])
+
+
+class PlannedNodeRouteFieldsTests(unittest.TestCase):
+    def test_to_dict_includes_route_fields_when_set(self) -> None:
+        node = PlannedNode(
+            id="n1", title="T",
+            model="zai:glm-5.2", route_tier="standard",
+            escalation_reason="complex domain logic",
+        )
+        d = node.to_dict()
+        self.assertEqual(d["model"], "zai:glm-5.2")
+        self.assertEqual(d["route_tier"], "standard")
+        self.assertEqual(d["escalation_reason"], "complex domain logic")
+
+    def test_to_dict_omits_route_fields_when_empty(self) -> None:
+        node = PlannedNode(id="n1", title="T")
+        d = node.to_dict()
+        self.assertNotIn("model", d)
+        self.assertNotIn("route_tier", d)
+        self.assertNotIn("escalation_reason", d)
+
+    def test_parse_maps_route_fields(self) -> None:
+        raw = json.dumps([
+            {"id": "n1", "title": "T", "model": "ollama:gemma",
+             "route_tier": "fast", "escalation_reason": ""}
+        ])
+        nodes = parse_plan_output(raw)
+        self.assertEqual(nodes[0].model, "ollama:gemma")
+        self.assertEqual(nodes[0].route_tier, "fast")
+        self.assertEqual(nodes[0].escalation_reason, "")
+
+    def test_parse_defaults_route_fields_to_empty(self) -> None:
+        raw = json.dumps([{"id": "n1", "title": "T"}])
+        nodes = parse_plan_output(raw)
+        self.assertEqual(nodes[0].model, "")
+        self.assertEqual(nodes[0].route_tier, "")
+        self.assertEqual(nodes[0].escalation_reason, "")
+
+
+class TierOfTests(unittest.TestCase):
+    def test_ollama_is_fast(self) -> None:
+        self.assertEqual(
+            DEFAULT_MODEL_ROUTE_POLICY.tier_of("ollama:qwopus3.6:27b-mtp-q4"), "fast",
+        )
+
+    def test_zai_is_standard(self) -> None:
+        self.assertEqual(DEFAULT_MODEL_ROUTE_POLICY.tier_of("zai:glm-5.2"), "standard")
+
+    def test_kimi_coding_standard(self) -> None:
+        self.assertEqual(
+            DEFAULT_MODEL_ROUTE_POLICY.tier_of("kimi-coding:kimi-for-coding"), "standard",
+        )
+
+    def test_kimi_coding_k3_is_premium(self) -> None:
+        self.assertEqual(
+            DEFAULT_MODEL_ROUTE_POLICY.tier_of("kimi-coding:k3"), "premium",
+        )
+
+    def test_openai_codex_is_premium(self) -> None:
+        self.assertEqual(
+            DEFAULT_MODEL_ROUTE_POLICY.tier_of("openai-codex:gpt-5.5"), "premium",
+        )
+
+    def test_unknown_model(self) -> None:
+        self.assertEqual(DEFAULT_MODEL_ROUTE_POLICY.tier_of("random:model"), "unknown")
+
+
+class EscalationReasonTests(unittest.TestCase):
+    def test_premium_without_reason_flagged(self) -> None:
+        violations = validate_model_routes({"n1": "kimi-coding:k3"})
+        kinds = [v.kind for v in violations]
+        self.assertIn("missing-escalation-reason", kinds)
+
+    def test_premium_with_reason_passes(self) -> None:
+        violations = validate_model_routes(
+            {"n1": "kimi-coding:k3"},
+            escalation_reasons={"n1": "critical cross-system integration"},
+        )
+        self.assertEqual(violations, [])
+
+    def test_standard_needs_no_reason(self) -> None:
+        violations = validate_model_routes({"n1": "zai:glm-5.2"})
+        self.assertEqual(violations, [])
+
+    def test_fast_needs_no_reason(self) -> None:
+        violations = validate_model_routes({"n1": "ollama:gemma"})
+        self.assertEqual(violations, [])
+
+    def test_missing_reason_violation_kind(self) -> None:
+        violations = validate_model_routes({"n1": "openai-codex:gpt-5.5"})
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].kind, "missing-escalation-reason")
+
+    def test_prohibited_kind_still_set(self) -> None:
+        violations = validate_model_routes({"n1": "anthropic:claude"})
+        self.assertEqual(violations[0].kind, "prohibited")
+
+    def test_conditional_kind_still_set(self) -> None:
+        violations = validate_model_routes({"n1": "lunaroute:glm"})
+        self.assertEqual(violations[0].kind, "conditional")
+
+
+class MaterializeStripPinTests(unittest.TestCase):
+    def test_strip_pin_for_missing_reason(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(id="premium-task", title="Premium", model="kimi-coding:k3")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            count = materialize_plan([node], Path("/repo"), runner=runner)
+        self.assertEqual(count, 1)
+        self.assertNotIn("--model", calls[0])
+        self.assertIn("route pin stripped", err.getvalue())
+
+    def test_prohibited_still_hard_skipped(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(id="bad", title="Bad", model="anthropic:claude")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            count = materialize_plan([node], Path("/repo"), runner=runner)
+        self.assertEqual(count, 0)
+        self.assertEqual(len(calls), 0)
+
+    def test_premium_with_reason_keeps_pin(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(id="premium-task", title="Premium", model="kimi-coding:k3")
+        materialize_plan(
+            [node], Path("/repo"),
+            escalation_reasons={"premium-task": "critical integration"},
+            runner=runner,
+        )
+        self.assertIn("--model", calls[0])
+        idx = calls[0].index("--model")
+        self.assertEqual(calls[0][idx + 1], "kimi-coding:k3")
+
+
+class InsertReviewGatesTests(unittest.TestCase):
+    def test_chain_inserts_gates_and_rewires(self) -> None:
+        a = PlannedNode(id="a", title="A", task_type="code", after=[])
+        b = PlannedNode(id="b", title="B", task_type="code", after=["a"])
+        c = PlannedNode(id="c", title="C", task_type="code", after=["b"])
+        result = insert_review_gates([a, b, c])
+        ids = {n.id for n in result}
+        self.assertIn("review-a", ids)
+        self.assertIn("review-b", ids)
+        self.assertIn("review-c", ids)
+        # B now depends on review-a
+        b_node = next(n for n in result if n.id == "b")
+        self.assertIn("review-a", b_node.after)
+        self.assertNotIn("a", b_node.after)
+        # C now depends on review-b
+        c_node = next(n for n in result if n.id == "c")
+        self.assertIn("review-b", c_node.after)
+        self.assertNotIn("b", c_node.after)
+
+    def test_gate_after_points_to_source(self) -> None:
+        a = PlannedNode(id="a", title="A", task_type="code")
+        result = insert_review_gates([a])
+        gate = next(n for n in result if n.id == "review-a")
+        self.assertEqual(gate.after, ["a"])
+
+    def test_gate_is_review_type(self) -> None:
+        a = PlannedNode(id="a", title="A", task_type="code")
+        result = insert_review_gates([a])
+        gate = next(n for n in result if n.id == "review-a")
+        self.assertEqual(gate.task_type, "review")
+
+    def test_gate_description_mentions_roborev(self) -> None:
+        a = PlannedNode(id="a", title="A", task_type="code")
+        result = insert_review_gates([a])
+        gate = next(n for n in result if n.id == "review-a")
+        self.assertIn("roborev", gate.description.lower())
+
+    def test_non_code_nodes_get_no_gate(self) -> None:
+        qg = PlannedNode(id="qg", title="Quality gate", task_type="quality-gate")
+        result = insert_review_gates([qg])
+        ids = {n.id for n in result}
+        self.assertNotIn("review-qg", ids)
+
+    def test_diamond_no_cycle(self) -> None:
+        a = PlannedNode(id="a", title="A", task_type="code", after=[])
+        b = PlannedNode(id="b", title="B", task_type="code", after=["a"])
+        c = PlannedNode(id="c", title="C", task_type="code", after=["a"])
+        d = PlannedNode(id="d", title="D", task_type="code", after=["b", "c"])
+        result = insert_review_gates([a, b, c, d])
+        adj = {n.id: list(n.after) for n in result}
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color = {nid: WHITE for nid in adj}
+
+        def visit(nid: str) -> bool:
+            color[nid] = GRAY
+            for dep in adj[nid]:
+                if dep not in color:
+                    continue
+                if color[dep] == GRAY:
+                    return True
+                if color[dep] == WHITE and visit(dep):
+                    return True
+            color[nid] = BLACK
+            return False
+
+        has_cycle = any(color[nid] == WHITE and visit(nid) for nid in list(color))
+        self.assertFalse(has_cycle)
+
+
+class AgencyFenceTests(unittest.TestCase):
+    def test_fence_content(self) -> None:
+        fence = agency_fence("reviewer")
+        self.assertIn("```agencydrift", fence)
+        self.assertIn("schema = 1", fence)
+        self.assertIn('profile = "reviewer"', fence)
+        self.assertIn('preferred_runtime = "agency"', fence)
+        self.assertIn('fallback_runtime = "codexd"', fence)
+
+    def test_fence_custom_runtimes(self) -> None:
+        fence = agency_fence("critic", preferred_runtime="codexd", fallback_runtime="codex")
+        self.assertIn('preferred_runtime = "codexd"', fence)
+
+    def test_apply_adds_fence(self) -> None:
+        node = PlannedNode(id="n1", title="T", description="Do work")
+        result = apply_agency_fences([node], {"n1": "worker"})
+        self.assertIn("agencydrift", result[0].description)
+        self.assertIn('profile = "worker"', result[0].description)
+
+    def test_apply_idempotent(self) -> None:
+        node = PlannedNode(
+            id="n1", title="T",
+            description='Do work\n\n```agencydrift\nprofile = "x"\n```',
+        )
+        result = apply_agency_fences([node], {"n1": "worker"})
+        self.assertEqual(result[0].description.count("agencydrift"), 1)
+
+    def test_apply_skips_unmapped_nodes(self) -> None:
+        node = PlannedNode(id="n1", title="T", description="Do work")
+        result = apply_agency_fences([node], {"n2": "worker"})
+        self.assertEqual(result[0].description, "Do work")
 
 
 if __name__ == "__main__":

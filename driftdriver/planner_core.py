@@ -64,6 +64,9 @@ class PlannedNode:
     verify: str = ""
     touch: list[str] = field(default_factory=list)
     acceptance: list[str] = field(default_factory=list)
+    model: str = ""
+    route_tier: str = ""
+    escalation_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -85,6 +88,12 @@ class PlannedNode:
             d["touch"] = self.touch
         if self.acceptance:
             d["acceptance"] = self.acceptance
+        if self.model:
+            d["model"] = self.model
+        if self.route_tier:
+            d["route_tier"] = self.route_tier
+        if self.escalation_reason:
+            d["escalation_reason"] = self.escalation_reason
         return d
 
 
@@ -99,6 +108,24 @@ class ModelRoutePolicy:
 
     prohibited_prefixes: tuple[str, ...] = ("anthropic",)
     conditional_providers: tuple[str, ...] = ("lunaroute",)
+    tier_prefixes: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
+        "fast": ("ollama:",),
+        "standard": ("zai:", "kimi-coding:kimi-for-coding"),
+        "premium": ("kimi-coding:k3", "openai-codex"),
+    })
+    default_tier: str = "fast"
+    require_escalation_reason_for: tuple[str, ...] = ("premium",)
+
+    def tier_of(self, model: str) -> str:
+        """Return the tier name for *model* based on prefix matching.
+
+        First matching prefix wins.  No match returns ``"unknown"``.
+        """
+        for tier, prefixes in self.tier_prefixes.items():
+            for prefix in prefixes:
+                if model.startswith(prefix):
+                    return tier
+        return "unknown"
 
 
 DEFAULT_MODEL_ROUTE_POLICY = ModelRoutePolicy()
@@ -111,6 +138,7 @@ class RouteViolation:
     node_id: str
     model: str
     reason: str
+    kind: str = "prohibited"
 
 
 def _provider_prefix(model: str) -> str:
@@ -126,34 +154,59 @@ def validate_model_routes(
     *,
     policy: ModelRoutePolicy = DEFAULT_MODEL_ROUTE_POLICY,
     allow_conditional: bool = False,
+    escalation_reasons: dict[str, str] | None = None,
 ) -> list[RouteViolation]:
     """Check each node→model assignment against the route policy.
 
-    Prohibited prefixes are always flagged. Conditional providers are flagged
-    unless *allow_conditional* is True.
+    Prohibited prefixes are always flagged (kind=``"prohibited"``).
+    Conditional providers are flagged unless *allow_conditional* is True
+    (kind=``"conditional"``).
+    Models in a tier listed in *require_escalation_reason_for* without a
+    non-empty entry in *escalation_reasons* are flagged
+    (kind=``"missing-escalation-reason"``).
     """
     violations: list[RouteViolation] = []
     for node_id, model in route_models.items():
         prefix = _provider_prefix(model)
         prefix_lower = prefix.lower()
+        flagged = False
         if prefix_lower in policy.prohibited_prefixes:
             violations.append(RouteViolation(
                 node_id=node_id,
                 model=model,
+                kind="prohibited",
                 reason=(
                     f"Model '{model}' uses provider '{prefix}' which is "
                     f"prohibited for workgraph-dispatched tasks."
                 ),
             ))
+            flagged = True
         elif prefix_lower in policy.conditional_providers and not allow_conditional:
             violations.append(RouteViolation(
                 node_id=node_id,
                 model=model,
+                kind="conditional",
                 reason=(
                     f"Model '{model}' uses conditional provider '{prefix}' "
                     f"which requires explicit opt-in (allow_conditional=True)."
                 ),
             ))
+            flagged = True
+
+        if not flagged:
+            tier = policy.tier_of(model)
+            if tier in policy.require_escalation_reason_for:
+                reason = (escalation_reasons or {}).get(node_id, "")
+                if not reason:
+                    violations.append(RouteViolation(
+                        node_id=node_id,
+                        model=model,
+                        kind="missing-escalation-reason",
+                        reason=(
+                            f"Model '{model}' is tier '{tier}' which requires "
+                            f"an explicit escalation reason, but none was provided."
+                        ),
+                    ))
     return violations
 
 
@@ -385,6 +438,9 @@ def parse_plan_output(raw: str) -> list[PlannedNode]:
                 verify=t.get("verify", ""),
                 touch=t.get("touch", []),
                 acceptance=t.get("acceptance", []),
+                model=t.get("model", ""),
+                route_tier=t.get("route_tier", ""),
+                escalation_reason=t.get("escalation_reason", ""),
             )
         )
     return nodes
@@ -457,6 +513,7 @@ def materialize_plan(
     verify_fallback: Callable[[PlannedNode], str] | None = None,
     tag_builder: Callable[[PlannedNode], list[str]] | None = None,
     route_models: dict[str, str] | None = None,
+    escalation_reasons: dict[str, str] | None = None,
     policy: ModelRoutePolicy = DEFAULT_MODEL_ROUTE_POLICY,
     runner: Callable[..., Any] | None = None,
 ) -> int:
@@ -464,23 +521,47 @@ def materialize_plan(
 
     Generalizes the wg-add loop from quality_planner.plan_from_spec.
 
-    - If *route_models* is provided, runs validate_model_routes and SKIPS any
-      node with a violation (fail-closed: prohibited routes are never
-      materialized).
+    If *route_models* is None, it is derived from nodes that carry a non-empty
+    ``.model`` field.
+
+    Route validation asymmetry:
+      - **Policy breaches** (prohibited / conditional providers) **fail closed**:
+        the node is skipped entirely and never materialized.
+      - **Missing escalation paperwork** (premium tier without a recorded
+        reason) **degrades to default routing**: the node is still materialized
+        but its ``--model`` pin is stripped so it inherits the project default
+        profile.  A loud stderr warning is printed.
+
     - Returns the count of successfully added tasks.
     """
     if runner is None:
         runner = subprocess.run
 
-    # Fail-closed: validate routes and collect nodes to skip
+    # Derive route_models from nodes if not provided
+    if route_models is None:
+        route_models = {n.id: n.model for n in nodes if n.model}
+
+    # Validate routes and classify violations
     skip_ids: set[str] = set()
+    strip_pin_ids: set[str] = set()
     if route_models:
-        for v in validate_model_routes(route_models, policy=policy):
-            print(
-                f"warning: skipping node '{v.node_id}' — route violation: {v.reason}",
-                file=sys.stderr,
-            )
-            skip_ids.add(v.node_id)
+        for v in validate_model_routes(
+            route_models,
+            policy=policy,
+            escalation_reasons=escalation_reasons,
+        ):
+            if v.kind in ("prohibited", "conditional"):
+                print(
+                    f"warning: skipping node '{v.node_id}' — route violation: {v.reason}",
+                    file=sys.stderr,
+                )
+                skip_ids.add(v.node_id)
+            elif v.kind == "missing-escalation-reason":
+                print(
+                    f"warning: route pin stripped for node '{v.node_id}' — {v.reason}",
+                    file=sys.stderr,
+                )
+                strip_pin_ids.add(v.node_id)
 
     added_count = 0
     for node in nodes:
@@ -491,6 +572,12 @@ def materialize_plan(
 
         for dep in node.after:
             cmd.extend(["--blocked-by", dep])
+
+        # Model routing: add --model unless pin was stripped
+        if node.id not in strip_pin_ids and route_models:
+            model = route_models.get(node.id, "")
+            if model:
+                cmd.extend(["--model", model])
 
         desc = desc_builder(node) if desc_builder else (node.description or None)
         if desc:
@@ -531,3 +618,99 @@ def materialize_plan(
             print(f"warning: wg add failed for {node.id}: {e}", file=sys.stderr)
 
     return added_count
+
+
+# ---------------------------------------------------------------------------
+# Review gate insertion
+# ---------------------------------------------------------------------------
+
+
+def insert_review_gates(
+    nodes: list[PlannedNode],
+    *,
+    gate_prefix: str = "review",
+    gate_model: str = "",
+) -> list[PlannedNode]:
+    """Insert a roborev review gate after every code-type node.
+
+    For each node with ``task_type == "code"`` a gate node is created:
+      - id: ``f"{gate_prefix}-{node.id}"``
+      - title: ``f"Review: {node.title}"``
+      - task_type: ``"review"``
+      - after: ``[node.id]``
+
+    Every *other* node whose ``after`` list references the source node's id
+    has that entry replaced with the gate's id, so dependents now wait for
+    the review.  The gate node itself is excluded from rewiring (its own
+    ``after`` still points at the source).
+
+    Returns the full list: original nodes (mutated where rewired) plus gate
+    nodes appended.
+    """
+    gate_map: dict[str, str] = {}
+    gates: list[PlannedNode] = []
+
+    for node in nodes:
+        if node.task_type == "code":
+            gate_id = f"{gate_prefix}-{node.id}"
+            gate_map[node.id] = gate_id
+            gate = PlannedNode(
+                id=gate_id,
+                title=f"Review: {node.title}",
+                task_type="review",
+                after=[node.id],
+                model=gate_model,
+                description=(
+                    f"Run a roborev review of the implementation task "
+                    f"'{node.id}' changes against its acceptance criteria. "
+                    f"Address or respond to every finding. Close the roborev "
+                    f"job. The gate fails open when no findings exist."
+                ),
+            )
+            gates.append(gate)
+
+    # Rewire: replace dep references to source ids with gate ids
+    for node in nodes:
+        node.after = [gate_map.get(dep, dep) for dep in node.after]
+
+    return nodes + gates
+
+
+# ---------------------------------------------------------------------------
+# Agency fences
+# ---------------------------------------------------------------------------
+
+
+def agency_fence(
+    profile: str,
+    *,
+    preferred_runtime: str = "agency",
+    fallback_runtime: str = "codexd",
+) -> str:
+    """Return a fenced ````agencydrift```` block for embedding in task descriptions."""
+    return (
+        "```agencydrift\n"
+        "schema = 1\n"
+        f'profile = "{profile}"\n'
+        f'preferred_runtime = "{preferred_runtime}"\n'
+        f'fallback_runtime = "{fallback_runtime}"\n'
+        "```"
+    )
+
+
+def apply_agency_fences(
+    nodes: list[PlannedNode],
+    profile_map: dict[str, str],
+) -> list[PlannedNode]:
+    """Append an agency fence to each named node's description.
+
+    Idempotent: skips nodes whose description already contains
+    ``"agencydrift"``.  Nodes absent from *profile_map* are untouched.
+
+    Returns the (mutated) list.
+    """
+    for node in nodes:
+        if node.id in profile_map and "agencydrift" not in (node.description or ""):
+            fence = agency_fence(profile_map[node.id])
+            node.description = (node.description or "") + "\n\n" + fence
+    return nodes
