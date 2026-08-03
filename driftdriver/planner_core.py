@@ -1,0 +1,534 @@
+# ABOUTME: Consolidated decomposition core — canonical node schema, model-route
+# ABOUTME: policy, shared parse/materialize for all driftdriver planner surfaces.
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+
+
+# ---------------------------------------------------------------------------
+# Quality pattern repertoire
+# ---------------------------------------------------------------------------
+
+BUILTIN_PATTERNS: dict[str, dict[str, str]] = {
+    "e2e-breakfix": {
+        "description": "Run end-to-end tests, diagnose failures, fix, retest. Max N iterations.",
+        "when": "Any code that has testable behavior.",
+        "structure": "implement -> test -> [fail? -> fix -> retest, max N] -> proceed",
+    },
+    "ux-eval": {
+        "description": "Evaluate UI against UX criteria (accessibility, responsiveness, interaction patterns).",
+        "when": "User-facing changes.",
+        "structure": "implement -> UX eval -> [issues? -> fix -> re-eval, max N] -> proceed",
+    },
+    "data-eval": {
+        "description": "Validate data model changes against integrity constraints, migration safety, rollback.",
+        "when": "Schema changes, migrations, data pipeline changes.",
+        "structure": "implement -> validate schema + dry-run -> [issues? -> fix -> re-validate] -> proceed",
+    },
+    "contract-test": {
+        "description": "Verify API contracts match spec.",
+        "when": "API endpoints, inter-service communication.",
+        "structure": "implement -> contract test -> [drift? -> fix -> retest] -> proceed",
+    },
+    "northstar-checkpoint": {
+        "description": "Invoke NorthStarDrift v2 alignment check scoped to this graph's completed work.",
+        "when": "Phase boundaries, after significant directional decisions.",
+        "structure": "assess alignment -> [aligned? proceed | drifting? warn | lost? pause + escalate]",
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Canonical node schema
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PlannedNode:
+    """A single task node in a decomposed workgraph plan."""
+
+    id: str
+    title: str
+    after: list[str] = field(default_factory=list)
+    task_type: str = "code"
+    risk: str = "medium"
+    description: str = ""
+    pattern: str | None = None
+    max_iterations: int | None = None
+    verify: str = ""
+    touch: list[str] = field(default_factory=list)
+    acceptance: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "id": self.id,
+            "title": self.title,
+            "after": self.after,
+            "type": self.task_type,
+            "risk": self.risk,
+        }
+        if self.description:
+            d["description"] = self.description
+        if self.pattern:
+            d["pattern"] = self.pattern
+        if self.max_iterations is not None:
+            d["max_iterations"] = self.max_iterations
+        if self.verify:
+            d["verify"] = self.verify
+        if self.touch:
+            d["touch"] = self.touch
+        if self.acceptance:
+            d["acceptance"] = self.acceptance
+        return d
+
+
+# ---------------------------------------------------------------------------
+# Model route policy
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ModelRoutePolicy:
+    """Policy governing which model providers may be assigned to workgraph tasks."""
+
+    prohibited_prefixes: tuple[str, ...] = ("anthropic",)
+    conditional_providers: tuple[str, ...] = ("lunaroute",)
+
+
+DEFAULT_MODEL_ROUTE_POLICY = ModelRoutePolicy()
+
+
+@dataclass
+class RouteViolation:
+    """A model-route assignment that violates the active policy."""
+
+    node_id: str
+    model: str
+    reason: str
+
+
+def _provider_prefix(model: str) -> str:
+    """Extract the provider prefix — the portion before the first ':' or '/'."""
+    for i, ch in enumerate(model):
+        if ch == ":" or ch == "/":
+            return model[:i]
+    return model
+
+
+def validate_model_routes(
+    route_models: dict[str, str],
+    *,
+    policy: ModelRoutePolicy = DEFAULT_MODEL_ROUTE_POLICY,
+    allow_conditional: bool = False,
+) -> list[RouteViolation]:
+    """Check each node→model assignment against the route policy.
+
+    Prohibited prefixes are always flagged. Conditional providers are flagged
+    unless *allow_conditional* is True.
+    """
+    violations: list[RouteViolation] = []
+    for node_id, model in route_models.items():
+        prefix = _provider_prefix(model)
+        prefix_lower = prefix.lower()
+        if prefix_lower in policy.prohibited_prefixes:
+            violations.append(RouteViolation(
+                node_id=node_id,
+                model=model,
+                reason=(
+                    f"Model '{model}' uses provider '{prefix}' which is "
+                    f"prohibited for workgraph-dispatched tasks."
+                ),
+            ))
+        elif prefix_lower in policy.conditional_providers and not allow_conditional:
+            violations.append(RouteViolation(
+                node_id=node_id,
+                model=model,
+                reason=(
+                    f"Model '{model}' uses conditional provider '{prefix}' "
+                    f"which requires explicit opt-in (allow_conditional=True)."
+                ),
+            ))
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Policy bundles
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PolicyBundle:
+    """Configuration that shapes how build_decompose_prompt assembles the prompt."""
+
+    name: str
+    mode: str  # "emit-json" or "agent-executes"
+    task_count_hint: str | None = None
+    patterns: dict[str, dict[str, str]] = field(default_factory=dict)
+    extra_instructions: str = ""
+
+
+BUNDLE_AUTOPILOT = PolicyBundle(name="autopilot", mode="agent-executes")
+BUNDLE_DECOMPOSE_CLI = PolicyBundle(
+    name="decompose-cli", mode="emit-json", task_count_hint="3-8",
+)
+BUNDLE_QUALITY_SPEC = PolicyBundle(
+    name="quality-spec", mode="emit-json", patterns=BUILTIN_PATTERNS,
+)
+
+
+# ---------------------------------------------------------------------------
+# Prompt builder
+# ---------------------------------------------------------------------------
+
+
+def build_decompose_prompt(
+    goal: str,
+    *,
+    project_dir: Path | None = None,
+    context: str = "",
+    bundle: PolicyBundle,
+) -> str:
+    """Build a decomposition prompt according to the policy bundle's mode.
+
+    *agent-executes* mode reproduces planner.py's instruction to create tasks
+    directly via ``wg add``.  *emit-json* mode asks for a structured JSON array
+    of PlannedNode objects, optionally enriched with quality-pattern guidance.
+    """
+    sections: list[str] = []
+
+    if bundle.mode == "agent-executes":
+        sections.append(
+            "You are a project planner. Given a high-level goal, decompose it into\n"
+            "concrete workgraph tasks with dependencies.\n"
+        )
+        sections.append(f"## Goal\n{goal}\n")
+        if project_dir is not None:
+            sections.append(f"## Project Directory\n{project_dir}\n")
+        if context:
+            sections.append(f"## Context\n{context}\n")
+        sections.append(
+            "## Instructions\n"
+            "1. Research the goal by reading relevant files in the project.\n"
+            "2. Create workgraph tasks using `wg add`. Each task must have:\n"
+            "   - A short `--id` (kebab-case, e.g., `feat-auth-login`)\n"
+            "   - A clear title\n"
+            "   - A `-d` description covering: what to do, which files to touch, "
+            "acceptance criteria\n"
+            "   - `--after` dependencies where appropriate\n"
+            "   - `--no-place` when the task should be immediately dispatchable\n"
+            "3. Keep tasks small — each should be completable in one focused session.\n"
+            "4. After creating all tasks, run:\n"
+            "   ./.workgraph/coredrift ensure-contracts --apply\n"
+            "5. Print a summary of the tasks you created (id + title + deps).\n"
+            "6. Do NOT implement anything. Planning only.\n"
+        )
+    elif bundle.mode == "emit-json":
+        sections.append(
+            "You are a decomposition planner. Given a high-level goal, produce a\n"
+            "dependency-ordered task graph as structured JSON.\n"
+        )
+        sections.append(f"## Goal\n{goal}\n")
+        if project_dir is not None:
+            sections.append(f"## Project Directory\n{project_dir}\n")
+        if context:
+            sections.append(f"## Context\n{context}\n")
+        if bundle.task_count_hint:
+            sections.append(f"## Task Count\nProduce {bundle.task_count_hint} tasks.\n")
+        if bundle.patterns:
+            repertoire_text = "\n"
+            for pname, pattern in bundle.patterns.items():
+                repertoire_text += f"### {pname}\n"
+                repertoire_text += f"- **Description:** {pattern['description']}\n"
+                repertoire_text += f"- **When to use:** {pattern['when']}\n"
+                repertoire_text += f"- **Structure:** {pattern['structure']}\n\n"
+            sections.append(
+                "## Quality Pattern Repertoire\n"
+                "These are the quality patterns available. Use your judgment about "
+                "which to apply and where.\n"
+                + repertoire_text
+            )
+        sections.append(
+            "## Output Format\n"
+            "Respond with ONLY a JSON array of node objects using these field names:\n"
+            "id, title, after, type, risk, description, pattern, max_iterations, "
+            "touch, acceptance, verify.\n"
+            "- id: kebab-case slug\n"
+            "- title: human-readable title\n"
+            "- after: list of dependency task ids\n"
+            "- type: code | quality-gate | northstar-checkpoint\n"
+            "- risk: low | medium | high\n"
+            "- pattern: quality pattern name (if quality-gate)\n"
+            "- max_iterations: integer (for fix loops)\n"
+            "- touch: list of file paths\n"
+            "- acceptance: list of acceptance criteria\n"
+            "- verify: command to verify\n"
+        )
+        sections.append(
+            "## CRITICAL: wg-contract blocks\n"
+            "Every code-type task description MUST begin with a ```wg-contract fenced "
+            "block so coredrift can check it:\n"
+            "````\n"
+            "```wg-contract\n"
+            "schema = 1\n"
+            'mode = "core"\n'
+            'objective = "The task title"\n'
+            'non_goals = ["Things explicitly out of scope"]\n'
+            'touch = ["src/file1.ts", "src/file2.ts"]\n'
+            'acceptance = ["Acceptance criterion 1", "Acceptance criterion 2"]\n'
+            "max_files = 15\n"
+            "max_loc = 500\n"
+            "```\n"
+            "````\n"
+            "Include the wg-contract block as the FIRST thing in the description "
+            "field. Put the human-readable instructions after it.\n"
+        )
+    else:
+        raise ValueError(f"Unknown bundle mode: {bundle.mode!r}")
+
+    if bundle.extra_instructions:
+        sections.append(bundle.extra_instructions)
+
+    return "\n".join(sections)
+
+
+# ---------------------------------------------------------------------------
+# Plan output parser
+# ---------------------------------------------------------------------------
+
+
+def parse_plan_output(raw: str) -> list[PlannedNode]:
+    """Extract and parse a JSON task list from an LLM response.
+
+    Three extraction strategies (ported from quality_planner._parse_plan_output):
+    1. Direct json.loads on the whole text.
+    2. Outermost ```json fence via rfind.
+    3. Largest {…} brace span (and parallel [ … ] bracket span for arrays).
+
+    Handles both ``{"tasks": [...]}`` wrappers and bare ``[...]`` arrays.
+    Returns an empty list on any failure.
+    """
+    text = raw.strip()
+    if not text:
+        return []
+
+    data: Any = None
+
+    # 1. Direct parse
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Outermost ```json fence
+    if data is None and "```json" in text:
+        start = text.index("```json") + len("```json")
+        last_fence = text.rfind("```")
+        if last_fence > start:
+            candidate = text[start:last_fence].strip()
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+    # 3a. Largest { ... } brace span
+    if data is None:
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace >= 0 and last_brace > first_brace:
+            candidate = text[first_brace : last_brace + 1]
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+    # 3b. Largest [ ... ] bracket span (for bare arrays)
+    if data is None:
+        first_bracket = text.find("[")
+        last_bracket = text.rfind("]")
+        if first_bracket >= 0 and last_bracket > first_bracket:
+            candidate = text[first_bracket : last_bracket + 1]
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+    if data is None:
+        return []
+
+    # Normalize to a list of task dicts
+    if isinstance(data, list):
+        task_list = data
+    elif isinstance(data, dict):
+        task_list = data.get("tasks", [])
+    else:
+        return []
+
+    nodes: list[PlannedNode] = []
+    for t in task_list:
+        if not isinstance(t, dict):
+            continue
+        nodes.append(
+            PlannedNode(
+                id=t.get("id", ""),
+                title=t.get("title", ""),
+                after=t.get("after", []),
+                task_type=t.get("type", "code"),
+                risk=t.get("risk", "medium"),
+                description=t.get("description", ""),
+                pattern=t.get("pattern"),
+                max_iterations=t.get("max_iterations"),
+                verify=t.get("verify", ""),
+                touch=t.get("touch", []),
+                acceptance=t.get("acceptance", []),
+            )
+        )
+    return nodes
+
+
+# ---------------------------------------------------------------------------
+# LLM caller
+# ---------------------------------------------------------------------------
+
+
+def call_llm(prompt: str, model: str = "sonnet") -> str:
+    """Call claude CLI in non-interactive mode and return the response text.
+
+    This is a planner-side direct CLI invocation, NOT a workgraph-dispatched
+    task. The anthropic dispatch prohibition in ModelRoutePolicy governs models
+    assigned TO tasks, not the planner's own runtime.
+    """
+    cmd = [
+        "claude",
+        "-p",
+        "--model", model,
+        "--output-format", "json",
+        "--no-session-persistence",
+        "--dangerously-skip-permissions",
+    ]
+    # Strip env vars that trigger interactive session hooks
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CLAUDE_SESSION_ID", "CLAUDE_CONVERSATION_ID")
+    }
+    try:
+        result = subprocess.run(
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=env,
+        )
+        if result.returncode != 0:
+            print(
+                f"warning: claude CLI exit {result.returncode}: {result.stderr[:200]}",
+                file=sys.stderr,
+            )
+            return ""
+        # --output-format json wraps response in {"result": "...", ...}
+        try:
+            cli_output = json.loads(result.stdout)
+            if isinstance(cli_output, dict):
+                return cli_output.get("result", result.stdout).strip()
+        except json.JSONDecodeError:
+            pass
+        return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        print(f"warning: LLM call failed: {e}", file=sys.stderr)
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Materializer
+# ---------------------------------------------------------------------------
+
+
+def materialize_plan(
+    nodes: list[PlannedNode],
+    repo_path: Path,
+    *,
+    desc_builder: Callable[[PlannedNode], str] | None = None,
+    verify_fallback: Callable[[PlannedNode], str] | None = None,
+    tag_builder: Callable[[PlannedNode], list[str]] | None = None,
+    route_models: dict[str, str] | None = None,
+    policy: ModelRoutePolicy = DEFAULT_MODEL_ROUTE_POLICY,
+    runner: Callable[..., Any] | None = None,
+) -> int:
+    """Write PlannedNode objects to the workgraph via ``wg add``.
+
+    Generalizes the wg-add loop from quality_planner.plan_from_spec.
+
+    - If *route_models* is provided, runs validate_model_routes and SKIPS any
+      node with a violation (fail-closed: prohibited routes are never
+      materialized).
+    - Returns the count of successfully added tasks.
+    """
+    if runner is None:
+        runner = subprocess.run
+
+    # Fail-closed: validate routes and collect nodes to skip
+    skip_ids: set[str] = set()
+    if route_models:
+        for v in validate_model_routes(route_models, policy=policy):
+            print(
+                f"warning: skipping node '{v.node_id}' — route violation: {v.reason}",
+                file=sys.stderr,
+            )
+            skip_ids.add(v.node_id)
+
+    added_count = 0
+    for node in nodes:
+        if node.id in skip_ids:
+            continue
+
+        cmd: list[str] = ["wg", "add", node.title, "--id", node.id]
+
+        for dep in node.after:
+            cmd.extend(["--blocked-by", dep])
+
+        desc = desc_builder(node) if desc_builder else (node.description or None)
+        if desc:
+            cmd.extend(["-d", desc])
+
+        verify = node.verify or (verify_fallback(node) if verify_fallback else "")
+        if verify:
+            cmd.extend(["--verify", verify])
+
+        if tag_builder:
+            for tag in tag_builder(node):
+                cmd.extend(["--tag", tag])
+
+        try:
+            result = runner(
+                cmd,
+                cwd=str(repo_path),
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                added_count += 1
+            else:
+                stderr = (result.stderr or "").strip()
+                if stderr:
+                    print(
+                        f"warning: wg add for '{node.id}': {stderr}",
+                        file=sys.stderr,
+                    )
+        except subprocess.TimeoutExpired:
+            print(
+                f"warning: wg add timed out for '{node.id}' "
+                f"(workgraph daemon may be unresponsive)",
+                file=sys.stderr,
+            )
+        except Exception as e:
+            print(f"warning: wg add failed for {node.id}: {e}", file=sys.stderr)
+
+    return added_count

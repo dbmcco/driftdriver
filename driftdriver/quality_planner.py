@@ -4,83 +4,24 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from driftdriver.planner_core import (
+    BUILTIN_PATTERNS,
+    PlannedNode,
+    call_llm as _core_call_llm,
+    materialize_plan,
+    parse_plan_output,
+)
 from driftdriver.signal_gate import is_gate_enabled, should_fire, record_fire
 from driftdriver.drift_task_guard import record_finding_ledger
 
 _log = logging.getLogger(__name__)
 
-
-BUILTIN_PATTERNS: dict[str, dict[str, str]] = {
-    "e2e-breakfix": {
-        "description": "Run end-to-end tests, diagnose failures, fix, retest. Max N iterations.",
-        "when": "Any code that has testable behavior.",
-        "structure": "implement -> test -> [fail? -> fix -> retest, max N] -> proceed",
-    },
-    "ux-eval": {
-        "description": "Evaluate UI against UX criteria (accessibility, responsiveness, interaction patterns).",
-        "when": "User-facing changes.",
-        "structure": "implement -> UX eval -> [issues? -> fix -> re-eval, max N] -> proceed",
-    },
-    "data-eval": {
-        "description": "Validate data model changes against integrity constraints, migration safety, rollback.",
-        "when": "Schema changes, migrations, data pipeline changes.",
-        "structure": "implement -> validate schema + dry-run -> [issues? -> fix -> re-validate] -> proceed",
-    },
-    "contract-test": {
-        "description": "Verify API contracts match spec.",
-        "when": "API endpoints, inter-service communication.",
-        "structure": "implement -> contract test -> [drift? -> fix -> retest] -> proceed",
-    },
-    "northstar-checkpoint": {
-        "description": "Invoke NorthStarDrift v2 alignment check scoped to this graph's completed work.",
-        "when": "Phase boundaries, after significant directional decisions.",
-        "structure": "assess alignment -> [aligned? proceed | drifting? warn | lost? pause + escalate]",
-    },
-}
-
-
-@dataclass
-class PlannedTask:
-    id: str
-    title: str
-    after: list[str] = field(default_factory=list)
-    task_type: str = "code"
-    risk: str = "medium"
-    description: str = ""
-    pattern: str | None = None
-    max_iterations: int | None = None
-    verify: str = ""
-    touch: list[str] = field(default_factory=list)
-    acceptance: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {
-            "id": self.id,
-            "title": self.title,
-            "after": self.after,
-            "type": self.task_type,
-            "risk": self.risk,
-        }
-        if self.description:
-            d["description"] = self.description
-        if self.pattern:
-            d["pattern"] = self.pattern
-        if self.max_iterations is not None:
-            d["max_iterations"] = self.max_iterations
-        if self.verify:
-            d["verify"] = self.verify
-        if self.touch:
-            d["touch"] = self.touch
-        if self.acceptance:
-            d["acceptance"] = self.acceptance
-        return d
+# Canonical node type — aliased for backward compatibility.
+PlannedTask = PlannedNode
 
 
 @dataclass
@@ -196,103 +137,63 @@ def _read_north_star(repo_path: Path) -> str:
 
 
 def _call_llm(prompt: str, model: str = "sonnet") -> str:
-    """Call claude CLI in non-interactive mode and return the response text."""
-    cmd = [
-        "claude",
-        "-p",
-        "--model", model,
-        "--output-format", "json",
-        "--no-session-persistence",
-        "--dangerously-skip-permissions",
-    ]
-    # Strip env vars that trigger interactive session hooks
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("CLAUDE_SESSION_ID", "CLAUDE_CONVERSATION_ID")}
-    try:
-        result = subprocess.run(
-            cmd,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            env=env,
-        )
-        if result.returncode != 0:
-            print(f"warning: claude CLI exit {result.returncode}: {result.stderr[:200]}", file=sys.stderr)
-            return ""
-        # --output-format json wraps response in {"result": "...", ...}
-        try:
-            cli_output = json.loads(result.stdout)
-            if isinstance(cli_output, dict):
-                return cli_output.get("result", result.stdout).strip()
-        except json.JSONDecodeError:
-            pass
-        return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        print(f"warning: LLM call failed: {e}", file=sys.stderr)
-        return ""
+    """Call claude CLI in non-interactive mode and return the response text.
+
+    Thin wrapper delegating to planner_core.call_llm.
+    """
+    return _core_call_llm(prompt, model=model)
 
 
 def _parse_plan_output(raw: str) -> PlannerOutput:
-    """Extract and parse JSON task list from LLM response, handling markdown code blocks."""
-    text = raw.strip()
-    if not text:
-        return PlannerOutput()
+    """Extract and parse JSON task list from LLM response, handling markdown code blocks.
 
-    # Strategy: try direct JSON parse first, then extract from code blocks.
-    # The direct parse handles cases where the JSON contains backticks in string values.
-    data = None
+    Thin wrapper delegating to planner_core.parse_plan_output.
+    """
+    nodes = parse_plan_output(raw)
+    return PlannerOutput(tasks=list(nodes))
 
-    # 1. Try parsing the raw text directly (may work if no wrapping code block)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        pass
 
-    # 2. Try extracting from ```json ... ``` by finding the outermost block
-    if data is None and "```json" in text:
-        start = text.index("```json") + len("```json")
-        # Find the LAST ``` (the closing one for the outermost block)
-        last_fence = text.rfind("```")
-        if last_fence > start:
-            candidate = text[start:last_fence].strip()
-            try:
-                data = json.loads(candidate)
-            except json.JSONDecodeError:
-                pass
+# ---------------------------------------------------------------------------
+# Callbacks for materialize_plan — recreate the original wg-add behaviour
+# ---------------------------------------------------------------------------
 
-    # 3. Try finding { ... } spanning the largest balanced region
-    if data is None:
-        first_brace = text.find("{")
-        last_brace = text.rfind("}")
-        if first_brace >= 0 and last_brace > first_brace:
-            candidate = text[first_brace : last_brace + 1]
-            try:
-                data = json.loads(candidate)
-            except json.JSONDecodeError:
-                pass
 
-    if data is None:
-        return PlannerOutput()
+def _quality_desc_builder(node: PlannedNode) -> str:
+    """Build task description with quality-pattern section appended."""
+    parts: list[str] = []
+    if node.description:
+        parts.append(node.description)
+    if node.pattern and node.pattern in BUILTIN_PATTERNS:
+        pattern = BUILTIN_PATTERNS[node.pattern]
+        parts.append(f"\n## Quality Pattern: {node.pattern}")
+        parts.append(f"{pattern['description']}")
+        parts.append(f"Structure: {pattern['structure']}")
+        if node.max_iterations:
+            parts.append(f"Max iterations: {node.max_iterations}")
+    return "\n".join(parts)
 
-    tasks: list[PlannedTask] = []
-    for t in data.get("tasks", []):
-        tasks.append(
-            PlannedTask(
-                id=t.get("id", ""),
-                title=t.get("title", ""),
-                after=t.get("after", []),
-                task_type=t.get("type", "code"),
-                risk=t.get("risk", "medium"),
-                description=t.get("description", ""),
-                pattern=t.get("pattern"),
-                max_iterations=t.get("max_iterations"),
-                verify=t.get("verify", ""),
-                touch=t.get("touch", []),
-                acceptance=t.get("acceptance", []),
-            )
-        )
-    return PlannerOutput(tasks=tasks)
+
+def _quality_verify_fallback(node: PlannedNode) -> str:
+    """Default verification command for quality-gate / northstar-checkpoint tasks."""
+    if node.task_type == "quality-gate" and node.pattern:
+        if node.pattern == "e2e-breakfix":
+            return "run tests and confirm all pass"
+        elif node.pattern == "ux-eval":
+            return "evaluate UX criteria and confirm acceptable"
+        elif node.pattern == "data-eval":
+            return "validate schema and run migration dry-run"
+        elif node.pattern == "contract-test":
+            return "run contract tests and confirm API matches spec"
+    elif node.task_type == "northstar-checkpoint":
+        return "assess North Star alignment and confirm score > 0.7"
+    return ""
+
+
+def _quality_tag_builder(node: PlannedNode) -> list[str]:
+    """Tag quality gates and checkpoints."""
+    if node.task_type in ("quality-gate", "northstar-checkpoint"):
+        return ["quality", node.pattern or node.task_type]
+    return []
 
 
 def plan_from_spec(
@@ -350,64 +251,12 @@ def plan_from_spec(
     if _gate_active:
         record_fire(_gate_agent, prompt, gate_dir=_gate_dir)
 
-    # Write tasks via wg add with quality-gate structuring
-    added_count = 0
-    for task in output.tasks:
-        cmd = ["wg", "add", task.title, "--id", task.id]
-        if task.after:
-            for dep in task.after:
-                cmd.extend(["--blocked-by", dep])
-
-        # Build description with quality gate context
-        desc_parts = []
-        if task.description:
-            desc_parts.append(task.description)
-
-        if task.pattern and task.pattern in BUILTIN_PATTERNS:
-            pattern = BUILTIN_PATTERNS[task.pattern]
-            desc_parts.append(f"\n## Quality Pattern: {task.pattern}")
-            desc_parts.append(f"{pattern['description']}")
-            desc_parts.append(f"Structure: {pattern['structure']}")
-            if task.max_iterations:
-                desc_parts.append(f"Max iterations: {task.max_iterations}")
-
-        if desc_parts:
-            cmd.extend(["-d", "\n".join(desc_parts)])
-
-        # Add verification command — prefer explicit verify from LLM, fall back to pattern defaults
-        if task.verify:
-            cmd.extend(["--verify", task.verify])
-        elif task.task_type == "quality-gate" and task.pattern:
-            if task.pattern == "e2e-breakfix":
-                cmd.extend(["--verify", "run tests and confirm all pass"])
-            elif task.pattern == "ux-eval":
-                cmd.extend(["--verify", "evaluate UX criteria and confirm acceptable"])
-            elif task.pattern == "data-eval":
-                cmd.extend(["--verify", "validate schema and run migration dry-run"])
-            elif task.pattern == "contract-test":
-                cmd.extend(["--verify", "run contract tests and confirm API matches spec"])
-        elif task.task_type == "northstar-checkpoint":
-            cmd.extend(["--verify", "assess North Star alignment and confirm score > 0.7"])
-
-        # Tag quality gates and checkpoints
-        if task.task_type in ("quality-gate", "northstar-checkpoint"):
-            cmd.extend(["--tag", "quality"])
-            cmd.extend(["--tag", task.pattern or task.task_type])
-
-        try:
-            result = subprocess.run(
-                cmd, cwd=str(repo_path), capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                added_count += 1
-            else:
-                stderr = result.stderr.strip()
-                if stderr:
-                    print(f"warning: wg add for '{task.id}': {stderr}", file=sys.stderr)
-        except subprocess.TimeoutExpired:
-            print(f"warning: wg add timed out for '{task.id}' (workgraph daemon may be unresponsive)", file=sys.stderr)
-        except Exception as e:
-            print(f"warning: wg add failed for {task.id}: {e}", file=sys.stderr)
-
-    output.added_count = added_count
+    # Write tasks via wg add with quality-gate structuring.
+    output.added_count = materialize_plan(
+        output.tasks,
+        repo_path,
+        desc_builder=_quality_desc_builder,
+        verify_fallback=_quality_verify_fallback,
+        tag_builder=_quality_tag_builder,
+    )
     return output

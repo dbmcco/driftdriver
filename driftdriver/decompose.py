@@ -3,40 +3,34 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from driftdriver.directives import Action, Directive, DirectiveLog
 from driftdriver.drift_task_guard import record_finding_ledger
 from driftdriver.executor_shim import ExecutorShim
+from driftdriver.planner_core import (
+    BUNDLE_DECOMPOSE_CLI,
+    build_decompose_prompt,
+    call_llm,
+    parse_plan_output,
+)
 from driftdriver.signal_gate import is_gate_enabled, record_fire, should_fire
 
 _log = logging.getLogger(__name__)
 
 
 def _call_llm(goal: str, context: str) -> list[dict[str, Any]]:
-    """Call LLM to decompose goal into task list. Returns list of task dicts."""
-    prompt = (
-        f"Decompose this goal into 3-8 concrete, dependency-ordered tasks "
-        f"for a workgraph. Return JSON array of objects with id, title, "
-        f"description, after (list of dependency ids).\n\n"
-        f"Goal: {goal}\n\nContext: {context}\n"
-    )
-    result = subprocess.run(
-        ["claude", "--print", "-p", prompt],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    text = result.stdout.strip()
-    start = text.find("[")
-    end = text.rfind("]") + 1
-    if start >= 0 and end > start:
-        return json.loads(text[start:end])
-    return []
+    """Call LLM to decompose goal into task list. Returns list of task dicts.
+
+    Uses the consolidated planner_core prompt builder, LLM caller, and parser.
+    The LLM is called via planner_core.call_llm which defaults to model=sonnet.
+    """
+    prompt = build_decompose_prompt(goal, context=context, bundle=BUNDLE_DECOMPOSE_CLI)
+    raw = call_llm(prompt)
+    nodes = parse_plan_output(raw)
+    return [node.to_dict() for node in nodes]
 
 
 def decompose_goal(

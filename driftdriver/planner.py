@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from driftdriver.planner_core import BUNDLE_AUTOPILOT, build_decompose_prompt as _core_build
+
 DECOMPOSE_PROMPT_TEMPLATE = """\
 You are a project planner. Given a high-level goal, decompose it into
 concrete workgraph tasks with dependencies.
@@ -33,7 +35,4 @@ concrete workgraph tasks with dependencies.
 
 def build_decompose_prompt(goal: str, project_dir: Path) -> str:
     """Build the prompt that instructs the planner to decompose a goal into tasks."""
-    return DECOMPOSE_PROMPT_TEMPLATE.format(
-        goal=goal,
-        project_dir=str(project_dir),
-    )
+    return _core_build(goal, project_dir=project_dir, bundle=BUNDLE_AUTOPILOT)
