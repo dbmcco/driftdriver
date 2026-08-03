@@ -1,0 +1,243 @@
+[
+ {
+  "id": "audit-samantha-heartbeat",
+  "title": "Audit Samantha heartbeat and define the shared liveness+signal contract",
+  "after": [],
+  "type": "code",
+  "risk": "medium",
+  "description": "```wg-contract\nschema = 1\nmode = \"core\"\nobjective = \"Audit Samantha heartbeat and define the shared liveness+signal contract\"\nnon_goals = [\"implementing the schema or endpoint\", \"changing legacy POST /heartbeat or /heartbeat/check\", \"adding domain scanners\"]\ntouch = [\"paia-agents/docs/agent-heartbeat-contract.md\"]\nacceptance = [\"AgentHeartbeat schema fields enumerated\", \"migration approach for Samantha GET endpoint decided\", \"zero-cloud-call signal-provider contract defined\", \"per-agent domain_signals keys proposed\", \"sub-50ms no-cloud guarantee recorded\"]\nmax_files = 2\nmax_loc = 120\n```\nRead-only audit that produces the contract the rest of the graph consumes. Examine samantha/src/samantha/api/routes.py (the three legacy /api/agent/heartbeat* endpoints returning HeartbeatDecision), samantha/src/samantha/heartbeat.py, paia-agent-runtime/src/paia_agent_runtime (router/app patterns), and paia-contracts/src/paia_contracts (where cross-agent schemas live, e.g. agent_state.py, identity.py). Decide and document in paia-agents/docs/agent-heartbeat-contract.md: (1) the canonical AgentHeartbeat Pydantic schema fields; (2) that GET /api/agent/heartbeat is repurposed to AgentHeartbeat while the legacy POST /heartbeat and GET /heartbeat/check proactive-outreach stubs stay untouched; (3) the signal-provider contract (sync, local-only, no cloud calls, sub-50ms); (4) proposed domain_signals keys per agent from each agent's local modules; (5) the explicit no-outbound-network guarantee that ties this to the North Star. No code changes beyond the doc.",
+  "max_iterations": 0,
+  "verify": "test -f paia-agents/docs/agent-heartbeat-contract.md && grep -q 'AgentHeartbeat' paia-agents/docs/agent-heartbeat-contract.md && grep -qi 'no outbound network' paia-agents/docs/agent-heartbeat-contract.md",
+  "touch": [
+   "paia-agents/docs/agent-heartbeat-contract.md"
+  ],
+  "acceptance": [
+   "Decision doc paia-agents/docs/agent-heartbeat-contract.md exists and names the canonical schema AgentHeartbeat with fields: schema_version(int), agent_id(str), agent_role(str), status(literal ok|degraded|down), timestamp(UTC datetime, server clock only), uptime_seconds(float), version(str), domain_signals(dict[str, object]), notes(str|None).",
+   "Doc states the migration approach for Samantha: repurpose GET /api/agent/heartbeat to the new AgentHeartbeat schema; preserve the existing legacy POST /api/agent/heartbeat and GET /api/agent/heartbeat/check proactive-outreach stubs unchanged.",
+   "Doc defines the signal-provider contract: a sync (non-async), zero-cloud-call callable returning domain_signals from in-process/local state only.",
+   "Doc lists the proposed per-agent domain_signals keys for derek, ingrid, caroline, samantha drawn from each agent's local modules (e.g. derek health_monitor, ingrid crm_client/publishing_blog, caroline bd state, samantha scanner/workboard cache).",
+   "Doc records an explicit guarantee that the heartbeat path makes no outbound network/cloud calls and returns in <50ms."
+  ],
+  "model": "openai-codex:gpt-5.5",
+  "route_tier": "premium",
+  "escalation_reason": "This locks the shared contract that the runtime factory plus all four agents build on; getting it wrong forces four-way rework. Requires reading Samantha's legacy proactive-outreach semantics (HeartbeatDecision, three legacy endpoints), deciding repurpose-vs-new-path, and designing a schema that is genuinely cheap and cloud-free while still carrying real per-agent domain signal. That is design judgment cheaper tiers underperform on."
+ },
+ {
+  "id": "define-shared-heartbeat-schema",
+  "title": "Add canonical AgentHeartbeat schema to paia-contracts",
+  "after": [
+   "audit-samantha-heartbeat"
+  ],
+  "type": "code",
+  "risk": "medium",
+  "description": "```wg-contract\nschema = 1\nmode = \"core\"\nobjective = \"Add canonical AgentHeartbeat schema to paia-contracts\"\nnon_goals = [\"FastAPI router or endpoint\", \"per-agent domain scanners\", \"touching any agent repo\"]\ntouch = [\"paia-contracts/src/paia_contracts/heartbeat.py\", \"paia-contracts/src/paia_contracts/__init__.py\", \"paia-contracts/docs/agent-heartbeat-schema.md\"]\nacceptance = [\"AgentHeartbeat pydantic model with strict fields\", \"re-exported from package __init__\", \"schema doc written\", \"mypy strict + ruff clean\"]\nmax_files = 4\nmax_loc = 150\n```\nImplement the shared contract decided in the audit. Create paia-contracts/src/paia_contracts/heartbeat.py with AgentHeartbeat(BaseModel) matching the audit doc field-for-field (schema_version default 1, agent_id, agent_role, status Literal['ok','degraded','down'], timezone-aware UTC timestamp, uptime_seconds, version, domain_signals dict[str, object], optional notes). Re-export from paia_contracts/__init__.py. Write paia-contracts/docs/agent-heartbeat-schema.md documenting each field plus the invariant: the heartbeat MUST be populated from local/in-process state only with no outbound network calls. Follow existing paia_contracts module style (strict mypy, pydantic v2).",
+  "max_iterations": 0,
+  "verify": "cd paia-contracts && uv run python -c \"import paia_contracts; from paia_contracts import AgentHeartbeat; m=AgentHeartbeat(agent_id='x',agent_role='y',status='ok',timestamp='2026-01-01T00:00:00+00:00',uptime_seconds=1.0,version='0.1.0',domain_signals={}); assert m.schema_version==1\" && uv run mypy src/paia_contracts/heartbeat.py && uv run ruff check src/paia_contracts/heartbeat.py",
+  "touch": [
+   "paia-contracts/src/paia_contracts/heartbeat.py",
+   "paia-contracts/src/paia_contracts/__init__.py",
+   "paia-contracts/docs/agent-heartbeat-schema.md"
+  ],
+  "acceptance": [
+   "paia_contracts.heartbeat defines AgentHeartbeat(BaseModel) with the fields enumerated in the audit doc and strict typing (status is a Literal, timestamp is timezone-aware UTC datetime, domain_signals is dict[str, object]).",
+   "AgentHeartbeat is re-exported from paia_contracts/__init__.py.",
+   "A JSON schema doc is generated/documented in paia-contracts/docs/agent-heartbeat-schema.md with field table and the no-cloud-call invariant.",
+   "uv run mypy (strict) and uv run ruff check are clean on the new file."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ },
+ {
+  "id": "mount-runtime-heartbeat-factory",
+  "title": "Add shared heartbeat router factory to paia-agent-runtime",
+  "after": [
+   "define-shared-heartbeat-schema"
+  ],
+  "type": "code",
+  "risk": "medium",
+  "description": "```wg-contract\nschema = 1\nmode = \"core\"\nobjective = \"Add shared heartbeat router factory to paia-agent-runtime\"\nnon_goals = [\"per-agent domain scanner logic\", \"wiring any specific agent\", \"changing legacy samantha endpoints\"]\ntouch = [\"paia-agent-runtime/src/paia_agent_runtime/heartbeat.py\", \"paia-agent-runtime/src/paia_agent_runtime/__init__.py\", \"paia-agent-runtime/tests/test_heartbeat_factory.py\"]\nacceptance = [\"mount_heartbeat_router factory builds GET /api/agent/heartbeat returning AgentHeartbeat\", \"signal_provider is sync and is the only domain data source\", \"TestClient asserts schema conformance + 200\", \"mypy strict + ruff clean\"]\nmax_files = 4\nmax_loc = 250\n```\nBuild the shared HTTP machinery in paia-agent-runtime so all four agents consume one implementation (no copy-paste). Create paia_agent_runtime/heartbeat.py with mount_heartbeat_router(agent_id: str, agent_role: str, version: str, signal_provider: Callable[[], dict[str, object]]) -> APIRouter (prefix '/api/agent'). The GET /heartbeat handler records a process start time for uptime, reads the server clock for timestamp, calls signal_provider() for domain_signals, and returns AgentHeartbeat. Import AgentHeartbeat from paia_contracts. Add a contract test using starlette TestClient that mounts the router, hits GET /api/agent/heartbeat, and validates the response against AgentHeartbeat plus confirms signal_provider output flows through. Re-export mount_heartbeat_router from the package __init__. If the contract test fails against the schema, fix and retest (max 3).",
+  "pattern": "contract-test",
+  "max_iterations": 3,
+  "verify": "cd paia-agent-runtime && uv run pytest tests/test_heartbeat_factory.py -q && uv run mypy src/paia_agent_runtime/heartbeat.py && uv run ruff check src/paia_agent_runtime/heartbeat.py",
+  "touch": [
+   "paia-agent-runtime/src/paia_agent_runtime/heartbeat.py",
+   "paia-agent-runtime/src/paia_agent_runtime/__init__.py",
+   "paia-agent-runtime/tests/test_heartbeat_factory.py"
+  ],
+  "acceptance": [
+   "paia_agent_runtime.heartbeat exposes mount_heartbeat_router(agent_id, agent_role, version, signal_provider) returning a fastapi.APIRouter with prefix /api/agent.",
+   "signal_provider is a sync callable () -> dict[str, object]; the GET /heartbeat handler builds and returns an AgentHeartbeat using only the server clock, uptime, and signal_provider output \u2014 no httpx/cloud calls.",
+   "GET /heartbeat returns 200 and a body validating against AgentHeartbeat; OpenAPI response_model is AgentHeartbeat.",
+   "test_heartbeat_factory.py mounts the router on a FastAPI app via TestClient and asserts schema conformance, status_code 200, and that the signal_provider is the only data source (no outbound calls).",
+   "uv run mypy (strict) and uv run ruff check clean."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ },
+ {
+  "id": "northstar-checkpoint-contract-gate",
+  "title": "NorthStar alignment gate on the shared heartbeat contract",
+  "after": [
+   "mount-runtime-heartbeat-factory"
+  ],
+  "type": "northstar-checkpoint",
+  "risk": "low",
+  "description": "Phase-boundary gate before fanning out to four agents. Run the NorthStarDrift v2 alignment check scoped to the completed contract work (audit doc + AgentHeartbeat schema + runtime factory). Verify the design still serves the North Star \u2014 'Agents expose cheap liveness and domain signal without cloud calls' \u2014 and that the no-cloud-call invariant is enforceable. Record an explicit go/no-go for the parallel wiring fan-out. If drifting, surface the specific drift and a corrective plan before any agent wiring begins.",
+  "max_iterations": 0,
+  "verify": "NorthStarDrift v2 alignment check scoped to {audit-samantha-heartbeat, define-shared-heartbeat-schema, mount-runtime-heartbeat-factory}; outcome recorded in task log",
+  "acceptance": [
+   "NorthStarDrift v2 alignment check scoped to {audit, schema, factory} returns aligned (or drifting-with-acceptable-plan); not lost.",
+   "Confirmed in writing: the AgentHeartbeat path satisfies the North Star (cheap liveness + domain signal) and carries an explicit no-outbound-cloud-call guarantee before four agents build on it.",
+   "Explicit go/no-go decision recorded in the task log for the parallel fan-out."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ },
+ {
+  "id": "wire-samantha-heartbeat",
+  "title": "Wire Samantha to the shared heartbeat factory (canonical migration)",
+  "after": [
+   "northstar-checkpoint-contract-gate"
+  ],
+  "type": "code",
+  "risk": "medium",
+  "description": "```wg-contract\nschema = 1\nmode = \"core\"\nobjective = \"Wire Samantha to the shared heartbeat factory (canonical migration)\"\nnon_goals = [\"removing legacy POST /heartbeat or /heartbeat/check\", \"adding cloud calls to the signal provider\", \"changing other agents\"]\ntouch = [\"paia-agents/samantha/src/samantha/api/routes.py\", \"paia-agents/samantha/src/samantha/heartbeat.py\", \"paia-agents/samantha/tests/test_heartbeat.py\"]\nacceptance = [\"GET /api/agent/heartbeat returns AgentHeartbeat via shared factory\", \"domain_signals populated from local samantha state\", \"legacy POST /heartbeat and /heartbeat/check unchanged\", \"contract test green\", \"mypy strict + ruff clean\"]\nmax_files = 4\nmax_loc = 200\n```\nCanonical wiring that proves the shared factory end-to-end. In samantha/src/samantha/heartbeat.py add a sync samantha_signal_provider() reading local/in-process state only (e.g. recent scanner/workboard cache counts, pending clarifications) and returning a domain_signals dict matching the audit doc's proposed samantha keys. In samantha/src/samantha/api/routes.py (or app.py) mount the shared mount_heartbeat_router('samantha', role, __version__, samantha_signal_provider). Leave the existing legacy POST /heartbeat and GET /heartbeat/check HeartbeatDecision stubs exactly as-is. Add tests/test_heartbeat.py using TestClient against create_app(): assert GET /api/agent/heartbeat validates as AgentHeartbeat, agent_id=='samantha', domain_signals non-empty, latency <50ms, and assert the legacy POST /heartbeat and GET /heartbeat/check still return HeartbeatDecision. Fix and retest on contract drift (max 2).",
+  "pattern": "contract-test",
+  "max_iterations": 2,
+  "verify": "cd paia-agents/samantha && uv run pytest tests/test_heartbeat.py -q && uv run ruff check src && uv run mypy src",
+  "touch": [
+   "paia-agents/samantha/src/samantha/api/routes.py",
+   "paia-agents/samantha/src/samantha/heartbeat.py",
+   "paia-agents/samantha/tests/test_heartbeat.py"
+  ],
+  "acceptance": [
+   "Samantha app mounts the shared mount_heartbeat_router so GET /api/agent/heartbeat returns an AgentHeartbeat with agent_id='samantha' and a non-empty domain_signals populated by a local-only signal_provider (e.g. scanner/workboard cache state).",
+   "Legacy POST /api/agent/heartbeat and GET /api/agent/heartbeat/check proactive-outreach stubs remain unchanged and still return HeartbeatDecision.",
+   "test_heartbeat.py asserts GET /heartbeat validates against AgentHeartbeat, agent_id is correct, domain_signals is non-empty, and response time is <50ms with no outbound calls.",
+   "uv run mypy (strict) and uv run ruff check clean for samantha."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ },
+ {
+  "id": "wire-derek-heartbeat",
+  "title": "Wire Derek to the shared heartbeat factory",
+  "after": [
+   "northstar-checkpoint-contract-gate"
+  ],
+  "type": "code",
+  "risk": "low",
+  "description": "```wg-contract\nschema = 1\nmode = \"core\"\nobjective = \"Wire Derek to the shared heartbeat factory\"\nnon_goals = [\"changing samantha/ingrid/caroline\", \"adding cloud calls\", \"altering unrelated derek endpoints\"]\ntouch = [\"paia-agents/derek/src/derek/api/routes.py\", \"paia-agents/derek/src/derek/heartbeat.py\", \"paia-agents/derek/tests/test_heartbeat.py\"]\nacceptance = [\"GET /api/agent/heartbeat returns AgentHeartbeat via shared factory\", \"domain_signals from local derek state only\", \"contract test green\", \"mypy strict + ruff clean\"]\nmax_files = 4\nmax_loc = 150\n```\nFollow the canonical pattern proven by wire-samantha-heartbeat. In derek/src/derek/heartbeat.py add a sync derek_signal_provider() reading local/in-process state only (e.g. health_monitor snapshot, local work-queue counts) and returning the audit doc's proposed derek domain_signals keys. In derek/src/derek/api/routes.py (or app.py) mount mount_heartbeat_router('derek', role, __version__, derek_signal_provider). Add tests/test_heartbeat.py via TestClient against create_app() asserting AgentHeartbeat conformance, agent_id=='derek', non-empty domain_signals, <50ms, no outbound calls. Fix and retest on contract drift (max 2).",
+  "pattern": "contract-test",
+  "max_iterations": 2,
+  "verify": "cd paia-agents/derek && uv run pytest tests/test_heartbeat.py -q && uv run ruff check src && uv run mypy src",
+  "touch": [
+   "paia-agents/derek/src/derek/api/routes.py",
+   "paia-agents/derek/src/derek/heartbeat.py",
+   "paia-agents/derek/tests/test_heartbeat.py"
+  ],
+  "acceptance": [
+   "Derek app mounts mount_heartbeat_router so GET /api/agent/heartbeat returns AgentHeartbeat with agent_id='derek' and domain_signals from a local-only derek_signal_provider (e.g. health_monitor/work-queue snapshot from local state, no API calls).",
+   "test_heartbeat.py asserts schema conformance, correct agent_id, non-empty domain_signals, <50ms, no outbound calls.",
+   "uv run mypy (strict) and uv run ruff check clean for derek."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ },
+ {
+  "id": "wire-ingrid-heartbeat",
+  "title": "Wire Ingrid to the shared heartbeat factory",
+  "after": [
+   "northstar-checkpoint-contract-gate"
+  ],
+  "type": "code",
+  "risk": "low",
+  "description": "```wg-contract\nschema = 1\nmode = \"core\"\nobjective = \"Wire Ingrid to the shared heartbeat factory\"\nnon_goals = [\"changing samantha/derek/caroline\", \"adding cloud calls\", \"altering unrelated ingrid endpoints\"]\ntouch = [\"paia-agents/ingrid/src/ingrid/api/routes.py\", \"paia-agents/ingrid/src/ingrid/heartbeat.py\", \"paia-agents/ingrid/tests/test_heartbeat.py\"]\nacceptance = [\"GET /api/agent/heartbeat returns AgentHeartbeat via shared factory\", \"domain_signals from local ingrid state only\", \"contract test green\", \"mypy strict + ruff clean\"]\nmax_files = 4\nmax_loc = 150\n```\nFollow the canonical pattern proven by wire-samantha-heartbeat. In ingrid/src/ingrid/heartbeat.py add a sync ingrid_signal_provider() reading local/in-process state only (e.g. publishing_blog queue, crm local cache counts) returning the audit doc's proposed ingrid domain_signals keys. In ingrid/src/ingrid/api/routes.py (or app.py) mount mount_heartbeat_router('ingrid', role, __version__, ingrid_signal_provider). Add tests/test_heartbeat.py via TestClient against create_app() asserting AgentHeartbeat conformance, agent_id=='ingrid', non-empty domain_signals, <50ms, no outbound calls. Fix and retest on contract drift (max 2).",
+  "pattern": "contract-test",
+  "max_iterations": 2,
+  "verify": "cd paia-agents/ingrid && uv run pytest tests/test_heartbeat.py -q && uv run ruff check src && uv run mypy src",
+  "touch": [
+   "paia-agents/ingrid/src/ingrid/api/routes.py",
+   "paia-agents/ingrid/src/ingrid/heartbeat.py",
+   "paia-agents/ingrid/tests/test_heartbeat.py"
+  ],
+  "acceptance": [
+   "Ingrid app mounts mount_heartbeat_router so GET /api/agent/heartbeat returns AgentHeartbeat with agent_id='ingrid' and domain_signals from a local-only ingrid_signal_provider (e.g. publishing_blog/crm local cache state, no API calls).",
+   "test_heartbeat.py asserts schema conformance, correct agent_id, non-empty domain_signals, <50ms, no outbound calls.",
+   "uv run mypy (strict) and uv run ruff check clean for ingrid."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ },
+ {
+  "id": "wire-caroline-heartbeat",
+  "title": "Wire Caroline to the shared heartbeat factory",
+  "after": [
+   "northstar-checkpoint-contract-gate"
+  ],
+  "type": "code",
+  "risk": "low",
+  "description": "```wg-contract\nschema = 1\nmode = \"core\"\nobjective = \"Wire Caroline to the shared heartbeat factory\"\nnon_goals = [\"changing samantha/derek/ingrid\", \"adding cloud calls\", \"altering unrelated caroline endpoints\"]\ntouch = [\"paia-agents/caroline/src/caroline/api/routes.py\", \"paia-agents/caroline/src/caroline/heartbeat.py\", \"paia-agents/caroline/tests/test_heartbeat.py\"]\nacceptance = [\"GET /api/agent/heartbeat returns AgentHeartbeat via shared factory\", \"domain_signals from local caroline state only\", \"contract test green\", \"mypy strict + ruff clean\"]\nmax_files = 4\nmax_loc = 150\n```\nFollow the canonical pattern proven by wire-samantha-heartbeat. In caroline/src/caroline/heartbeat.py add a sync caroline_signal_provider() reading local/in-process BD/pipeline state only, returning the audit doc's proposed caroline domain_signals keys. In caroline/src/caroline/api/routes.py (or app.py) mount mount_heartbeat_router('caroline', role, __version__, caroline_signal_provider). Add tests/test_heartbeat.py via TestClient against create_app() asserting AgentHeartbeat conformance, agent_id=='caroline', non-empty domain_signals, <50ms, no outbound calls. Fix and retest on contract drift (max 2).",
+  "pattern": "contract-test",
+  "max_iterations": 2,
+  "verify": "cd paia-agents/caroline && uv run pytest tests/test_heartbeat.py -q && uv run ruff check src && uv run mypy src",
+  "touch": [
+   "paia-agents/caroline/src/caroline/api/routes.py",
+   "paia-agents/caroline/src/caroline/heartbeat.py",
+   "paia-agents/caroline/tests/test_heartbeat.py"
+  ],
+  "acceptance": [
+   "Caroline app mounts mount_heartbeat_router so GET /api/agent/heartbeat returns AgentHeartbeat with agent_id='caroline' and domain_signals from a local-only caroline_signal_provider (e.g. BD/pipeline local state, no API calls).",
+   "test_heartbeat.py asserts schema conformance, correct agent_id, non-empty domain_signals, <50ms, no outbound calls.",
+   "uv run mypy (strict) and uv run ruff check clean for caroline."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ },
+ {
+  "id": "smoke-test-all-four-heartbeats",
+  "title": "Cross-agent smoke test of all four heartbeat endpoints",
+  "after": [
+   "wire-samantha-heartbeat",
+   "wire-derek-heartbeat",
+   "wire-ingrid-heartbeat",
+   "wire-caroline-heartbeat"
+  ],
+  "type": "quality-gate",
+  "risk": "medium",
+  "description": "End-to-end cross-agent verification. Add paia-agents/samantha/tests/heartbeat_smoke_test.py (samantha's env already dev-deps ingrid, caroline, derek, so it can import all four create_app callables). For each of samantha, derek, ingrid, caroline: build the FastAPI app, hit GET /api/agent/heartbeat with TestClient, assert 200, validate the body against paia_contracts.AgentHeartbeat, assert agent_id matches and domain_signals is non-empty. Add a no-outbound-call guard (e.g. monkeypatch httpx clients / assert no network socket) and a <50ms latency assertion, proving the North Star's 'cheap liveness without cloud calls'. If any agent fails schema conformance, agent_id, signal presence, or the no-cloud/latency guard, diagnose and fix in the offending agent, then retest \u2014 max 3 iterations. Prefer fixing the agent over weakening the test.",
+  "pattern": "e2e-breakfix",
+  "max_iterations": 3,
+  "verify": "cd paia-agents/samantha && uv run pytest tests/heartbeat_smoke_test.py -q",
+  "touch": [
+   "paia-agents/samantha/tests/heartbeat_smoke_test.py"
+  ],
+  "acceptance": [
+   "heartbeat_smoke_test.py spins up all four apps via their create_app() + TestClient and asserts GET /api/agent/heartbeat on each returns 200 validating against AgentHeartbeat.",
+   "Asserts agent_id is samantha/derek/ingrid/caroline respectively and each domain_signals is non-empty.",
+   "Asserts every response completes in <50ms and makes no outbound network call (assert via mocked/patched httpx or a no-network guard).",
+   "Smoke test is green; any failures diagnosed and fixed within max_iterations, then retest."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ },
+ {
+  "id": "northstar-checkpoint-final",
+  "title": "Final NorthStar alignment check across the heartbeat graph",
+  "after": [
+   "smoke-test-all-four-heartbeats"
+  ],
+  "type": "northstar-checkpoint",
+  "risk": "low",
+  "description": "Final phase-boundary gate. Run the NorthStarDrift v2 alignment check scoped to the completed graph (shared schema + runtime factory + four agent wirings + cross-agent smoke test). Verify the delivered state meets the North Star \u2014 'Agents expose cheap liveness and domain signal without cloud calls' \u2014 across all four agents, and that the no-cloud-call invariant is genuinely enforced by the smoke test. Log any residual drift as an explicit follow-up rather than absorbing it. Record the final alignment verdict in the task log.",
+  "max_iterations": 0,
+  "verify": "NorthStarDrift v2 alignment check scoped to the full heartbeat graph; outcome recorded in task log",
+  "acceptance": [
+   "NorthStarDrift v2 alignment check scoped to the full graph returns aligned.",
+   "Confirmed in writing: all four agents (samantha, derek, ingrid, caroline) expose GET /api/agent/heartbeat returning the shared AgentHeartbeat, populated from local-only state, completing in <50ms with no cloud calls \u2014 i.e. the North Star is met.",
+   "Any residual drift (e.g. a signal key that still risks a cloud call) is logged as a follow-up, not silently absorbed."
+  ],
+  "model": "kimi-coding:kimi-for-coding",
+  "route_tier": "standard"
+ }
+]
