@@ -224,6 +224,8 @@ class PolicyBundle:
     task_count_hint: str | None = None
     patterns: dict[str, dict[str, str]] = field(default_factory=dict)
     extra_instructions: str = ""
+    granularity_bar: bool = False
+    request_routes: bool = False
 
 
 BUNDLE_DECOMPOSE_CLI = PolicyBundle(
@@ -231,6 +233,7 @@ BUNDLE_DECOMPOSE_CLI = PolicyBundle(
 )
 BUNDLE_QUALITY_SPEC = PolicyBundle(
     name="quality-spec", mode="emit-json", patterns=BUILTIN_PATTERNS,
+    granularity_bar=True, request_routes=True,
 )
 
 
@@ -245,6 +248,8 @@ def build_decompose_prompt(
     project_dir: Path | None = None,
     context: str = "",
     bundle: PolicyBundle,
+    spec_content: str | None = None,
+    north_star: str | None = None,
 ) -> str:
     """Build a decomposition prompt according to the policy bundle's mode.
 
@@ -285,13 +290,28 @@ def build_decompose_prompt(
             "You are a decomposition planner. Given a high-level goal, produce a\n"
             "dependency-ordered task graph as structured JSON.\n"
         )
-        sections.append(f"## Goal\n{goal}\n")
+        # Goal section: omit entirely when goal is empty and a spec is provided.
+        if goal or not spec_content:
+            sections.append(f"## Goal\n{goal}\n")
+        if north_star:
+            sections.append(f"## North Star\n{north_star}\n")
+        if spec_content:
+            sections.append(f"## Specification\n{spec_content}\n")
         if project_dir is not None:
             sections.append(f"## Project Directory\n{project_dir}\n")
         if context:
             sections.append(f"## Context\n{context}\n")
         if bundle.task_count_hint:
             sections.append(f"## Task Count\nProduce {bundle.task_count_hint} tasks.\n")
+        if bundle.granularity_bar:
+            sections.append(
+                "## Task Granularity\n"
+                "Keep tasks small — each completable in one focused session, "
+                "with one clear responsibility per task. Add dependency edges "
+                "where sequencing genuinely matters; do not over-wire. "
+                "A task that needs another's output depends on it; "
+                "everything else stays parallel.\n"
+            )
         if bundle.patterns:
             repertoire_text = "\n"
             for pname, pattern in bundle.patterns.items():
@@ -305,11 +325,40 @@ def build_decompose_prompt(
                 "which to apply and where.\n"
                 + repertoire_text
             )
-        sections.append(
-            "## Output Format\n"
-            "Respond with ONLY a JSON array of node objects using these field names:\n"
-            "id, title, after, type, risk, description, pattern, max_iterations, "
-            "touch, acceptance, verify.\n"
+            sections.append(
+                "## Planning Decisions\n"
+                "For each task, decide explicitly: what type of work is it "
+                "(code, UI, data, API, infrastructure, config)? What is its risk "
+                "profile (low, medium, high)? Which quality patterns should follow "
+                "it, if any? Where should NorthStar checkpoints go (phase "
+                "boundaries, after significant decisions)? Use break/fix loops "
+                "where appropriate. Don't over-test trivial changes — think about "
+                "risk.\n"
+            )
+        if bundle.request_routes:
+            sections.append(
+                "## Model Routing\n"
+                "Every node MUST include route assignments:\n"
+                "- route_tier: one of `fast`, `standard`, `premium`\n"
+                "- model: a concrete provider:model pattern\n\n"
+                "| Tier | Cost | Eligible models |\n"
+                "|------|------|-----------------|\n"
+                "| **Fast** (simple leaf tasks) | Free, local | `ollama:` prefixed models |\n"
+                "| **Standard** (normal work) | Lower cost | `zai:glm-5.2`, `kimi-coding:kimi-for-coding` |\n"
+                "| **Premium** (complex / critical) | Higher cost | `kimi-coding:k3`, `openai-codex:gpt-5.5` |\n\n"
+                "Assign the cheapest tier that can do the job well. Small "
+                "strongly-verified leaf tasks default to fast. Premium REQUIRES a "
+                "non-empty escalation_reason explaining why cheaper tiers are "
+                "insufficient. Never assign `anthropic/*` models (prohibited for "
+                "workgraph-dispatched tasks). Lunaroute models only with explicit "
+                "operator opt-in.\n"
+            )
+        # Build the output format field list
+        output_fields = (
+            "id, title, after, type, risk, description, pattern, "
+            "max_iterations, touch, acceptance, verify"
+        )
+        field_docs = (
             "- id: kebab-case slug\n"
             "- title: human-readable title\n"
             "- after: list of dependency task ids\n"
@@ -320,6 +369,19 @@ def build_decompose_prompt(
             "- touch: list of file paths\n"
             "- acceptance: list of acceptance criteria\n"
             "- verify: command to verify\n"
+        )
+        if bundle.request_routes:
+            output_fields += ", model, route_tier, escalation_reason"
+            field_docs += (
+                "- model: concrete provider:model pattern (e.g. `zai:glm-5.2`)\n"
+                "- route_tier: fast | standard | premium\n"
+                "- escalation_reason: required when route_tier is premium\n"
+            )
+        sections.append(
+            "## Output Format\n"
+            "Respond with ONLY a JSON array of node objects using these field names:\n"
+            f"{output_fields}.\n"
+            + field_docs
         )
         sections.append(
             "## CRITICAL: wg-contract blocks\n"
@@ -516,6 +578,7 @@ def materialize_plan(
     escalation_reasons: dict[str, str] | None = None,
     policy: ModelRoutePolicy = DEFAULT_MODEL_ROUTE_POLICY,
     runner: Callable[..., Any] | None = None,
+    post_commands: list[list[str]] | None = None,
 ) -> int:
     """Write PlannedNode objects to the workgraph via ``wg add``.
 
@@ -616,6 +679,27 @@ def materialize_plan(
             )
         except Exception as e:
             print(f"warning: wg add failed for {node.id}: {e}", file=sys.stderr)
+
+    # Post-materialize commands (e.g. coredrift ensure-contracts).
+    # Failures are logged but do not affect the added count.
+    if post_commands:
+        for cmd in post_commands:
+            try:
+                result = runner(
+                    cmd,
+                    cwd=str(repo_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode != 0:
+                    stderr = (result.stderr or "").strip()
+                    print(
+                        f"warning: post-command failed ({' '.join(cmd)}): {stderr}",
+                        file=sys.stderr,
+                    )
+            except Exception as e:
+                print(f"warning: post-command error ({' '.join(cmd)}): {e}", file=sys.stderr)
 
     return added_count
 

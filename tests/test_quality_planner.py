@@ -254,3 +254,43 @@ class ParseOutputTests(unittest.TestCase):
         result = _parse_plan_output(raw)
         self.assertEqual(result.tasks[0].pattern, "e2e-breakfix")
         self.assertEqual(result.tasks[0].max_iterations, 5)
+
+
+class PromptSectionTests(unittest.TestCase):
+    def test_prompt_contains_all_required_sections(self) -> None:
+        prompt = build_planner_prompt(
+            spec_content="Build X",
+            north_star="The North Star",
+            repertoire=BUILTIN_PATTERNS,
+        )
+        for section in [
+            "## North Star",
+            "## Specification",
+            "## Quality Pattern Repertoire",
+            "## Planning Decisions",
+            "## Model Routing",
+            "wg-contract",
+        ]:
+            self.assertIn(section, prompt, f"Missing section: {section}")
+
+
+class PlanFromSpecPostCommandsTests(unittest.TestCase):
+    def test_plan_from_spec_passes_coredrift_post_command(self) -> None:
+        from unittest import mock
+
+        with TemporaryDirectory() as td:
+            spec = Path(td) / "spec.md"
+            spec.write_text("# Feature\nDetails.", encoding="utf-8")
+            with mock.patch(
+                "driftdriver.quality_planner._call_llm", return_value="[]",
+            ), mock.patch(
+                "driftdriver.quality_planner.materialize_plan", return_value=0,
+            ) as mock_mat:
+                plan_from_spec(spec_path=spec, repo_path=Path(td))
+                self.assertTrue(mock_mat.called)
+                kwargs = mock_mat.call_args.kwargs
+                post_cmds = kwargs.get("post_commands")
+                self.assertIsNotNone(post_cmds)
+                self.assertTrue(any(
+                    "ensure-contracts" in " ".join(cmd) for cmd in post_cmds
+                ))

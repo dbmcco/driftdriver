@@ -648,5 +648,176 @@ class AgencyFenceTests(unittest.TestCase):
         self.assertEqual(result[0].description, "Do work")
 
 
+class PromptSpecAndNorthStarTests(unittest.TestCase):
+    def test_north_star_section_rendered_when_given(self) -> None:
+        prompt = build_decompose_prompt(
+            "Build X", north_star="Be the best", bundle=BUNDLE_DECOMPOSE_CLI,
+        )
+        self.assertIn("## North Star", prompt)
+        self.assertIn("Be the best", prompt)
+
+    def test_north_star_omitted_when_empty(self) -> None:
+        prompt = build_decompose_prompt("Build X", bundle=BUNDLE_DECOMPOSE_CLI)
+        self.assertNotIn("## North Star", prompt)
+
+    def test_spec_section_rendered_when_given(self) -> None:
+        prompt = build_decompose_prompt(
+            "Build X", spec_content="# The spec", bundle=BUNDLE_DECOMPOSE_CLI,
+        )
+        self.assertIn("## Specification", prompt)
+        self.assertIn("# The spec", prompt)
+
+    def test_spec_omitted_when_empty(self) -> None:
+        prompt = build_decompose_prompt("Build X", bundle=BUNDLE_DECOMPOSE_CLI)
+        self.assertNotIn("## Specification", prompt)
+
+    def test_goal_omitted_when_empty_with_spec(self) -> None:
+        prompt = build_decompose_prompt(
+            "", spec_content="# The spec", bundle=BUNDLE_DECOMPOSE_CLI,
+        )
+        self.assertNotIn("## Goal", prompt)
+        self.assertIn("## Specification", prompt)
+
+    def test_goal_present_when_empty_without_spec(self) -> None:
+        prompt = build_decompose_prompt("", bundle=BUNDLE_DECOMPOSE_CLI)
+        self.assertIn("## Goal", prompt)
+
+    def test_north_star_before_specification(self) -> None:
+        prompt = build_decompose_prompt(
+            "Build X", north_star="NS", spec_content="SPEC",
+            bundle=BUNDLE_DECOMPOSE_CLI,
+        )
+        ns_idx = prompt.index("## North Star")
+        spec_idx = prompt.index("## Specification")
+        self.assertLess(ns_idx, spec_idx)
+
+    def test_north_star_after_goal(self) -> None:
+        prompt = build_decompose_prompt(
+            "Build X", north_star="NS", bundle=BUNDLE_DECOMPOSE_CLI,
+        )
+        goal_idx = prompt.index("## Goal")
+        ns_idx = prompt.index("## North Star")
+        self.assertLess(goal_idx, ns_idx)
+
+
+class GranularityBarTests(unittest.TestCase):
+    def test_present_when_flag_on(self) -> None:
+        bundle = PolicyBundle(name="t", mode="emit-json", granularity_bar=True)
+        prompt = build_decompose_prompt("Build X", bundle=bundle)
+        self.assertIn("## Task Granularity", prompt)
+        self.assertIn("one focused session", prompt)
+
+    def test_absent_when_flag_off(self) -> None:
+        bundle = PolicyBundle(name="t", mode="emit-json")
+        prompt = build_decompose_prompt("Build X", bundle=bundle)
+        self.assertNotIn("## Task Granularity", prompt)
+
+    def test_quality_spec_bundle_has_granularity_bar(self) -> None:
+        self.assertTrue(BUNDLE_QUALITY_SPEC.granularity_bar)
+
+
+class PlanningDecisionsTests(unittest.TestCase):
+    def test_present_with_patterns(self) -> None:
+        prompt = build_decompose_prompt("Build X", bundle=BUNDLE_QUALITY_SPEC)
+        self.assertIn("## Planning Decisions", prompt)
+
+    def test_absent_without_patterns(self) -> None:
+        prompt = build_decompose_prompt("Build X", bundle=BUNDLE_DECOMPOSE_CLI)
+        self.assertNotIn("## Planning Decisions", prompt)
+
+
+class ModelRoutingSectionTests(unittest.TestCase):
+    def test_present_when_request_routes(self) -> None:
+        bundle = PolicyBundle(name="t", mode="emit-json", request_routes=True)
+        prompt = build_decompose_prompt("Build X", bundle=bundle)
+        self.assertIn("## Model Routing", prompt)
+
+    def test_absent_when_request_routes_false(self) -> None:
+        bundle = PolicyBundle(name="t", mode="emit-json")
+        prompt = build_decompose_prompt("Build X", bundle=bundle)
+        self.assertNotIn("## Model Routing", prompt)
+
+    def test_contains_tier_names(self) -> None:
+        bundle = PolicyBundle(name="t", mode="emit-json", request_routes=True)
+        prompt = build_decompose_prompt("Build X", bundle=bundle)
+        self.assertIn("Fast", prompt)
+        self.assertIn("Standard", prompt)
+        self.assertIn("Premium", prompt)
+
+    def test_contains_anthropic_prohibition(self) -> None:
+        bundle = PolicyBundle(name="t", mode="emit-json", request_routes=True)
+        prompt = build_decompose_prompt("Build X", bundle=bundle)
+        self.assertIn("anthropic", prompt.lower())
+
+    def test_contains_escalation_reason_requirement(self) -> None:
+        bundle = PolicyBundle(name="t", mode="emit-json", request_routes=True)
+        prompt = build_decompose_prompt("Build X", bundle=bundle)
+        self.assertIn("escalation_reason", prompt)
+
+    def test_output_format_includes_route_fields_when_request_routes(self) -> None:
+        bundle = PolicyBundle(name="t", mode="emit-json", request_routes=True)
+        prompt = build_decompose_prompt("Build X", bundle=bundle)
+        self.assertIn("route_tier", prompt)
+        self.assertIn("escalation_reason", prompt)
+
+    def test_output_format_omits_route_fields_when_not_request_routes(self) -> None:
+        prompt = build_decompose_prompt("Build X", bundle=BUNDLE_DECOMPOSE_CLI)
+        self.assertNotIn("route_tier", prompt)
+        self.assertNotIn("escalation_reason", prompt)
+
+    def test_quality_spec_bundle_has_request_routes(self) -> None:
+        self.assertTrue(BUNDLE_QUALITY_SPEC.request_routes)
+
+
+class PostCommandsTests(unittest.TestCase):
+    def test_post_commands_run_after_add_loop(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        nodes = [PlannedNode(id="a", title="A")]
+        count = materialize_plan(
+            nodes, Path("/repo"),
+            post_commands=[["./.workgraph/coredrift", "ensure-contracts", "--apply"]],
+            runner=runner,
+        )
+        self.assertEqual(count, 1)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("ensure-contracts", calls[1])
+
+    def test_post_command_failure_does_not_affect_count(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            if cmd[0] == "wg":
+                return _ok()
+            return _ok(returncode=1, stderr="ensure-contracts failed")
+
+        nodes = [PlannedNode(id="a", title="A")]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            count = materialize_plan(
+                nodes, Path("/repo"),
+                post_commands=[["./.workgraph/coredrift", "ensure-contracts", "--apply"]],
+                runner=runner,
+            )
+        self.assertEqual(count, 1)
+        self.assertIn("ensure-contracts failed", err.getvalue())
+
+    def test_no_post_commands_no_extra_calls(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        nodes = [PlannedNode(id="a", title="A")]
+        materialize_plan(nodes, Path("/repo"), runner=runner)
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

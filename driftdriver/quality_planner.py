@@ -11,6 +11,8 @@ from typing import Any
 from driftdriver.planner_core import (
     BUILTIN_PATTERNS,
     PlannedNode,
+    PolicyBundle,
+    build_decompose_prompt as _core_build_decompose_prompt,
     call_llm as _core_call_llm,
     materialize_plan,
     parse_plan_output,
@@ -48,75 +50,26 @@ def build_planner_prompt(
     repertoire: dict[str, dict[str, str]],
     drift_policy_summary: str = "",
 ) -> str:
-    """Build the LLM prompt that instructs the planner to produce a quality-aware task graph."""
-    repertoire_text = ""
-    for name, pattern in repertoire.items():
-        repertoire_text += f"\n### {name}\n"
-        repertoire_text += f"- **Description:** {pattern['description']}\n"
-        repertoire_text += f"- **When to use:** {pattern['when']}\n"
-        repertoire_text += f"- **Structure:** {pattern['structure']}\n"
+    """Build the LLM prompt that instructs the planner to produce a quality-aware task graph.
 
-    return f"""You are the Speedrift Quality Planner. Your job is to take a specification and produce a workgraph task list with quality intelligence baked in.
-
-## North Star
-{north_star}
-
-## Specification
-{spec_content}
-
-{f"## Drift Policy Summary{chr(10)}{drift_policy_summary}" if drift_policy_summary else ""}
-
-## Quality Pattern Repertoire
-These are the quality patterns available. Use your judgment about which to apply and where.
-{repertoire_text}
-
-## Your Task
-Analyze the specification and produce a structured task graph as JSON. For each implementation task, decide:
-1. What type of work is it? (code, UI, data, API, infrastructure, config)
-2. What is the risk profile? (low, medium, high)
-3. Which quality patterns should follow it, if any?
-4. Where should NorthStar checkpoints go? (phase boundaries, after significant decisions)
-
-Use break/fix loops where appropriate. Don't over-test trivial changes. Think about risk.
-
-## Output Format
-Respond with ONLY a JSON object:
-```json
-{{
-  "tasks": [
-    {{
-      "id": "task-slug",
-      "title": "Human-readable title",
-      "after": ["dependency-task-id"],
-      "type": "code|quality-gate|northstar-checkpoint",
-      "risk": "low|medium|high",
-      "description": "What the agent should do",
-      "pattern": "e2e-breakfix|ux-eval|data-eval|contract-test|northstar-checkpoint (if quality-gate)",
-      "max_iterations": 3,
-      "touch": ["src/path/to/file.ts"],
-      "acceptance": ["Build passes", "Tests pass"],
-      "verify": "npm run typecheck"
-    }}
-  ]
-}}
-```
-
-## CRITICAL: wg-contract blocks
-Every code-type task description MUST begin with a wg-contract fenced block so coredrift can check it:
-````
-```wg-contract
-schema = 1
-mode = "core"
-objective = "The task title"
-non_goals = ["Things explicitly out of scope"]
-touch = ["src/file1.ts", "src/file2.ts"]
-acceptance = ["Acceptance criterion 1", "Acceptance criterion 2"]
-max_files = 15
-max_loc = 500
-```
-````
-Include the wg-contract block as the FIRST thing in the description field. Put the human-readable instructions after it.
-"""
+    Thin adapter over planner_core.build_decompose_prompt. Assembles a
+    PolicyBundle with quality patterns, granularity bar, route requests, and
+    any drift-policy summary, then delegates to the canonical builder.
+    """
+    extra = ""
+    if drift_policy_summary:
+        extra = f"## Drift Policy Summary\n{drift_policy_summary}"
+    bundle = PolicyBundle(
+        name="quality-spec",
+        mode="emit-json",
+        patterns=repertoire,
+        granularity_bar=True,
+        request_routes=True,
+        extra_instructions=extra,
+    )
+    return _core_build_decompose_prompt(
+        "", spec_content=spec_content, north_star=north_star, bundle=bundle,
+    )
 
 
 def _read_north_star(repo_path: Path) -> str:
@@ -258,5 +211,6 @@ def plan_from_spec(
         desc_builder=_quality_desc_builder,
         verify_fallback=_quality_verify_fallback,
         tag_builder=_quality_tag_builder,
+        post_commands=[["./.workgraph/coredrift", "ensure-contracts", "--apply"]],
     )
     return output
