@@ -40,6 +40,25 @@ GOALS = {
     ),
 }
 
+# Spec-shaped inputs for the live quality path (s4).
+SPECS = {
+    "g1-acceptance-gate": (
+        "# Spec: acceptance-criteria completion gate\n\n"
+        "Workgraph tasks may only be marked Done when their acceptance_criteria "
+        "evaluate true against produced artifacts. Per-repo degrade ceiling with "
+        "CLI inspection of degrade counts.",
+        "Drift gates are deterministic at the task boundary; advisory findings "
+        "must not silently accumulate.",
+    ),
+    "g2-heartbeat": (
+        "# Spec: agent heartbeat endpoints\n\n"
+        "GET /api/agent/heartbeat for samantha, derek, ingrid, caroline on the "
+        "shared paia-agent-runtime. Shared schema doc, per-agent domain event "
+        "scanning, smoke test over all four.",
+        "Agents expose cheap liveness and domain signal without cloud calls.",
+    ),
+}
+
 # S1: the original decompose.py thin prompt (pre-consolidation), verbatim.
 THIN_TEMPLATE = (
     "Decompose this goal into 3-8 concrete, dependency-ordered tasks "
@@ -48,10 +67,20 @@ THIN_TEMPLATE = (
     "Goal: {goal}\n\nContext: \n"
 )
 
+def _s4_prompt(goal_name: str) -> str:
+    from driftdriver.quality_planner import build_planner_prompt, load_repertoire
+
+    spec, north_star = SPECS[goal_name]
+    return build_planner_prompt(
+        spec_content=spec, north_star=north_star, repertoire=load_repertoire()
+    )
+
+
 SURFACES = {
-    "s1-thin": lambda goal: THIN_TEMPLATE.format(goal=goal),
-    "s2-canonical": lambda goal: build_decompose_prompt(goal, bundle=BUNDLE_DECOMPOSE_CLI),
-    "s3-patterned": lambda goal: build_decompose_prompt(goal, bundle=BUNDLE_QUALITY_SPEC),
+    "s1-thin": lambda name: THIN_TEMPLATE.format(goal=GOALS[name]),
+    "s2-canonical": lambda name: build_decompose_prompt(GOALS[name], bundle=BUNDLE_DECOMPOSE_CLI),
+    "s3-patterned": lambda name: build_decompose_prompt(GOALS[name], bundle=BUNDLE_QUALITY_SPEC),
+    "s4-live-quality": _s4_prompt,
 }
 
 RUNS_PER_CELL = 2
@@ -119,6 +148,13 @@ def metrics(raw: str) -> dict:
     m["touch_overlap_pairs"] = overlaps
     # pattern reproduction: nodes tagged with a known pattern
     m["pattern_nodes"] = sum(1 for n in parsed if n.pattern in BUILTIN_PATTERNS)
+    # route assignments: nodes carrying a model or route_tier, and premium discipline
+    m["route_coverage"] = round(
+        sum(1 for n in parsed if n.model or n.route_tier) / len(parsed), 2
+    )
+    premium = [n for n in parsed if n.route_tier == "premium"]
+    m["premium_nodes"] = len(premium)
+    m["premium_with_reason"] = sum(1 for n in premium if n.escalation_reason)
     m["ids"] = sorted(ids)
     return m
 
@@ -130,7 +166,7 @@ def jaccard(a: list, b: list) -> float:
 
 def run_cell(args):
     goal_name, surface_name, run_idx = args
-    prompt = SURFACES[surface_name](GOALS[goal_name])
+    prompt = SURFACES[surface_name](goal_name)
     raw = call_glm(prompt)
     return goal_name, surface_name, run_idx, metrics(raw), len(prompt)
 
@@ -150,22 +186,22 @@ def main() -> None:
             print(f"  [{goal_name} / {surface_name} / run{run_idx}] {status}", flush=True)
 
     print("\n=== STRUCTURAL METRICS (mean over runs) ===")
-    header = f"{'goal':<20}{'surface':<14}{'parse':<6}{'nodes':<6}{'dangle':<7}{'cycle':<6}{'flat':<5}{'verify':<7}{'wg-c':<6}{'touch':<6}{'overlap':<8}{'pat':<4}{'run-sim':<7}"
+    header = f"{'goal':<20}{'surface':<16}{'parse':<6}{'nodes':<6}{'dangle':<7}{'cycle':<6}{'flat':<5}{'verify':<7}{'wg-c':<6}{'touch':<6}{'overlap':<8}{'pat':<4}{'route':<6}{'prem':<5}{'run-sim':<7}"
     print(header)
     for g, surfaces in results.items():
         for s, runs in surfaces.items():
             ok_runs = [r for r in runs if r.get("parse_ok")]
             if not ok_runs:
-                print(f"{g:<20}{s:<14}0/2 parse failures")
+                print(f"{g:<20}{s:<16}0/2 parse failures")
                 continue
             n = len(ok_runs)
             avg = lambda k: round(sum(r[k] for r in ok_runs) / n, 2)
             sim = jaccard(runs[0].get("ids", []), runs[1].get("ids", [])) if len(runs) == 2 else "-"
             print(
-                f"{g:<20}{s:<14}{n}/{len(runs)}  {avg('nodes'):<6}{avg('dangling_edges'):<7}"
+                f"{g:<20}{s:<16}{n}/{len(runs)}  {avg('nodes'):<6}{avg('dangling_edges'):<7}"
                 f"{avg('has_cycle')!s:<6}{avg('flat_no_edges')!s:<5}{avg('verify_coverage'):<7}"
                 f"{avg('wgcontract_coverage'):<6}{avg('touch_coverage'):<6}{avg('touch_overlap_pairs'):<8}"
-                f"{avg('pattern_nodes'):<4}{sim!s:<7}"
+                f"{avg('pattern_nodes'):<4}{avg('route_coverage'):<6}{avg('premium_nodes'):<5}{sim!s:<7}"
             )
 
     out = Path("/tmp/planner_eval_results.json")

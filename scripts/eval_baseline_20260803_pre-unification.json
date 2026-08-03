@@ -1,0 +1,283 @@
+{
+  "g1-acceptance-gate": {
+    "s1-thin": [
+      {
+        "parse_ok": true,
+        "nodes": 5,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 0.0,
+        "wgcontract_coverage": 0.0,
+        "touch_coverage": 0.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "ids": [
+          "acceptance-criteria-evaluator",
+          "degrade-counts-cli",
+          "enforce-gate-on-done",
+          "per-repo-degrade-ceiling",
+          "verify-and-register-gate"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 7,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 0.0,
+        "wgcontract_coverage": 0.0,
+        "touch_coverage": 0.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "ids": [
+          "ac-degrade-cli",
+          "ac-docs-config",
+          "ac-done-gate",
+          "ac-evaluator",
+          "ac-integration-validation",
+          "ac-repo-ceiling",
+          "ac-research-design"
+        ]
+      }
+    ],
+    "s2-canonical": [
+      {
+        "parse_ok": true,
+        "nodes": 6,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.67,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 1,
+        "pattern_nodes": 0,
+        "ids": [
+          "acceptance-criteria-evaluator",
+          "acceptance-gate-drift-quality-gate",
+          "degrade-inspect-cli",
+          "enforce-acceptance-at-done",
+          "northstar-deterministic-control-checkpoint",
+          "per-repo-degrade-ledger"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 6,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 1.0,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 3,
+        "pattern_nodes": 0,
+        "ids": [
+          "acceptance-evaluator",
+          "acceptance-gate-test-suite",
+          "degrade-cli-inspect",
+          "deterministic-control-layer-checkpoint",
+          "done-gate-wiring",
+          "per-repo-degrade-ceiling"
+        ]
+      }
+    ],
+    "s3-patterned": [
+      {
+        "parse_ok": true,
+        "nodes": 6,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.67,
+        "touch_coverage": 0.83,
+        "touch_overlap_pairs": 3,
+        "pattern_nodes": 2,
+        "ids": [
+          "acceptance-e2e-breakfix",
+          "acceptance-engine",
+          "degrade-cli",
+          "done-enforcement-hook",
+          "northstar-alignment-check",
+          "per-repo-degrade-ledger"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 7,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.86,
+        "touch_coverage": 0.86,
+        "touch_overlap_pairs": 7,
+        "pattern_nodes": 2,
+        "ids": [
+          "add-degrade-ceiling-policy-and-state",
+          "add-degrade-inspect-cli",
+          "build-acceptance-criteria-evaluator",
+          "e2e-acceptance-gate-integration",
+          "enforce-acceptance-at-completion-gate",
+          "northstar-acceptance-gate-alignment",
+          "wire-repo-ceiling-into-escape-hatch"
+        ]
+      }
+    ]
+  },
+  "g2-heartbeat": {
+    "s1-thin": [
+      {
+        "parse_ok": true,
+        "nodes": 8,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 0.0,
+        "wgcontract_coverage": 0.0,
+        "touch_coverage": 0.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "ids": [
+          "audit-samantha",
+          "drift-check",
+          "heartbeat-contract",
+          "impl-caroline",
+          "impl-derek",
+          "impl-ingrid",
+          "impl-samantha",
+          "smoke-test"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 8,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 0.0,
+        "wgcontract_coverage": 0.0,
+        "touch_coverage": 0.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "ids": [
+          "audit-samantha-reference",
+          "caroline-heartbeat",
+          "derek-heartbeat",
+          "heartbeat-schema-doc",
+          "heartbeat-smoke-test",
+          "ingrid-heartbeat",
+          "runtime-heartbeat-route",
+          "samantha-heartbeat"
+        ]
+      }
+    ],
+    "s2-canonical": [
+      {
+        "parse_ok": true,
+        "nodes": 7,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.86,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 1,
+        "pattern_nodes": 0,
+        "ids": [
+          "audit-samantha-service",
+          "heartbeat-drift-check",
+          "heartbeat-schema-spec",
+          "heartbeat-smoke-test",
+          "mount-heartbeat-derek-ingrid-caroline",
+          "runtime-heartbeat-handler",
+          "samantha-heartbeat-reference"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 8,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 1.0,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "ids": [
+          "audit-and-contract",
+          "caroline-heartbeat-impl",
+          "derek-heartbeat-impl",
+          "heartbeat-drift-check",
+          "heartbeat-smoke-test",
+          "ingrid-heartbeat-impl",
+          "runtime-heartbeat-core",
+          "samantha-heartbeat-impl"
+        ]
+      }
+    ],
+    "s3-patterned": [
+      {
+        "parse_ok": true,
+        "nodes": 8,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.88,
+        "touch_coverage": 0.88,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 2,
+        "ids": [
+          "design-shared-schema",
+          "implement-runtime-heartbeat",
+          "northstar-alignment-check",
+          "smoke-test-all-endpoints",
+          "wire-caroline-scanner",
+          "wire-derek-scanner",
+          "wire-ingrid-scanner",
+          "wire-samantha-scanner"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 9,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.78,
+        "touch_coverage": 0.89,
+        "touch_overlap_pairs": 2,
+        "pattern_nodes": 1,
+        "ids": [
+          "audit-samantha",
+          "caroline-heartbeat",
+          "derek-heartbeat",
+          "ingrid-heartbeat",
+          "northstar-checkpoint",
+          "runtime-heartbeat",
+          "samantha-heartbeat",
+          "shared-schema-doc",
+          "smoke-test"
+        ]
+      }
+    ]
+  }
+}

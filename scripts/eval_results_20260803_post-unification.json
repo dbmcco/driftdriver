@@ -1,0 +1,369 @@
+{
+  "g1-acceptance-gate": {
+    "s1-thin": [
+      {
+        "parse_ok": true,
+        "nodes": 6,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 0.0,
+        "wgcontract_coverage": 0.0,
+        "touch_coverage": 0.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "route_coverage": 0.0,
+        "premium_nodes": 0,
+        "premium_with_reason": 0,
+        "ids": [
+          "ac-degrade-cli",
+          "ac-docs-config",
+          "ac-done-gate",
+          "ac-evaluator",
+          "ac-per-repo-degrade-ceiling",
+          "ac-test-suite"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 6,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 0.0,
+        "wgcontract_coverage": 0.0,
+        "touch_coverage": 0.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "route_coverage": 0.0,
+        "premium_nodes": 0,
+        "premium_with_reason": 0,
+        "ids": [
+          "ac-completion-gate",
+          "ac-degrade-cli",
+          "ac-evaluator",
+          "ac-integration-and-defaults",
+          "ac-repo-degrade-ceiling",
+          "ac-unify-gate-degrade"
+        ]
+      }
+    ],
+    "s2-canonical": [
+      {
+        "parse_ok": true,
+        "nodes": 6,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.67,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 1,
+        "pattern_nodes": 0,
+        "route_coverage": 0.0,
+        "premium_nodes": 0,
+        "premium_with_reason": 0,
+        "ids": [
+          "acceptance-enforcement-docs-checkpoint",
+          "acceptance-enforcement-integration-gate",
+          "acceptance-evaluator-core",
+          "acceptance-gate-wiring",
+          "gate-status-cli",
+          "per-repo-degrade-ceiling"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 6,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 1.0,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 1,
+        "pattern_nodes": 0,
+        "route_coverage": 0.0,
+        "premium_nodes": 0,
+        "premium_with_reason": 0,
+        "ids": [
+          "acceptance-enforcement",
+          "acceptance-evaluator",
+          "acceptance-gate-integration",
+          "degrade-inspect-cli",
+          "deterministic-control-layer-checkpoint",
+          "gate-degrade-ledger"
+        ]
+      }
+    ],
+    "s3-patterned": [
+      {
+        "parse_ok": true,
+        "nodes": 10,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.7,
+        "touch_coverage": 0.9,
+        "touch_overlap_pairs": 7,
+        "pattern_nodes": 2,
+        "route_coverage": 1.0,
+        "premium_nodes": 0,
+        "premium_with_reason": 0,
+        "ids": [
+          "acceptance-contract-parse",
+          "acceptance-evaluator",
+          "docs-agent-guidance-update",
+          "e2e-acceptance-gate-breakfix",
+          "evaluator-output-contract-test",
+          "gate-status-cli",
+          "northstar-acceptance-gate-checkpoint",
+          "repo-degrade-state-store",
+          "wire-acceptance-into-gate",
+          "wire-repo-degrade-ceiling"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 9,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 1.0,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 6,
+        "pattern_nodes": 4,
+        "route_coverage": 1.0,
+        "premium_nodes": 3,
+        "premium_with_reason": 3,
+        "ids": [
+          "acceptance-deterministic-check",
+          "acceptance-e2e-breakfix",
+          "acceptance-extract",
+          "acceptance-gate-wire",
+          "acceptance-llm-judge",
+          "acceptance-status-cli",
+          "northstar-acceptance-checkpoint",
+          "policy-acceptance-config",
+          "repo-degrade-ledger"
+        ]
+      }
+    ],
+    "s4-live-quality": [
+      {
+        "parse_ok": true,
+        "nodes": 9,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.89,
+        "touch_coverage": 0.89,
+        "touch_overlap_pairs": 12,
+        "pattern_nodes": 2,
+        "route_coverage": 1.0,
+        "premium_nodes": 1,
+        "premium_with_reason": 1,
+        "ids": [
+          "acceptance-criteria-evaluator",
+          "add-degrade-ceiling-config",
+          "contract-docs-and-spec-anchor",
+          "degrade-ceiling-enforcement",
+          "degrade-counts-cli-surface",
+          "e2e-completion-gate-breakfix",
+          "northstar-determinism-checkpoint",
+          "per-repo-degraded-counter",
+          "wire-acceptance-completion-gate"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 10,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.6,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 6,
+        "pattern_nodes": 4,
+        "route_coverage": 1.0,
+        "premium_nodes": 3,
+        "premium_with_reason": 3,
+        "ids": [
+          "acceptance-evaluator-core",
+          "acceptance-model-judge",
+          "completion-gate-e2e",
+          "completion-gate-wiring",
+          "degrade-ceiling-data-eval",
+          "degrade-cli-contract-test",
+          "degrade-cli-inspection",
+          "docs-and-handler-guidance",
+          "northstar-gate-determinism-checkpoint",
+          "per-repo-degrade-ceiling"
+        ]
+      }
+    ]
+  },
+  "g2-heartbeat": {
+    "s1-thin": [
+      {
+        "parse_ok": true,
+        "nodes": 7,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 0.0,
+        "wgcontract_coverage": 0.0,
+        "touch_coverage": 0.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "route_coverage": 0.0,
+        "premium_nodes": 0,
+        "premium_with_reason": 0,
+        "ids": [
+          "add-shared-endpoint-and-samantha",
+          "audit-runtime-and-samantha",
+          "contract-shared-schema",
+          "smoke-test-all-four-and-drift",
+          "wire-caroline-heartbeat",
+          "wire-derek-heartbeat",
+          "wire-ingrid-heartbeat"
+        ]
+      },
+      {
+        "parse_ok": true,
+        "nodes": 8,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 0.0,
+        "wgcontract_coverage": 0.0,
+        "touch_coverage": 0.0,
+        "touch_overlap_pairs": 0,
+        "pattern_nodes": 0,
+        "route_coverage": 0.0,
+        "premium_nodes": 0,
+        "premium_with_reason": 0,
+        "ids": [
+          "audit-existing",
+          "caroline-heartbeat",
+          "contract-spec",
+          "derek-heartbeat",
+          "ingrid-heartbeat",
+          "runtime-heartbeat-scaffold",
+          "samantha-heartbeat",
+          "smoke-test-all-four"
+        ]
+      }
+    ],
+    "s2-canonical": [
+      {
+        "parse_ok": true,
+        "nodes": 6,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.83,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 2,
+        "pattern_nodes": 0,
+        "route_coverage": 0.0,
+        "premium_nodes": 0,
+        "premium_with_reason": 0,
+        "ids": [
+          "add-heartbeat-runtime",
+          "audit-samantha",
+          "drift-check",
+          "enable-per-agent",
+          "shared-schema-doc",
+          "smoke-test-all-four"
+        ]
+      },
+      {
+        "parse_ok": false,
+        "error": "__ERROR__: Command '['pi', '--print', '--model', 'zai/glm-5.2', 'You are a decomposition planner. Given a high-level goa"
+      }
+    ],
+    "s3-patterned": [
+      {
+        "parse_ok": false,
+        "error": "__ERROR__: Command '['pi', '--print', '--model', 'zai/glm-5.2', 'You are a decomposition planner. Given a high-level goa"
+      },
+      {
+        "parse_ok": true,
+        "nodes": 9,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.78,
+        "touch_coverage": 0.78,
+        "touch_overlap_pairs": 6,
+        "pattern_nodes": 8,
+        "route_coverage": 1.0,
+        "premium_nodes": 2,
+        "premium_with_reason": 2,
+        "ids": [
+          "caroline-heartbeat",
+          "derek-heartbeat",
+          "drift-check",
+          "ingrid-heartbeat",
+          "northstar-checkpoint-fanout",
+          "runtime-heartbeat-schema",
+          "samantha-heartbeat",
+          "schema-doc",
+          "smoke-test"
+        ]
+      }
+    ],
+    "s4-live-quality": [
+      {
+        "parse_ok": false
+      },
+      {
+        "parse_ok": true,
+        "nodes": 10,
+        "unique_ids": true,
+        "dangling_edges": 0,
+        "has_cycle": false,
+        "flat_no_edges": false,
+        "verify_coverage": 1.0,
+        "wgcontract_coverage": 0.7,
+        "touch_coverage": 1.0,
+        "touch_overlap_pairs": 1,
+        "pattern_nodes": 3,
+        "route_coverage": 1.0,
+        "premium_nodes": 1,
+        "premium_with_reason": 1,
+        "ids": [
+          "audit-runtime-route-surface",
+          "define-heartbeat-contract",
+          "gate-heartbeat-contract",
+          "implement-runtime-heartbeat-route",
+          "northstar-heartbeat-alignment",
+          "smoke-test-all-heartbeats",
+          "wire-caroline-domain-events",
+          "wire-derek-domain-events",
+          "wire-ingrid-domain-events",
+          "wire-samantha-domain-events"
+        ]
+      }
+    ]
+  }
+}
