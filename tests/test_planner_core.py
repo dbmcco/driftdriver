@@ -294,12 +294,14 @@ class MaterializePlanTests(unittest.TestCase):
         # --blocked-by
         idx = cmd.index("--blocked-by")
         self.assertEqual(cmd[idx + 1], "setup-deps")
-        # -d
+        # -d carries the description plus the folded Validation section
         idx = cmd.index("-d")
-        self.assertEqual(cmd[idx + 1], "Build OAuth")
-        # --verify
-        idx = cmd.index("--verify")
-        self.assertEqual(cmd[idx + 1], "pytest tests/")
+        self.assertTrue(cmd[idx + 1].startswith("Build OAuth"))
+        # verify folds into the description's ## Validation section (wg deprecated --verify)
+        self.assertNotIn("--verify", cmd)
+        idx = cmd.index("-d")
+        self.assertIn("## Validation", cmd[idx + 1])
+        self.assertIn("`pytest tests/` passes", cmd[idx + 1])
 
     def test_added_count_accuracy(self) -> None:
         nodes = [
@@ -347,8 +349,8 @@ class MaterializePlanTests(unittest.TestCase):
             verify_fallback=lambda n: f"test {n.id}",
             runner=runner,
         )
-        idx = calls[0].index("--verify")
-        self.assertEqual(calls[0][idx + 1], "test x")
+        idx = calls[0].index("-d")
+        self.assertIn("`test x` passes", calls[0][idx + 1])
 
     def test_tag_builder_adds_tags(self) -> None:
         calls: list[list[str]] = []
@@ -572,7 +574,7 @@ class MaterializeStripPinTests(unittest.TestCase):
         )
         self.assertIn("--model", calls[0])
         idx = calls[0].index("--model")
-        self.assertEqual(calls[0][idx + 1], "kimi-coding:k3")
+        self.assertEqual(calls[0][idx + 1], "pi:kimi-coding:k3")
 
 
 class InsertReviewGatesTests(unittest.TestCase):
@@ -850,3 +852,29 @@ class PostCommandsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkerRouteNormalizationTests(unittest.TestCase):
+    def test_bare_provider_model_gets_pi_scheme(self) -> None:
+        from driftdriver.planner_core import _normalize_worker_route
+        self.assertEqual(_normalize_worker_route("zai:glm-5.2"), "pi:zai:glm-5.2")
+        self.assertEqual(
+            _normalize_worker_route("ollama:gemma4:26b"), "pi:ollama:gemma4:26b"
+        )
+
+    def test_explicit_schemes_pass_through(self) -> None:
+        from driftdriver.planner_core import _normalize_worker_route
+        self.assertEqual(_normalize_worker_route("pi:zai:glm-5.2"), "pi:zai:glm-5.2")
+        self.assertEqual(_normalize_worker_route("codex:gpt-5.5"), "codex:gpt-5.5")
+
+    def test_materialize_normalizes_pin(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(id="r", title="R", model="zai:glm-5.2")
+        materialize_plan([node], Path("/repo"), runner=runner)
+        idx = calls[0].index("--model")
+        self.assertEqual(calls[0][idx + 1], "pi:zai:glm-5.2")

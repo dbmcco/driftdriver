@@ -340,7 +340,7 @@ def build_decompose_prompt(
                 "## Model Routing\n"
                 "Every node MUST include route assignments:\n"
                 "- route_tier: one of `fast`, `standard`, `premium`\n"
-                "- model: a concrete provider:model pattern\n\n"
+                "- model: explicit worker route (e.g. `pi:zai:glm-5.2`, `pi:ollama:gemma4:26b`)\n\n"
                 "| Tier | Cost | Eligible models |\n"
                 "|------|------|-----------------|\n"
                 "| **Fast** (simple leaf tasks) | Free, local | `ollama:` prefixed models |\n"
@@ -373,7 +373,7 @@ def build_decompose_prompt(
         if bundle.request_routes:
             output_fields += ", model, route_tier, escalation_reason"
             field_docs += (
-                "- model: concrete provider:model pattern (e.g. `zai:glm-5.2`)\n"
+                "- model: explicit worker route (e.g. `pi:zai:glm-5.2`)\n"
                 "- route_tier: fast | standard | premium\n"
                 "- escalation_reason: required when route_tier is premium\n"
             )
@@ -571,6 +571,33 @@ def call_llm(prompt: str, model: str = "sonnet") -> str:
 # ---------------------------------------------------------------------------
 
 
+def _normalize_worker_route(model: str) -> str:
+    """Normalize a model pattern to the explicit worker route wg requires.
+
+    Routes already carrying a scheme (``pi:``, ``claude:``, ``codex:``) pass
+    through unchanged. Bare ``provider:model`` patterns get the ``pi:`` scheme,
+    matching the doctrine that Pi is the default execution route. Mechanical
+    shaping only — no semantic choice is made here.
+    """
+    if model.startswith(("pi:", "claude:", "codex:")):
+        return model
+    return f"pi:{model}"
+
+
+def _fold_verify_into_description(desc: str | None, verify: str) -> str:
+    """Fold a verify command into the description's ## Validation section.
+
+    Mechanical placement only: appends to an existing Validation section or
+    creates one at the end. Never alters the command itself.
+    """
+    line = f"- [ ] `{verify}` passes"
+    if not desc:
+        return f"## Validation\n{line}"
+    if "## Validation" in desc:
+        return desc.rstrip() + "\n" + line
+    return desc.rstrip() + f"\n\n## Validation\n{line}"
+
+
 def materialize_plan(
     nodes: list[PlannedNode],
     repo_path: Path,
@@ -640,11 +667,12 @@ def materialize_plan(
         for dep in node.after:
             cmd.extend(["--blocked-by", dep])
 
-        # Model routing: add --model unless pin was stripped
+        # Model routing: add --model unless pin was stripped. Normalize bare
+        # provider:model patterns to the explicit pi: worker route wg requires.
         if node.id not in strip_pin_ids and route_models:
             model = route_models.get(node.id, "")
             if model:
-                cmd.extend(["--model", model])
+                cmd.extend(["--model", _normalize_worker_route(model)])
 
         desc = desc_builder(node) if desc_builder else (node.description or None)
         if desc:
@@ -652,7 +680,14 @@ def materialize_plan(
 
         verify = node.verify or (verify_fallback(node) if verify_fallback else "")
         if verify:
-            cmd.extend(["--verify", verify])
+            # wg deprecated --verify: validation belongs in the description's
+            # ## Validation section, which the agency evaluator reads.
+            desc = _fold_verify_into_description(desc, verify)
+            # Re-sync the -d flag if the description changed after being added.
+            if "-d" in cmd:
+                cmd[cmd.index("-d") + 1] = desc
+            elif desc:
+                cmd.extend(["-d", desc])
 
         # Structural fix loops: wire max_iterations to --max-iterations so
         # cycles are real graph cycles, not prose.
