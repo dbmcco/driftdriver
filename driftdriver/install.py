@@ -797,6 +797,7 @@ def ensure_executor_guidance(
     install_claude_executor_support(wg_dir)
     install_pi_executor_support(wg_dir)
     install_worktree_setup(wg_dir)
+    install_route_policy(wg_dir)
 
     created = False
     claude_path = executors_dir / "claude.toml"
@@ -947,6 +948,19 @@ def _template_text(*parts: str) -> str:
 
 def _make_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def install_route_policy(wg_dir: Path) -> bool:
+    """Install the default route-policy.toml for wg add/edit enforcement.
+
+    Mirrors driftdriver.planner_core.DEFAULT_MODEL_ROUTE_POLICY: anthropic
+    prohibited for workgraph-dispatched tasks, lunaroute conditional, premium
+    tiers require an escalation reason. The wg binary ignores the file's
+    absence, so this is opt-out by deletion, never a surprise default.
+    """
+    return _write_text_if_changed(
+        wg_dir / "route-policy.toml", _template_text("route-policy.toml")
+    )
 
 
 def install_claude_executor_support(wg_dir: Path) -> tuple[bool, bool]:

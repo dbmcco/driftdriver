@@ -1,0 +1,9 @@
+# Route policy for wg add / wg edit --model (enforced by the wg binary).
+# Mirrors driftdriver.planner_core.DEFAULT_MODEL_ROUTE_POLICY.
+# Absent file = policy off. mode "warn" = log only.
+
+mode = "enforce"
+prohibited_prefixes = ["anthropic"]
+conditional_providers = ["lunaroute"]
+premium_prefixes = ["kimi-coding:k3", "openai-codex"]
+require_escalation_reason = true
