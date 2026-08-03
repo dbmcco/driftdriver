@@ -294,3 +294,64 @@ class PlanFromSpecPostCommandsTests(unittest.TestCase):
                 self.assertTrue(any(
                     "ensure-contracts" in " ".join(cmd) for cmd in post_cmds
                 ))
+
+
+class EvidenceGroundingTests(unittest.TestCase):
+    def test_prompt_includes_evidence_section(self) -> None:
+        prompt = build_planner_prompt(
+            spec_content="Build X",
+            north_star="North Star",
+            repertoire=BUILTIN_PATTERNS,
+            evidence="### Directory Layout\n- src/",
+        )
+        self.assertIn("## Repository Evidence (verified on disk)", prompt)
+        self.assertIn("### Directory Layout", prompt)
+
+    def test_prompt_omits_evidence_section_when_empty(self) -> None:
+        prompt = build_planner_prompt(
+            spec_content="Build X",
+            north_star="North Star",
+            repertoire=BUILTIN_PATTERNS,
+        )
+        self.assertNotIn("## Repository Evidence (verified on disk)", prompt)
+
+    def test_plan_from_spec_survives_existdrift_failure(self) -> None:
+        from unittest import mock
+
+        with TemporaryDirectory() as td:
+            spec = Path(td) / "spec.md"
+            spec.write_text("# Feature", encoding="utf-8")
+            with mock.patch(
+                "driftdriver.quality_planner._call_llm", return_value="[]",
+            ), mock.patch(
+                "driftdriver.quality_planner.materialize_plan", return_value=0,
+            ), mock.patch(
+                "driftdriver.existdrift.build_evidence_bundle",
+                side_effect=RuntimeError("disk gone"),
+            ):
+                # Must not raise even though existdrift failed.
+                result = plan_from_spec(
+                    spec_path=spec, repo_path=Path(td), grounding=True,
+                )
+                self.assertIsInstance(result, PlannerOutput)
+
+    def test_grounding_false_skips_evidence_and_scan(self) -> None:
+        from unittest import mock
+
+        with TemporaryDirectory() as td:
+            spec = Path(td) / "spec.md"
+            spec.write_text("# Feature", encoding="utf-8")
+            with mock.patch(
+                "driftdriver.quality_planner._call_llm", return_value="[]",
+            ), mock.patch(
+                "driftdriver.quality_planner.materialize_plan", return_value=0,
+            ), mock.patch(
+                "driftdriver.existdrift.build_evidence_bundle",
+            ) as mock_bundle, mock.patch(
+                "driftdriver.existdrift.scan_grounding",
+            ) as mock_scan:
+                plan_from_spec(
+                    spec_path=spec, repo_path=Path(td), grounding=False,
+                )
+                mock_bundle.assert_not_called()
+                mock_scan.assert_not_called()

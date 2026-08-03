@@ -650,6 +650,11 @@ def materialize_plan(
         if verify:
             cmd.extend(["--verify", verify])
 
+        # Structural fix loops: wire max_iterations to --max-iterations so
+        # cycles are real graph cycles, not prose.
+        if node.max_iterations is not None:
+            cmd.extend(["--max-iterations", str(node.max_iterations)])
+
         if tag_builder:
             for tag in tag_builder(node):
                 cmd.extend(["--tag", tag])

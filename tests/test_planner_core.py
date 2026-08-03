@@ -397,6 +397,34 @@ class MaterializePlanTests(unittest.TestCase):
         materialize_plan([node], Path("/repo"), runner=runner)
         self.assertNotIn("-d", calls[0])
 
+    def test_max_iterations_adds_flag(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(
+            id="fix-loop", title="Fix loop",
+            max_iterations=3, verify="pytest",
+        )
+        materialize_plan([node], Path("/repo"), runner=runner)
+        cmd = calls[0]
+        self.assertIn("--max-iterations", cmd)
+        idx = cmd.index("--max-iterations")
+        self.assertEqual(cmd[idx + 1], "3")
+
+    def test_no_max_iterations_omits_flag(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(id="plain", title="Plain")
+        materialize_plan([node], Path("/repo"), runner=runner)
+        self.assertNotIn("--max-iterations", calls[0])
+
 
 class PlannedNodeRouteFieldsTests(unittest.TestCase):
     def test_to_dict_includes_route_fields_when_set(self) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,16 +50,24 @@ def build_planner_prompt(
     north_star: str,
     repertoire: dict[str, dict[str, str]],
     drift_policy_summary: str = "",
+    evidence: str = "",
 ) -> str:
     """Build the LLM prompt that instructs the planner to produce a quality-aware task graph.
 
     Thin adapter over planner_core.build_decompose_prompt. Assembles a
     PolicyBundle with quality patterns, granularity bar, route requests, and
     any drift-policy summary, then delegates to the canonical builder.
+
+    When *evidence* is non-empty it is appended as a "## Repository Evidence
+    (verified on disk)" section via the bundle's extra_instructions so the
+    planner grounds its plan in actual repo state.
     """
-    extra = ""
+    extra_parts: list[str] = []
     if drift_policy_summary:
-        extra = f"## Drift Policy Summary\n{drift_policy_summary}"
+        extra_parts.append(f"## Drift Policy Summary\n{drift_policy_summary}")
+    if evidence:
+        extra_parts.append(f"## Repository Evidence (verified on disk)\n{evidence}")
+    extra = "\n\n".join(extra_parts)
     bundle = PolicyBundle(
         name="quality-spec",
         mode="emit-json",
@@ -155,20 +164,40 @@ def plan_from_spec(
     repo_path: Path,
     dry_run: bool = False,
     model: str = "sonnet",
+    grounding: bool = True,
 ) -> PlannerOutput:
     """Read a spec file and produce a quality-aware workgraph task plan.
 
     In dry_run mode, prints a summary and returns an empty PlannerOutput
     without making any LLM calls.
+
+    When *grounding* is True (default), existdrift runs both pre-plan
+    (evidence bundle injected into the prompt) and post-materialize
+    (advisory grounding scan printed to stderr). Planning never hard-fails
+    if grounding fails — it degrades gracefully.
     """
     spec_content = spec_path.read_text(encoding="utf-8")
     north_star = _read_north_star(repo_path)
     repertoire = load_repertoire()
 
+    # --- Pre-plan grounding: inject verified repo evidence into the prompt ---
+    evidence = ""
+    if grounding:
+        try:
+            from driftdriver.existdrift import build_evidence_bundle
+
+            # Use the spec's first heading + first paragraph as hint text.
+            hint = spec_content[:500]
+            evidence = build_evidence_bundle(repo_path, hint_text=hint)
+        except Exception as exc:
+            _log.warning("existdrift evidence bundle failed: %s", exc)
+            evidence = ""
+
     prompt = build_planner_prompt(
         spec_content=spec_content,
         north_star=north_star,
         repertoire=repertoire,
+        evidence=evidence,
     )
 
     if dry_run:
@@ -213,4 +242,34 @@ def plan_from_spec(
         tag_builder=_quality_tag_builder,
         post_commands=[["./.workgraph/coredrift", "ensure-contracts", "--apply"]],
     )
+
+    # --- Post-materialize grounding scan (advisory, never blocks) ---
+    if grounding:
+        try:
+            from driftdriver.existdrift import scan_grounding
+
+            report = scan_grounding(repo_path)
+            summary = report.get("summary", {})
+            total = summary.get("findings_total", 0)
+            if total > 0:
+                print(
+                    f"[existdrift] {total} grounding findings "
+                    f"(high={summary.get('high', 0)}, "
+                    f"medium={summary.get('medium', 0)}, "
+                    f"low={summary.get('low', 0)}, "
+                    f"info={summary.get('info', 0)})",
+                    file=sys.stderr,
+                )
+                for finding in (report.get("top_findings") or [])[:3]:
+                    rec = str(finding.get("recommendation") or "")
+                    print(
+                        f"  - [{finding.get('severity', '?')}] "
+                        f"{finding.get('title', '?')}: {rec}",
+                        file=sys.stderr,
+                    )
+            else:
+                print("[existdrift] no grounding findings", file=sys.stderr)
+        except Exception as exc:
+            _log.warning("existdrift post-materialize scan failed: %s", exc)
+
     return output
