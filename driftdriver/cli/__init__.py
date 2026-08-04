@@ -80,6 +80,7 @@ from .doctor import (
 from .decisions_cmd import cmd_decisions, handle_decisions_answer, handle_decisions_pending, format_decisions_text
 from .install_cmd import cmd_install
 from .upgrade_cmd import cmd_upgrade
+from .self_update_cmd import cmd_self_update
 from .run import (
     _invoke_check_json,
     cmd_orchestrate,
@@ -1337,6 +1338,13 @@ def _build_parser() -> argparse.ArgumentParser:
     upgrade_p.add_argument("--fleet", action="store_true", help="Apply across all repos with .workgraph/ under --root")
     upgrade_p.add_argument("--root", default=None, help="Root dir for --fleet (default: cwd)")
     upgrade_p.set_defaults(func=cmd_upgrade)
+
+    self_update_p = sub.add_parser(
+        "self-update",
+        help="Get this repo current: install + upgrade + freshness check",
+    )
+    self_update_p.add_argument("--check", action="store_true", help="Dry-run: show what would change without writing")
+    self_update_p.set_defaults(func=cmd_self_update)
 
     return p
 

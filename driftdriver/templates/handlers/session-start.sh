@@ -10,6 +10,13 @@ HANDLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Ensure driftdriver install wrappers exist (idempotent)
 driftdriver --dir "$PROJECT_DIR" install 2>/dev/null || true
 
+# Apply pending migrations (idempotent, stamps state).
+_UPGRADE_OUT="$(driftdriver --dir "$PROJECT_DIR" upgrade 2>/dev/null || true)"
+if [[ -n "$_UPGRADE_OUT" ]]; then
+  echo "$_UPGRADE_OUT" | head -3 | sed 's/^/[self-update] /'
+fi
+unset _UPGRADE_OUT
+
 # Provide repo-local shims needed by Workgraph-generated agent wrappers.
 export PATH="$PROJECT_DIR/.workgraph/bin:$PATH"
 
@@ -23,15 +30,6 @@ if [[ "$CONTROL_MODE" == "supervise" || "$CONTROL_MODE" == "autonomous" ]]; then
   if [[ "$LEASE_ACTIVE" == "true" ]]; then
     wg service start 2>/dev/null || true
   fi
-fi
-
-# Ensure ecosystem hub automation only starts when explicitly requested.
-if [[ "${ECOSYSTEM_HUB_AUTOSTART:-0}" == "1" ]] && command -v driftdriver >/dev/null 2>&1; then
-  HUB_ARGS=(ecosystem-hub --project-dir "$PROJECT_DIR" automate --host "${ECOSYSTEM_HUB_HOST:-0.0.0.0}" --port "${ECOSYSTEM_HUB_PORT:-8777}")
-  if [[ -n "${ECOSYSTEM_HUB_CENTRAL_REPO:-}" ]]; then
-    HUB_ARGS+=(--central-repo "$ECOSYSTEM_HUB_CENTRAL_REPO")
-  fi
-  driftdriver "${HUB_ARGS[@]}" >/dev/null 2>&1 || true
 fi
 
 # Prime agent with project knowledge from lessons.db (real-time path)
