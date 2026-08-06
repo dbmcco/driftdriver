@@ -24,6 +24,7 @@ from driftdriver.planner_core import (
     build_decompose_prompt,
     insert_review_gates,
     materialize_plan,
+    minimum_tier_for,
     parse_plan_output,
     validate_model_routes,
 )
@@ -575,6 +576,185 @@ class MaterializeStripPinTests(unittest.TestCase):
         self.assertIn("--model", calls[0])
         idx = calls[0].index("--model")
         self.assertEqual(calls[0][idx + 1], "pi:kimi-coding:k3")
+
+
+class MinimumTierForTests(unittest.TestCase):
+    """The floor function is deterministic code over declared properties."""
+
+    def test_critical_risk_floors_premium(self) -> None:
+        self.assertEqual(minimum_tier_for({"risk": "critical"}), "premium")
+
+    def test_cross_system_floors_premium(self) -> None:
+        self.assertEqual(minimum_tier_for({"blast_radius": "cross_system"}), "premium")
+
+    def test_architecture_novelty_floors_premium(self) -> None:
+        self.assertEqual(minimum_tier_for({"novelty": "architecture"}), "premium")
+
+    def test_large_context_high_ambiguity_floors_premium(self) -> None:
+        self.assertEqual(
+            minimum_tier_for({"context_load": "large", "ambiguity": "high"}),
+            "premium",
+        )
+
+    def test_shared_module_floors_standard(self) -> None:
+        self.assertEqual(minimum_tier_for({"blast_radius": "shared_module"}), "standard")
+
+    def test_design_judgment_floors_standard(self) -> None:
+        self.assertEqual(
+            minimum_tier_for({"requires_design_judgment": True}), "standard"
+        )
+
+    def test_domain_safety_floors_standard(self) -> None:
+        self.assertEqual(
+            minimum_tier_for({"requires_domain_safety": True}), "standard"
+        )
+
+    def test_weak_verification_floors_standard(self) -> None:
+        self.assertEqual(
+            minimum_tier_for({"verification_strength": "weak"}), "standard"
+        )
+
+    def test_small_independent_work_floors_fast(self) -> None:
+        self.assertEqual(
+            minimum_tier_for(
+                {
+                    "blast_radius": "single_file",
+                    "ambiguity": "exact_patch",
+                    "novelty": "known_pattern",
+                    "risk": "low",
+                    "context_load": "small",
+                    "verification_strength": "strong",
+                    "coordination": "independent",
+                    "requires_design_judgment": False,
+                    "requires_domain_safety": False,
+                }
+            ),
+            "fast",
+        )
+
+    def test_empty_properties_floor_fast(self) -> None:
+        self.assertEqual(minimum_tier_for({}), "fast")
+
+
+class UndersizedRouteTests(unittest.TestCase):
+    """Floor check compares the tier of the ACTUAL model against the derived
+    floor from declared properties."""
+
+    def test_fast_model_below_standard_floor_flagged(self) -> None:
+        violations = validate_model_routes(
+            {"n1": "ollama:gemma"},
+            node_properties={"n1": {"blast_radius": "shared_module"}},
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].kind, "undersized")
+        self.assertIn("standard", violations[0].reason)
+
+    def test_standard_model_meets_standard_floor(self) -> None:
+        violations = validate_model_routes(
+            {"n1": "zai:glm-5.2"},
+            node_properties={"n1": {"blast_radius": "shared_module"}},
+        )
+        self.assertEqual(violations, [])
+
+    def test_undersized_with_reason_passes(self) -> None:
+        violations = validate_model_routes(
+            {"n1": "ollama:gemma"},
+            escalation_reasons={"n1": "operator chose a local model deliberately"},
+            node_properties={"n1": {"blast_radius": "shared_module"}},
+        )
+        self.assertEqual(violations, [])
+
+    def test_unknown_model_tier_skips_floor_check(self) -> None:
+        violations = validate_model_routes(
+            {"n1": "somevendor:future-model"},
+            node_properties={"n1": {"risk": "critical"}},
+        )
+        self.assertEqual(violations, [])
+
+    def test_slash_format_model_is_classified(self) -> None:
+        """Catalog-format `provider/id` models must classify like `provider:id`."""
+        violations = validate_model_routes(
+            {"n1": "ollama/gemma4:26b"},
+            node_properties={"n1": {"blast_radius": "shared_module"}},
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].kind, "undersized")
+
+    def test_no_properties_means_no_floor_check(self) -> None:
+        violations = validate_model_routes({"n1": "ollama:gemma"})
+        self.assertEqual(violations, [])
+
+    def test_prohibited_takes_precedence_over_floor(self) -> None:
+        violations = validate_model_routes(
+            {"n1": "anthropic:claude"},
+            node_properties={"n1": {"blast_radius": "single_file", "risk": "low"}},
+        )
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].kind, "prohibited")
+
+
+class MaterializeUndersizedTests(unittest.TestCase):
+    def test_undersized_pin_stripped_with_warning(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(
+            id="hard",
+            title="Hard",
+            model="ollama:gemma",
+            routing_properties={"blast_radius": "shared_module", "risk": "medium"},
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            count = materialize_plan([node], Path("/repo"), runner=runner)
+        self.assertEqual(count, 1)
+        self.assertNotIn("--model", calls[0])
+        self.assertIn("route pin stripped", err.getvalue())
+
+    def test_undersized_with_reason_keeps_pin(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(
+            id="hard",
+            title="Hard",
+            model="ollama:gemma",
+            routing_properties={"blast_radius": "shared_module"},
+        )
+        materialize_plan(
+            [node],
+            Path("/repo"),
+            escalation_reasons={"hard": "deliberate local-first choice"},
+            runner=runner,
+        )
+        self.assertIn("--model", calls[0])
+
+    def test_node_without_properties_keeps_pin(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(id="plain", title="Plain", model="ollama:gemma")
+        materialize_plan([node], Path("/repo"), runner=runner)
+        self.assertIn("--model", calls[0])
+
+    def test_to_dict_includes_routing_properties_when_set(self) -> None:
+        node = PlannedNode(
+            id="n", title="N", routing_properties={"risk": "high"}
+        )
+        self.assertEqual(node.to_dict()["routing_properties"], {"risk": "high"})
+
+    def test_to_dict_omits_routing_properties_when_absent(self) -> None:
+        node = PlannedNode(id="n", title="N")
+        self.assertNotIn("routing_properties", node.to_dict())
 
 
 class InsertReviewGatesTests(unittest.TestCase):

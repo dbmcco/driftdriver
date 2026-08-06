@@ -67,6 +67,13 @@ class PlannedNode:
     model: str = ""
     route_tier: str = ""
     escalation_reason: str = ""
+    # Semantic routing judgments (blast_radius, ambiguity, novelty, risk,
+    # context_load, verification_strength, coordination, requires_design_judgment,
+    # requires_domain_safety). When present, materialize-time route validation
+    # derives the cheapest-sufficient tier floor from them and compares it
+    # against the tier of the ACTUAL selected model. Absent -> no floor check
+    # (backward compatible for planners that do not emit properties).
+    routing_properties: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -94,6 +101,8 @@ class PlannedNode:
             d["route_tier"] = self.route_tier
         if self.escalation_reason:
             d["escalation_reason"] = self.escalation_reason
+        if self.routing_properties:
+            d["routing_properties"] = self.routing_properties
         return d
 
 
@@ -120,15 +129,68 @@ class ModelRoutePolicy:
         """Return the tier name for *model* based on prefix matching.
 
         First matching prefix wins.  No match returns ``"unknown"``.
+        Accepts both ``provider:model`` and ``provider/model`` spellings — the
+        model catalog teaches ``provider/id`` while the prefix table uses
+        ``provider:``, so we normalize before matching.
         """
+        normalized = model.replace("/", ":", 1)
         for tier, prefixes in self.tier_prefixes.items():
             for prefix in prefixes:
-                if model.startswith(prefix):
+                if normalized.startswith(prefix):
                     return tier
         return "unknown"
 
 
 DEFAULT_MODEL_ROUTE_POLICY = ModelRoutePolicy()
+
+
+# Canonical tier ordering for floor comparisons. "unknown" (no prefix match)
+# is deliberately excluded — an unclassifiable model cannot be floor-checked.
+ROUTE_TIER_RANK: dict[str, int] = {"fast": 0, "standard": 1, "premium": 2}
+
+
+def minimum_tier_for(properties: dict[str, Any]) -> str:
+    """Cheapest-sufficient tier floor for a node, derived from its declared
+    routing properties.
+
+    This is the single, deterministic floor function for the ecosystem. The
+    planner model owns the semantic judgment (the properties); code owns the
+    floor. The model never emits a tier — the tier is derived here from the
+    properties it declared and compared against the tier of the actual model
+    chosen, at materialize time.
+    """
+    risk = properties.get("risk", "medium")
+    blast = properties.get("blast_radius", "")
+    novelty = properties.get("novelty", "")
+    ambiguity = properties.get("ambiguity", "")
+    context = properties.get("context_load", "")
+    verification = properties.get("verification_strength", "")
+    coordination = properties.get("coordination", "")
+    design = bool(properties.get("requires_design_judgment"))
+    safety = bool(properties.get("requires_domain_safety"))
+
+    if (
+        risk == "critical"
+        or blast == "cross_system"
+        or novelty == "architecture"
+        or (context == "large" and ambiguity == "high")
+    ):
+        return "premium"
+
+    if (
+        risk == "high"
+        or design
+        or safety
+        or blast == "shared_module"
+        or coordination in {"merge_sensitive", "shared_contract"}
+        or ambiguity in {"medium", "high"}
+        or novelty == "new_pattern"
+        or context == "large"
+        or verification == "weak"
+    ):
+        return "standard"
+
+    return "fast"
 
 
 @dataclass
@@ -155,6 +217,7 @@ def validate_model_routes(
     policy: ModelRoutePolicy = DEFAULT_MODEL_ROUTE_POLICY,
     allow_conditional: bool = False,
     escalation_reasons: dict[str, str] | None = None,
+    node_properties: dict[str, dict[str, Any]] | None = None,
 ) -> list[RouteViolation]:
     """Check each node→model assignment against the route policy.
 
@@ -164,6 +227,11 @@ def validate_model_routes(
     Models in a tier listed in *require_escalation_reason_for* without a
     non-empty entry in *escalation_reasons* are flagged
     (kind=``"missing-escalation-reason"``).
+    When *node_properties* is supplied, nodes whose declared routing properties
+    imply a minimum tier floor above the tier of the actual chosen model are
+    flagged (kind=``"undersized"``) unless an escalation/override reason was
+    recorded for that node. Nodes without properties, and models whose tier
+    cannot be classified, are not floor-checked.
     """
     violations: list[RouteViolation] = []
     for node_id, model in route_models.items():
@@ -205,6 +273,30 @@ def validate_model_routes(
                         reason=(
                             f"Model '{model}' is tier '{tier}' which requires "
                             f"an explicit escalation reason, but none was provided."
+                        ),
+                    ))
+                    flagged = True
+
+        if not flagged and node_properties:
+            properties = node_properties.get(node_id)
+            if properties:
+                floor = minimum_tier_for(properties)
+                actual = policy.tier_of(model)
+                reason = (escalation_reasons or {}).get(node_id, "")
+                if (
+                    actual in ROUTE_TIER_RANK
+                    and ROUTE_TIER_RANK[actual] < ROUTE_TIER_RANK[floor]
+                    and not reason
+                ):
+                    violations.append(RouteViolation(
+                        node_id=node_id,
+                        model=model,
+                        kind="undersized",
+                        reason=(
+                            f"Model '{model}' is tier '{actual}' but the node's "
+                            f"declared properties require at least '{floor}'. "
+                            f"Provide an override reason to keep this pin, or the "
+                            f"pin is stripped and the node inherits default routing."
                         ),
                     ))
     return violations
@@ -639,10 +731,14 @@ def materialize_plan(
     skip_ids: set[str] = set()
     strip_pin_ids: set[str] = set()
     if route_models:
+        node_properties = {
+            n.id: n.routing_properties for n in nodes if n.routing_properties
+        }
         for v in validate_model_routes(
             route_models,
             policy=policy,
             escalation_reasons=escalation_reasons,
+            node_properties=node_properties or None,
         ):
             if v.kind in ("prohibited", "conditional"):
                 print(
@@ -650,7 +746,7 @@ def materialize_plan(
                     file=sys.stderr,
                 )
                 skip_ids.add(v.node_id)
-            elif v.kind == "missing-escalation-reason":
+            elif v.kind in ("missing-escalation-reason", "undersized"):
                 print(
                     f"warning: route pin stripped for node '{v.node_id}' — {v.reason}",
                     file=sys.stderr,
