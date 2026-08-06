@@ -727,6 +727,13 @@ def _normalize_worker_route(model: str) -> str:
     """
     if model.startswith(("pi:", "claude:", "codex:")):
         return model
+    # wg requires pi:<provider>:<model> (colon-separated), while the model
+    # catalog teaches provider/model (slash). Normalize the provider separator
+    # so catalog-format ids materialize instead of being rejected by wg.
+    slash = model.find("/")
+    colon = model.find(":")
+    if slash != -1 and (colon == -1 or slash < colon):
+        model = model[:slash] + ":" + model[slash + 1 :]
     return f"pi:{model}"
 
 

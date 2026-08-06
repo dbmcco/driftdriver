@@ -28,6 +28,7 @@ from driftdriver.planner_core import (
     minimum_tier_for,
     parse_plan_output,
     validate_model_routes,
+    _normalize_worker_route,
 )
 
 
@@ -842,6 +843,35 @@ class LoadRoutePolicyTests(unittest.TestCase):
         # built-in policy allows it.
         self.assertEqual(count, 0)
         self.assertEqual(len(calls), 0)
+
+
+class NormalizeWorkerRouteTests(unittest.TestCase):
+    def test_scheme_prefixed_passes_through(self) -> None:
+        self.assertEqual(_normalize_worker_route("pi:zai:glm-5.2"), "pi:zai:glm-5.2")
+        self.assertEqual(_normalize_worker_route("claude:sonnet"), "claude:sonnet")
+
+    def test_bare_colon_form_gets_pi_scheme(self) -> None:
+        self.assertEqual(
+            _normalize_worker_route("kimi-coding:kimi-for-coding"),
+            "pi:kimi-coding:kimi-for-coding",
+        )
+
+    def test_catalog_slash_form_converts_to_colon(self) -> None:
+        # The observed wg rejection: pi:zai/glm-5.2 is not a valid worker route.
+        self.assertEqual(_normalize_worker_route("zai/glm-5.2"), "pi:zai:glm-5.2")
+        self.assertEqual(
+            _normalize_worker_route("moonshotai/kimi-k2.7-code"),
+            "pi:moonshotai:kimi-k2.7-code",
+        )
+        self.assertEqual(
+            _normalize_worker_route("openai-codex/gpt-5.6-sol"),
+            "pi:openai-codex:gpt-5.6-sol",
+        )
+
+    def test_slash_form_with_tag_converts_provider_separator_only(self) -> None:
+        self.assertEqual(
+            _normalize_worker_route("ollama/gemma4:26b"), "pi:ollama:gemma4:26b"
+        )
 
 
 class InsertReviewGatesTests(unittest.TestCase):
