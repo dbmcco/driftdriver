@@ -831,6 +831,13 @@ def ensure_executor_guidance(
         cur = text
         changed = False
 
+        # Worktree isolation: executor commands must be absolute so they
+        # resolve from an agent's isolated worktree (whose cwd lacks .workgraph).
+        new_text = _absolutize_executor_command(cur, wg_dir.parent)
+        if new_text is not None:
+            cur = new_text
+            changed = True
+
         if p.name == "claude.toml":
             new_text = _inject_claude_executor_runner(cur)
             if new_text is not None:
@@ -937,6 +944,29 @@ def _write_text_if_changed(path: Path, content: str) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return True
+
+
+def _absolutize_executor_command(text: str, repo_root: Path) -> str | None:
+    """Rewrite a relative `.workgraph/...` (or `.wg/...`) executor command to an
+    absolute path resolved against the repo root.
+
+    With worktree isolation on, an agent's cwd is its isolated worktree, which
+    does not carry `.workgraph/` (it is gitignored). A relative command
+    resolves against the worktree and 404s; an absolute command points back at
+    the main repo's executor. Returns the new text if changed, else None.
+    """
+    changed = False
+
+    def repl(m: re.Match) -> str:
+        nonlocal changed
+        prefix, quote, cmd = m.group(1), m.group(2), m.group(3)
+        if cmd.startswith((".workgraph/", ".wg/")):
+            cmd = str((repo_root / cmd).resolve())
+            changed = True
+        return f"{prefix}command = {quote}{cmd}{quote}"
+
+    new = re.sub(r"(^[ \t]*)command\s*=\s*([\"'])(.+?)\2", repl, text, flags=re.M)
+    return new if changed else None
 
 
 def _template_text(*parts: str) -> str:

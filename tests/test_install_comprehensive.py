@@ -53,6 +53,7 @@ from driftdriver.install import (
     install_lessons_mcp_config,
     install_opencode_hooks,
     install_session_driver_executor,
+    _absolutize_executor_command,
     resolve_bin,
     write_archdrift_wrapper,
     write_coredrift_wrapper,
@@ -1069,3 +1070,50 @@ class TestFullInstallComposition:
         assert (tmp_path / ".claude" / "hooks.json").exists()
         assert (wg_dir / "executors" / "session-driver.toml").exists()
         assert (tmp_path / ".mcp.json").exists()
+
+
+class TestAbsolutizeExecutorCommand:
+    """With worktree isolation, executor commands must be absolute so they
+    resolve from an agent's isolated worktree (whose cwd lacks .workgraph)."""
+
+    def test_relative_workgraph_command_becomes_absolute(self) -> None:
+        text = '[executor]\ncommand = ".workgraph/executors/pi-run.sh"\nargs = []\n'
+        out = _absolutize_executor_command(text, Path("/repo"))
+        assert out is not None
+        assert 'command = "/repo/.workgraph/executors/pi-run.sh"' in out
+
+    def test_relative_wg_command_becomes_absolute(self) -> None:
+        text = 'command = ".wg/executors/x.sh"\n'
+        out = _absolutize_executor_command(text, Path("/repo"))
+        assert out is not None
+        assert 'command = "/repo/.wg/executors/x.sh"' in out
+
+    def test_absolute_command_unchanged(self) -> None:
+        text = 'command = "/abs/path/pi-run.sh"\n'
+        assert _absolutize_executor_command(text, Path("/repo")) is None
+
+    def test_non_executor_command_line_left_alone(self) -> None:
+        text = 'note = ".workgraph/something"\ncommand = "/abs/pi-run.sh"\n'
+        assert _absolutize_executor_command(text, Path("/repo")) is None
+
+    def test_ensure_executor_guidance_absolutizes_pi_toml(self, tmp_path: Path) -> None:
+        """End-to-end: a relative-command pi.toml installed into a repo is
+        rewritten to absolute by ensure_executor_guidance."""
+        wg_dir = tmp_path / ".workgraph"
+        executors = wg_dir / "executors"
+        executors.mkdir(parents=True)
+        (executors / "pi.toml").write_text(
+            '[executor]\ncommand = ".workgraph/executors/pi-run.sh"\nargs = []\n'
+        )
+        _, patched = ensure_executor_guidance(
+            wg_dir,
+            include_archdrift=False,
+            include_uxdrift=False,
+            include_therapydrift=False,
+            include_fixdrift=False,
+            include_yagnidrift=False,
+            include_redrift=False,
+        )
+        written = (executors / "pi.toml").read_text()
+        assert f'command = "{tmp_path}/.workgraph/executors/pi-run.sh"' in written
+        assert str(executors / "pi.toml") in patched

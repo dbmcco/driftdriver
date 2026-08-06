@@ -49,9 +49,20 @@ done
 if [[ "$MODEL" == pi:* ]]; then
   MODEL="${MODEL#pi:}"
 fi
-if [[ -z "$PROVIDER" && -n "$MODEL" && "$MODEL" == *:* ]]; then
-  PROVIDER="${MODEL%%:*}"
-  MODEL="${MODEL#*:}"
+# Provider/model can arrive as "provider/model[:tag]" (catalog slash form,
+# e.g. ollama/gemma4:26b) or "provider:model" (colon form). Normalize either
+# into separate PROVIDER/MODEL so the qualified-build block below fires.
+# Slash form must be handled before the colon check, since a slash spec can
+# itself contain a colon tag (ollama/gemma4:26b) that would otherwise be
+# mis-split into provider="ollama/gemma4".
+if [[ -z "$PROVIDER" && -n "$MODEL" ]]; then
+  if [[ "$MODEL" == */* ]]; then
+    PROVIDER="${MODEL%%/*}"
+    MODEL="${MODEL#*/}"
+  elif [[ "$MODEL" == *:* ]]; then
+    PROVIDER="${MODEL%%:*}"
+    MODEL="${MODEL#*:}"
+  fi
 fi
 
 # Build the provider-qualified model spec. When WG supplies a provider and a
