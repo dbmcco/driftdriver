@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -142,6 +143,59 @@ class ModelRoutePolicy:
 
 
 DEFAULT_MODEL_ROUTE_POLICY = ModelRoutePolicy()
+
+
+def load_route_policy(repo_path: Path | None = None) -> ModelRoutePolicy | None:
+    """Load the route policy from ``<repo>/.workgraph/route-policy.toml``.
+
+    This file is the single source of route policy: the wg binary enforces it
+    at dispatch time and planner_core enforces it at materialize time. When
+    the file is absent or unreadable, the built-in defaults apply (today's
+    behavior). When present, its lists are authoritative per key — any key it
+    omits falls back to the built-in default. ``mode = "off"`` returns None,
+    which callers must treat as "no route validation".
+    """
+    base = Path(repo_path) if repo_path else Path.cwd()
+    path = base / ".workgraph" / "route-policy.toml"
+    if not path.exists():
+        return DEFAULT_MODEL_ROUTE_POLICY
+    try:
+        data = tomllib.loads(path.read_text())
+    except Exception as exc:
+        print(
+            f"warning: could not parse {path}: {exc}; using built-in route policy",
+            file=sys.stderr,
+        )
+        return DEFAULT_MODEL_ROUTE_POLICY
+
+    if str(data.get("mode", "enforce")).lower() == "off":
+        return None
+
+    defaults = DEFAULT_MODEL_ROUTE_POLICY
+    tiers = dict(defaults.tier_prefixes)
+    for tier_key, tier_name in (
+        ("fast_prefixes", "fast"),
+        ("standard_prefixes", "standard"),
+        ("premium_prefixes", "premium"),
+    ):
+        if tier_key in data:
+            tiers[tier_name] = tuple(data[tier_key])
+
+    return ModelRoutePolicy(
+        prohibited_prefixes=tuple(
+            data.get("prohibited_prefixes", defaults.prohibited_prefixes)
+        ),
+        conditional_providers=tuple(
+            data.get("conditional_providers", defaults.conditional_providers)
+        ),
+        tier_prefixes=tiers,
+        default_tier=data.get("default_tier", defaults.default_tier),
+        require_escalation_reason_for=(
+            ("premium",)
+            if data.get("require_escalation_reason", True)
+            else ()
+        ),
+    )
 
 
 # Canonical tier ordering for floor comparisons. "unknown" (no prefix match)
@@ -699,7 +753,7 @@ def materialize_plan(
     tag_builder: Callable[[PlannedNode], list[str]] | None = None,
     route_models: dict[str, str] | None = None,
     escalation_reasons: dict[str, str] | None = None,
-    policy: ModelRoutePolicy = DEFAULT_MODEL_ROUTE_POLICY,
+    policy: ModelRoutePolicy | None = None,
     runner: Callable[..., Any] | None = None,
     post_commands: list[list[str]] | None = None,
 ) -> int:
@@ -723,6 +777,12 @@ def materialize_plan(
     if runner is None:
         runner = subprocess.run
 
+    # Route policy: explicit argument wins; otherwise load the repo's
+    # .workgraph/route-policy.toml (single source, shared with the wg binary).
+    # A None policy (file says mode = "off") disables route validation.
+    if policy is None:
+        policy = load_route_policy(repo_path)
+
     # Derive route_models from nodes if not provided
     if route_models is None:
         route_models = {n.id: n.model for n in nodes if n.model}
@@ -730,7 +790,7 @@ def materialize_plan(
     # Validate routes and classify violations
     skip_ids: set[str] = set()
     strip_pin_ids: set[str] = set()
-    if route_models:
+    if route_models and policy is not None:
         node_properties = {
             n.id: n.routing_properties for n in nodes if n.routing_properties
         }

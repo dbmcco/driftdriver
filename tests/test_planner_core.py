@@ -23,6 +23,7 @@ from driftdriver.planner_core import (
     apply_agency_fences,
     build_decompose_prompt,
     insert_review_gates,
+    load_route_policy,
     materialize_plan,
     minimum_tier_for,
     parse_plan_output,
@@ -755,6 +756,92 @@ class MaterializeUndersizedTests(unittest.TestCase):
     def test_to_dict_omits_routing_properties_when_absent(self) -> None:
         node = PlannedNode(id="n", title="N")
         self.assertNotIn("routing_properties", node.to_dict())
+
+
+class LoadRoutePolicyTests(unittest.TestCase):
+    def _write_policy(self, repo: Path, text: str) -> Path:
+        wg = repo / ".workgraph"
+        wg.mkdir(parents=True, exist_ok=True)
+        path = wg / "route-policy.toml"
+        path.write_text(text)
+        return path
+
+    def test_absent_file_returns_defaults(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = load_route_policy(Path(tmp))
+        self.assertIs(policy, DEFAULT_MODEL_ROUTE_POLICY)
+
+    def test_mode_off_disables_policy(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_policy(Path(tmp), 'mode = "off"\n')
+            self.assertIsNone(load_route_policy(Path(tmp)))
+
+    def test_file_lists_are_authoritative(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_policy(
+                Path(tmp),
+                'mode = "enforce"\n'
+                'prohibited_prefixes = ["blockedco"]\n'
+                'premium_prefixes = ["bigname"]\n'
+                'standard_prefixes = ["midname"]\n'
+                'fast_prefixes = ["smallname"]\n',
+            )
+            policy = load_route_policy(Path(tmp))
+        self.assertIn("blockedco", policy.prohibited_prefixes)
+        self.assertEqual(policy.tier_of("bigname:huge"), "premium")
+        self.assertEqual(policy.tier_of("midname:mid"), "standard")
+        self.assertEqual(policy.tier_of("smallname:tiny"), "fast")
+        # Built-in premium prefix no longer premium once the file overrides it
+        self.assertNotEqual(policy.tier_of("kimi-coding:k3"), "premium")
+
+    def test_missing_keys_fall_back_to_defaults(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_policy(Path(tmp), 'mode = "enforce"\n')
+            policy = load_route_policy(Path(tmp))
+        self.assertIn("anthropic", policy.prohibited_prefixes)
+        self.assertEqual(policy.tier_of("ollama:gemma"), "fast")
+        self.assertEqual(policy.tier_of("kimi-coding:k3"), "premium")
+
+    def test_invalid_toml_falls_back_with_warning(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_policy(Path(tmp), "this is [not valid toml\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                policy = load_route_policy(Path(tmp))
+        self.assertIs(policy, DEFAULT_MODEL_ROUTE_POLICY)
+        self.assertIn("could not parse", err.getvalue())
+
+    def test_materialize_uses_repo_policy_file(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._write_policy(
+                repo,
+                'mode = "enforce"\nprohibited_prefixes = ["zai"]\n',
+            )
+            calls: list[list[str]] = []
+
+            def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+                calls.append(cmd)
+                return _ok()
+
+            node = PlannedNode(id="n", title="N", model="zai:glm-5.2")
+            count = materialize_plan([node], repo, runner=runner)
+        # The file prohibits zai, so the node is skipped even though the
+        # built-in policy allows it.
+        self.assertEqual(count, 0)
+        self.assertEqual(len(calls), 0)
 
 
 class InsertReviewGatesTests(unittest.TestCase):

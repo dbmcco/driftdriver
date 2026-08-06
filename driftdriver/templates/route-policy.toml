@@ -1,9 +1,20 @@
-# Route policy for wg add / wg edit --model (enforced by the wg binary).
-# Mirrors driftdriver.planner_core.DEFAULT_MODEL_ROUTE_POLICY.
-# Absent file = policy off. mode "warn" = log only.
+# Route policy for wg add / wg edit --model (enforced by the wg binary at
+# dispatch) and for driftdriver.planner_core route validation at materialize.
+# This file is the single source both layers read; edit it here and every repo
+# picks it up on its next `driftdriver install` (session start).
+#
+# Absent file = planner_core falls back to its built-in defaults.
+# mode = "off" disables route validation entirely. mode = "warn" = log only
+# (wg binary side).
 
 mode = "enforce"
 prohibited_prefixes = ["anthropic"]
 conditional_providers = ["lunaroute"]
+
+# Tier tables. The cheapest-sufficient floor gate in planner_core derives a
+# floor from each node's declared routing properties and compares it against
+# the tier of the actual selected model, classified by these prefixes.
+fast_prefixes = ["ollama:"]
+standard_prefixes = ["zai:", "kimi-coding:kimi-for-coding"]
 premium_prefixes = ["kimi-coding:k3", "openai-codex"]
 require_escalation_reason = true
