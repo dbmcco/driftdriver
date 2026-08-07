@@ -17,6 +17,7 @@ from driftdriver.intelligence import evaluator as intelligence_evaluator
 from driftdriver.intelligence.db import PostgresConfig
 from driftdriver.intelligence.evaluator import (
     DecisionEnvelope,
+    _coerce_decisions,
     default_model_invoker,
     default_task_creator,
     evaluate_pending_signals,
@@ -531,3 +532,147 @@ class TestIntelligenceEvaluator(unittest.TestCase):
         self.assertEqual(result["status"], "created")
         self.assertEqual(result["attempts"], 2)
         self.assertEqual(calls, [10, 10])
+
+    # --- Malformed adopt envelope rejection (followup.reject-malformed-adopt-envelopes) ---
+    #
+    # Semantics chosen: an adopt decision that arrives with empty recommended_actions
+    # is DEMOTED to 'defer' (not dropped). This preserves the signal for re-evaluation
+    # rather than silently discarding upstream output. An adopt without actions violates
+    # the adopt contract documented in the evaluator system prompt, so it must never be
+    # dispatched as a task.
+
+    def test_coerce_decisions_demotes_adopt_without_recommended_actions(self) -> None:
+        raw = {
+            "decisions": [
+                {
+                    "signal_id": "sig-1",
+                    "decision": "adopt",
+                    "confidence": 0.92,
+                    "rationale": "Looks important",
+                    "recommended_actions": [],
+                    "relevance_to_stack": "maybe",
+                    "urgency": "high",
+                }
+            ]
+        }
+
+        envelopes = _coerce_decisions(raw, model="claude-haiku-4-5")
+
+        self.assertEqual(len(envelopes), 1)
+        demoted = envelopes[0]
+        self.assertEqual(demoted.decision, "defer")
+        self.assertEqual(demoted.signal_id, "sig-1")
+        self.assertIn("auto-demoted", demoted.rationale)
+        self.assertIn("lacked recommended_actions", demoted.rationale)
+        # Original rationale is preserved for operator context.
+        self.assertIn("Looks important", demoted.rationale)
+
+    def test_coerce_decisions_demotes_adopt_with_only_blank_recommended_actions(self) -> None:
+        # Whitespace-only entries must be treated as empty (they are stripped today).
+        raw = {
+            "decisions": [
+                {
+                    "signal_id": "sig-2",
+                    "decision": "adopt",
+                    "confidence": 0.8,
+                    "rationale": "",
+                    "recommended_actions": ["   ", ""],
+                    "relevance_to_stack": "",
+                    "urgency": "medium",
+                }
+            ]
+        }
+
+        envelopes = _coerce_decisions(raw, model="claude-haiku-4-5")
+
+        self.assertEqual(envelopes[0].decision, "defer")
+        self.assertIn("auto-demoted", envelopes[0].rationale)
+
+    def test_coerce_decisions_preserves_actionable_adopt(self) -> None:
+        raw = {
+            "decisions": [
+                {
+                    "signal_id": "sig-3",
+                    "decision": "adopt",
+                    "confidence": 0.9,
+                    "rationale": "Concrete follow-up",
+                    "recommended_actions": ["Bump workgraph dep"],
+                    "relevance_to_stack": "high",
+                    "urgency": "high",
+                }
+            ]
+        }
+
+        envelopes = _coerce_decisions(raw, model="claude-haiku-4-5")
+
+        self.assertEqual(envelopes[0].decision, "adopt")
+        self.assertEqual(envelopes[0].recommended_actions, ["Bump workgraph dep"])
+
+    def test_coerce_decisions_does_not_demote_empty_actions_for_non_adopt_decisions(self) -> None:
+        # skip/watch/defer legitimately allow empty recommended_actions.
+        raw = {
+            "decisions": [
+                {
+                    "signal_id": "sig-skip",
+                    "decision": "skip",
+                    "confidence": 0.1,
+                    "rationale": "noise",
+                    "recommended_actions": [],
+                    "relevance_to_stack": "",
+                    "urgency": "low",
+                },
+                {
+                    "signal_id": "sig-watch",
+                    "decision": "watch",
+                    "confidence": 0.5,
+                    "rationale": "wait",
+                    "recommended_actions": [],
+                    "relevance_to_stack": "",
+                    "urgency": "medium",
+                },
+                {
+                    "signal_id": "sig-defer",
+                    "decision": "defer",
+                    "confidence": 0.5,
+                    "rationale": "later",
+                    "recommended_actions": [],
+                    "relevance_to_stack": "",
+                    "urgency": "medium",
+                },
+            ]
+        }
+
+        envelopes = _coerce_decisions(raw, model="claude-haiku-4-5")
+
+        decisions = [env.decision for env in envelopes]
+        self.assertEqual(decisions, ["skip", "watch", "defer"])
+        for env in envelopes:
+            self.assertNotIn("auto-demoted", env.rationale)
+
+    def test_default_task_creator_rejects_empty_actions_adopt_without_dispatching(self) -> None:
+        signal = _signal(
+            source_type="vibez",
+            source_id="msg-malformed",
+            signal_type="hot_alert",
+            title="Phantom adopt",
+        )
+        envelope = DecisionEnvelope(
+            signal_id=str(signal.id),
+            decision="adopt",
+            confidence=0.95,
+            rationale="",
+            recommended_actions=[],
+            relevance_to_stack="",
+            urgency="high",
+            decided_by="claude-haiku-4-5-20251001",
+        )
+
+        run_mock = mock.MagicMock()
+        with mock.patch("driftdriver.intelligence.evaluator.subprocess.run", run_mock):
+            result = default_task_creator(signal, envelope)
+
+        # Defense-in-depth: never reach `wg add` for a malformed adopt envelope.
+        run_mock.assert_not_called()
+        self.assertEqual(result["action"], "adopt")
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["reason"], "empty recommended_actions")

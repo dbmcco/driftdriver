@@ -10,7 +10,7 @@ import os
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -520,6 +520,18 @@ def _build_user_prompt(
     )
 
 
+def _is_actionable_adopt(envelope: DecisionEnvelope) -> bool:
+    """True only when an adopt decision carries concrete recommended_actions.
+
+    The adopt contract (see the evaluator system prompt) requires recommended_actions
+    to name a specific ecosystem component and state a concrete action. An adopt
+    envelope with empty recommended_actions is malformed and must never be
+    dispatched as a task. ``skip``/``watch``/``defer`` legitimately allow empty
+    recommended_actions, so this only validates the adopt case.
+    """
+    return envelope.decision == "adopt" and bool(envelope.recommended_actions)
+
+
 def _coerce_decisions(raw: Any, *, model: str) -> list[DecisionEnvelope]:
     if not isinstance(raw, dict):
         raise TypeError("model response must be a dict")
@@ -533,18 +545,25 @@ def _coerce_decisions(raw: Any, *, model: str) -> list[DecisionEnvelope]:
         recommended_actions = item.get("recommended_actions")
         if not isinstance(recommended_actions, list):
             recommended_actions = []
-        envelopes.append(
-            DecisionEnvelope(
-                signal_id=str(item.get("signal_id") or "").strip(),
-                decision=str(item.get("decision") or "").strip(),
-                confidence=float(item.get("confidence") or 0.0),
-                rationale=str(item.get("rationale") or "").strip(),
-                recommended_actions=[str(entry).strip() for entry in recommended_actions if str(entry).strip()],
-                relevance_to_stack=str(item.get("relevance_to_stack") or "").strip(),
-                urgency=str(item.get("urgency") or "medium").strip(),
-                decided_by=model,
-            )
+        envelope = DecisionEnvelope(
+            signal_id=str(item.get("signal_id") or "").strip(),
+            decision=str(item.get("decision") or "").strip(),
+            confidence=float(item.get("confidence") or 0.0),
+            rationale=str(item.get("rationale") or "").strip(),
+            recommended_actions=[str(entry).strip() for entry in recommended_actions if str(entry).strip()],
+            relevance_to_stack=str(item.get("relevance_to_stack") or "").strip(),
+            urgency=str(item.get("urgency") or "medium").strip(),
+            decided_by=model,
         )
+        # Malformed adopt (adopt without concrete recommended_actions) violates the
+        # adopt contract and would dispatch a degenerate task. Demote to defer so the
+        # signal is preserved for re-evaluation instead of being dropped or acted on.
+        if envelope.decision == "adopt" and not _is_actionable_adopt(envelope):
+            demoted_rationale = "auto-demoted: adopt envelope lacked recommended_actions"
+            if envelope.rationale:
+                demoted_rationale = f"{demoted_rationale}; {envelope.rationale}"
+            envelope = replace(envelope, decision="defer", rationale=demoted_rationale)
+        envelopes.append(envelope)
     return envelopes
 
 
@@ -642,6 +661,15 @@ def _update_watchlist(config: dict[str, Any], signal: Signal, envelope: Decision
 
 
 def default_task_creator(signal: Signal, envelope: DecisionEnvelope) -> dict[str, Any]:
+    # Defense-in-depth: even if upstream demotion did not run, never dispatch a task
+    # for an adopt envelope lacking concrete recommended_actions. Such an envelope is
+    # malformed and would create a degenerate "act on" task with nothing to act on.
+    if envelope.decision == "adopt" and not _is_actionable_adopt(envelope):
+        return {
+            "action": "adopt",
+            "status": "rejected",
+            "reason": "empty recommended_actions",
+        }
     date_prefix = signal.detected_at.date().isoformat()
     signal_suffix = str(signal.id).split("-")[0]
     task_id = f"ecosystem-adopt-{date_prefix}-{signal_suffix}"
