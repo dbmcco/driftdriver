@@ -8,7 +8,7 @@
 # (wg binary side).
 
 mode = "enforce"
-prohibited_prefixes = ["anthropic"]
+prohibited_prefixes = []
 conditional_providers = ["lunaroute"]
 
 # Tier tables. The cheapest-sufficient floor gate in planner_core derives a

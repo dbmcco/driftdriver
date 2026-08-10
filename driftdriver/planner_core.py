@@ -116,7 +116,7 @@ class PlannedNode:
 class ModelRoutePolicy:
     """Policy governing which model providers may be assigned to workgraph tasks."""
 
-    prohibited_prefixes: tuple[str, ...] = ("anthropic",)
+    prohibited_prefixes: tuple[str, ...] = ()
     conditional_providers: tuple[str, ...] = ("lunaroute",)
     tier_prefixes: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
         "fast": ("ollama:",),
