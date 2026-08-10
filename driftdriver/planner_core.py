@@ -486,7 +486,7 @@ def build_decompose_prompt(
                 "## Model Routing\n"
                 "Every node MUST include route assignments:\n"
                 "- route_tier: one of `fast`, `standard`, `premium`\n"
-                "- model: explicit worker route (e.g. `pi:zai:glm-5.2`, `pi:ollama:qwopus3.6:27b-v2-q4-64k` for local quality)\n\n"
+                "- model: explicit worker route (e.g. `pi:zai:glm-5.2`, `pi:ollama:gemma4:26b`)\n\n"
                 "| Tier | Cost | Eligible models |\n"
                 "|------|------|-----------------|\n"
                 "| **Fast** (simple leaf tasks) | Free, local | `ollama:` prefixed models |\n"
