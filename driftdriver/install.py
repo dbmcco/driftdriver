@@ -983,10 +983,10 @@ def _make_executable(path: Path) -> None:
 def install_route_policy(wg_dir: Path) -> bool:
     """Install the default route-policy.toml for wg add/edit enforcement.
 
-    Mirrors driftdriver.planner_core.DEFAULT_MODEL_ROUTE_POLICY: anthropic
-    prohibited for workgraph-dispatched tasks, lunaroute conditional, premium
-    tiers require an escalation reason. The wg binary ignores the file's
-    absence, so this is opt-out by deletion, never a surprise default.
+    Mirrors driftdriver.planner_core.DEFAULT_MODEL_ROUTE_POLICY: lunaroute
+    conditional, premium tiers require an escalation reason. The wg binary
+    ignores the file's absence, so this is opt-out by deletion, never a
+    surprise default.
     """
     return _write_text_if_changed(
         wg_dir / "route-policy.toml", _template_text("route-policy.toml")

@@ -495,8 +495,7 @@ def build_decompose_prompt(
                 "Assign the cheapest tier that can do the job well. Small "
                 "strongly-verified leaf tasks default to fast. Premium REQUIRES a "
                 "non-empty escalation_reason explaining why cheaper tiers are "
-                "insufficient. Never assign `anthropic/*` models (prohibited for "
-                "workgraph-dispatched tasks). Lunaroute models only with explicit "
+                "insufficient. Lunaroute models only with explicit "
                 "operator opt-in.\n"
             )
         # Build the output format field list
