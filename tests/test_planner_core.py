@@ -176,13 +176,13 @@ class ParsePlanOutputTests(unittest.TestCase):
 
 class ValidateModelRoutesTests(unittest.TestCase):
     def test_anthropic_colon_prefix_flagged(self) -> None:
-        violations = validate_model_routes({"n1": "anthropic:claude-sonnet"})
+        violations = validate_model_routes({"n1": "anthropic:claude-sonnet"}, policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)))
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0].node_id, "n1")
         self.assertIn("prohibited", violations[0].reason.lower())
 
     def test_anthropic_slash_prefix_flagged(self) -> None:
-        violations = validate_model_routes({"n1": "anthropic/claude-opus"})
+        violations = validate_model_routes({"n1": "anthropic/claude-opus"}, policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)))
         self.assertEqual(len(violations), 1)
 
     def test_lunaroute_flagged_by_default(self) -> None:
@@ -210,11 +210,11 @@ class ValidateModelRoutesTests(unittest.TestCase):
         self.assertEqual(len(violations), 1)
 
     def test_reason_is_full_sentence(self) -> None:
-        violations = validate_model_routes({"n1": "anthropic:sonnet"})
+        violations = validate_model_routes({"n1": "anthropic:sonnet"}, policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)))
         self.assertTrue(violations[0].reason.endswith("."))
 
     def test_mixed_case_prohibited_prefix_flagged(self) -> None:
-        violations = validate_model_routes({"n1": "Anthropic/Claude"})
+        violations = validate_model_routes({"n1": "Anthropic/Claude"}, policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)))
         self.assertEqual(len(violations), 1)
         self.assertIn("prohibited", violations[0].reason.lower())
 
@@ -386,6 +386,7 @@ class MaterializePlanTests(unittest.TestCase):
         route_models = {"ok": "zai:glm-5.2", "bad": "anthropic:claude-sonnet"}
         count = materialize_plan(
             nodes, Path("/repo"), route_models=route_models, runner=runner,
+            policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)),
         )
         self.assertEqual(count, 1)
         self.assertEqual(len(calls), 1)
@@ -524,7 +525,7 @@ class EscalationReasonTests(unittest.TestCase):
         self.assertEqual(violations[0].kind, "missing-escalation-reason")
 
     def test_prohibited_kind_still_set(self) -> None:
-        violations = validate_model_routes({"n1": "anthropic:claude"})
+        violations = validate_model_routes({"n1": "anthropic:claude"}, policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)))
         self.assertEqual(violations[0].kind, "prohibited")
 
     def test_conditional_kind_still_set(self) -> None:
@@ -558,7 +559,7 @@ class MaterializeStripPinTests(unittest.TestCase):
         node = PlannedNode(id="bad", title="Bad", model="anthropic:claude")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            count = materialize_plan([node], Path("/repo"), runner=runner)
+            count = materialize_plan([node], Path("/repo"), runner=runner, policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)))
         self.assertEqual(count, 0)
         self.assertEqual(len(calls), 0)
 
@@ -690,6 +691,7 @@ class UndersizedRouteTests(unittest.TestCase):
         violations = validate_model_routes(
             {"n1": "anthropic:claude"},
             node_properties={"n1": {"blast_radius": "single_file", "risk": "low"}},
+            policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)),
         )
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0].kind, "prohibited")
@@ -807,7 +809,7 @@ class LoadRoutePolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self._write_policy(Path(tmp), 'mode = "enforce"\n')
             policy = load_route_policy(Path(tmp))
-        self.assertIn("anthropic", policy.prohibited_prefixes)
+        self.assertEqual(policy.prohibited_prefixes, ())
         self.assertEqual(policy.tier_of("ollama:gemma"), "fast")
         self.assertEqual(policy.tier_of("kimi-coding:k3"), "premium")
 
