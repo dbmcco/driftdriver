@@ -1074,10 +1074,11 @@ class ModelRoutingSectionTests(unittest.TestCase):
         self.assertIn("Standard", prompt)
         self.assertIn("Premium", prompt)
 
-    def test_contains_anthropic_prohibition(self) -> None:
+    def test_no_anthropic_prohibition_in_prompt(self) -> None:
         bundle = PolicyBundle(name="t", mode="emit-json", request_routes=True)
         prompt = build_decompose_prompt("Build X", bundle=bundle)
-        self.assertIn("anthropic", prompt.lower())
+        self.assertNotIn("never assign", prompt.lower())
+        self.assertNotIn("prohibited for workgraph", prompt.lower())
 
     def test_contains_escalation_reason_requirement(self) -> None:
         bundle = PolicyBundle(name="t", mode="emit-json", request_routes=True)
