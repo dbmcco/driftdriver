@@ -166,7 +166,9 @@ class ExecutorShim:
 
         match directive.action:
             case Action.CREATE_TASK:
-                cmd = wg + ["add", p["title"], "--id", p["task_id"], "--no-place"]
+                # --no-place was removed upstream (hid work / dispatched
+                # implicitly); a plain add creates a visible draft task.
+                cmd = wg + ["add", p["title"], "--id", p["task_id"]]
                 if p.get("description"):
                     cmd += ["-d", p["description"]]
                 if p.get("assign"):
@@ -223,7 +225,6 @@ class ExecutorShim:
                 return wg + [
                     "add", f"validate: {p['parent_task_id']}",
                     "--id", f"validate-{p['parent_task_id']}",
-                    "--no-place",
                     "--after", p["parent_task_id"],
                     "-t", "validation",
                     "-d", p.get("criteria", "Verify task deliverables"),

@@ -127,7 +127,7 @@ class TestGuardedAddDriftTask(unittest.TestCase):
         self.assertEqual(result, "capped")
 
     def test_creates_with_no_place_flag(self) -> None:
-        """When under budget, creates via directive with --no-place and records to ledger."""
+        """When under budget, creates via directive (no --no-place; removed upstream) and records to ledger."""
         captured_cmd: list[str] = []
 
         def mock_run(cmd, *, cwd=None, timeout=40.0):
@@ -153,7 +153,8 @@ class TestGuardedAddDriftTask(unittest.TestCase):
                 extra_tags=["quality", "review"],
             )
         self.assertEqual(result, "created")
-        self.assertIn("--no-place", captured_cmd)
+        # --no-place was removed upstream (hid work); the shim must not pass it.
+        self.assertNotIn("--no-place", captured_cmd)
         self.assertIn("qadrift", captured_cmd)
         self.assertIn("quality", captured_cmd)
         # Verify budget ledger was written

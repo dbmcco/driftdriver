@@ -44,7 +44,8 @@ class TestExecutorShim(unittest.TestCase):
             self.assertIn("add", cmd)
             self.assertIn("--id", cmd)
             self.assertIn("drift-scope-t1", cmd)
-            self.assertIn("--no-place", cmd)
+            # --no-place was removed upstream; the shim must not pass it.
+            self.assertNotIn("--no-place", cmd)
             self.assertNotIn("--immediate", cmd)
 
     @patch("driftdriver.executor_shim.subprocess.run")
@@ -62,9 +63,10 @@ class TestExecutorShim(unittest.TestCase):
             self.assertEqual(result, "completed")
             cmd = mock_run.call_args[0][0]
             self.assertIn("add", cmd)
-            self.assertIn("--no-place", cmd)
             self.assertIn("--after", cmd)
             self.assertIn("t1", cmd)
+            # --no-place was removed upstream; the shim must not pass it.
+            self.assertNotIn("--no-place", cmd)
             self.assertNotIn("--immediate", cmd)
 
     @patch("driftdriver.executor_shim.load_dispatch_authority")
@@ -280,7 +282,7 @@ class TestExecutorShimLive(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             wg_dir = Path(tmp) / ".workgraph"
             subprocess.run(
-                ["wg", "--dir", str(wg_dir), "init", "--model", "claude:opus"],
+                ["wg", "--dir", str(wg_dir), "init", "--model", "pi:zai:glm-5.2"],
                 capture_output=True, text=True, check=True,
             )
             log = DirectiveLog(wg_dir / "directives")
@@ -299,7 +301,7 @@ class TestExecutorShimLive(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             wg_dir = Path(tmp) / ".workgraph"
             subprocess.run(
-                ["wg", "--dir", str(wg_dir), "init", "--model", "claude:opus"],
+                ["wg", "--dir", str(wg_dir), "init", "--model", "pi:zai:glm-5.2"],
                 capture_output=True, text=True, check=True,
             )
             subprocess.run(

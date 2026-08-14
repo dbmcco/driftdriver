@@ -320,7 +320,7 @@ class NorthstarDriftTests(unittest.TestCase):
             repo = Path(td) / "meridian"
             repo.mkdir(parents=True)
             subprocess.run(
-                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "claude:opus"],
+                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "pi:zai:glm-5.2"],
                 cwd=str(repo),
                 check=True,
                 capture_output=True,
@@ -350,7 +350,7 @@ class NorthstarDriftTests(unittest.TestCase):
             repo = Path(td) / "meridian"
             repo.mkdir(parents=True)
             subprocess.run(
-                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "claude:opus"],
+                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "pi:zai:glm-5.2"],
                 cwd=str(repo),
                 check=True,
                 capture_output=True,
@@ -381,7 +381,7 @@ class NorthstarDriftTests(unittest.TestCase):
             (repo / ".gitignore").write_text(".workgraph/\n", encoding="utf-8")
             (repo / "scratch.txt").write_text("dirty\n", encoding="utf-8")
             subprocess.run(
-                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "claude:opus"],
+                ["wg", "--dir", str(repo / ".workgraph"), "init", "--model", "pi:zai:glm-5.2"],
                 cwd=str(repo),
                 check=True,
                 capture_output=True,

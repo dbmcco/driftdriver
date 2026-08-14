@@ -1,5 +1,7 @@
 # ABOUTME: Drift-to-Evaluation Bridge — translates Speedrift drift lane findings
-# ABOUTME: into WG evaluation records via the wg evaluate --submit CLI.
+# ABOUTME: into WG evaluation records written directly to the agency store.
+# ABOUTME: (`wg evaluate record` was retired upstream; the file format below
+# ABOUTME: matches workgraph's load_all_evaluations reader exactly.)
 
 from __future__ import annotations
 
@@ -159,52 +161,48 @@ def build_evaluation(
 
 
 def write_evaluation(repo_path: Path, evaluation: dict) -> Path:
-    """Submit an evaluation dict to the wg evaluate record CLI.
+    """Write an evaluation record into the wg agency evaluations store.
 
-    Uses `wg evaluate record` with explicit fields. This avoids direct
-    .workgraph/agency/evaluations/ file writes,
-    keeping the bridge compatible with future wg storage backends.
+    The legacy `wg evaluate record` CLI mutation was retired upstream
+    ("legacy evaluation mutation is retired; `wg submit` runs exact
+    manifest-bound FLIP then eval"). The sanctioned external path is now the
+    evaluation JSON files themselves: wg reads every ``*.json`` under
+    ``.workgraph/agency/evaluations/`` via ``load_all_evaluations`` (the same
+    reader behind ``wg evaluate show`` and the agency score readers). This
+    writes the exact ``Evaluation`` schema workgraph's types.rs defines,
+    using record_evaluation's ``eval-<task_id>-<timestamp>`` naming.
     """
     wg_dir = repo_path / ".workgraph"
-    cmd = [
-        "wg",
-        "--dir",
-        str(wg_dir),
-        "--json",
-        "evaluate",
-        "record",
-        "--task",
-        str(evaluation.get("task_id") or ""),
-        "--score",
-        str(evaluation.get("score") or 0.0),
-        "--source",
-        str(evaluation.get("evaluator") or evaluation.get("source") or "speedrift:unknown"),
-    ]
-    if evaluation.get("notes"):
-        cmd += ["--notes", str(evaluation["notes"])]
-    dimensions = evaluation.get("dimensions")
-    if isinstance(dimensions, dict):
-        for name, score in dimensions.items():
-            cmd += ["--dim", f"{name}={score}"]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        cwd=str(repo_path),
-        timeout=10,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"wg evaluate record failed (exit {result.returncode}): {result.stderr.strip()}"
-        )
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"wg evaluate record returned invalid JSON: {result.stdout!r}") from exc
-    path = data.get("path")
-    if not path:
-        raise RuntimeError(f"wg evaluate record did not return an evaluation path: {result.stdout!r}")
-    return Path(str(path))
+    evals_dir = wg_dir / "agency" / "evaluations"
+    evals_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = str(evaluation.get("timestamp") or "")
+    if not timestamp:
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+    task_id = str(evaluation.get("task_id") or "unknown")
+    safe_ts = timestamp.replace(":", "-")
+    record = {
+        "id": str(evaluation.get("id") or f"eval-{task_id}-{safe_ts}"),        "task_id": task_id,
+        "agent_id": str(evaluation.get("agent_id") or ""),
+        "role_id": str(evaluation.get("role_id") or ""),
+        "tradeoff_id": str(evaluation.get("tradeoff_id") or ""),
+        "score": float(evaluation.get("score") or 0.0),
+        "dimensions": {
+            str(k): float(v)
+            for k, v in (evaluation.get("dimensions") or {}).items()
+        },
+        "notes": str(evaluation.get("notes") or ""),
+        "evaluator": str(evaluation.get("evaluator") or ""),
+        "timestamp": timestamp,
+        "source": str(
+            evaluation.get("source")
+            or evaluation.get("evaluator")
+            or "speedrift:unknown"
+        ),
+    }
+    path = evals_dir / f"{record['id']}.json"
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    return path
 
 
 def bridge_findings_to_evaluations(

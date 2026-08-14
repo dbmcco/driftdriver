@@ -424,7 +424,7 @@ def build_decompose_prompt(
             "   - A `-d` description covering: what to do, which files to touch, "
             "acceptance criteria\n"
             "   - `--after` dependencies where appropriate\n"
-            "   - `--no-place` when the task should be immediately dispatchable\n"
+            "   - `wg publish <id> --only` when the task should be immediately dispatchable\n"
             "3. Keep tasks small — each should be completable in one focused session.\n"
             "4. After creating all tasks, run:\n"
             "   ./.workgraph/coredrift ensure-contracts --apply\n"
