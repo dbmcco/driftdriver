@@ -844,6 +844,15 @@ def ensure_executor_guidance(
                 cur = new_text
                 changed = True
 
+            # Runner injection rewrites the command to a RELATIVE
+            # .workgraph/... path; re-absolutize so worktree-isolated
+            # agents still resolve it. The pre-injection absolutize pass
+            # above cannot see the newly injected command.
+            new_text = _absolutize_executor_command(cur, wg_dir.parent)
+            if new_text is not None:
+                cur = new_text
+                changed = True
+
             new_text = _inject_claude_task_env(cur)
             if new_text is not None:
                 cur = new_text

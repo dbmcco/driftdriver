@@ -111,11 +111,10 @@ class ClaudeExecutorInstallTests(unittest.TestCase):
             self.assertIn(str(claude_toml), patched)
             data = tomllib.loads(claude_toml.read_text(encoding="utf-8"))
             executor = data["executor"]
-            # Runner injection rewrites "claude" to the wrapper; note this
-            # stays relative on the patch path (absolutize runs before the
-            # injection in the same pass — a known ordering gap, tracked as a
-            # follow-up: absolutize should re-run after runner injection).
+            # Runner injection rewrites "claude" to the wrapper; the command
+            # must end up ABSOLUTE so worktree-isolated agents resolve it.
             self.assertTrue(executor["command"].endswith("claude-run.sh"))
+            self.assertTrue(Path(executor["command"]).is_absolute())
             self.assertEqual(executor["args"], [])
             self.assertEqual(executor["env"]["WG_TASK_ID"], "{{task_id}}")
 
