@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from driftdriver.acceptance_gate import check_task
 from driftdriver.directive_schemas import DirectiveValidationError, validate_params
 from driftdriver.directives import Action, Directive, DirectiveLog
 from driftdriver.speedriftd_state import load_dispatch_authority
@@ -57,6 +58,32 @@ class ExecutorShim:
             )
             return "blocked"
         cmd = self._build_command(directive)
+        # Acceptance gate: COMPLETE_TASK directives run the deterministic gate
+        # BEFORE `wg done` fires. A blocked gate keeps the task's current
+        # status and returns the failing criteria to the calling agent.
+        if directive.action is Action.COMPLETE_TASK:
+            gate = check_task(
+                self.wg_dir, directive.params["task_id"], record_degrade=True
+            )
+            if gate.is_blocking:
+                self.log.mark_failed(
+                    directive.id,
+                    exit_code=1,
+                    error=gate.reason,
+                    directive=directive,
+                    details={
+                        "error_code": "acceptance_gate_blocked",
+                        "retryable": False,
+                        "repairable": True,
+                        "gate_report": gate.to_dict(),
+                        "retryability_basis": "acceptance_criteria_unmet",
+                        "next_step": (
+                            "Fix the failing verify commands or reset the degrade "
+                            "counter, then re-attempt completion."
+                        ),
+                    },
+                )
+                return "blocked"
         try:
             result = subprocess.run(
                 cmd,

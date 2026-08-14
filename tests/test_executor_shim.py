@@ -176,6 +176,93 @@ class TestExecutorShim(unittest.TestCase):
             self.assertEqual(completed[0]["directive_id"], d.id)
 
 
+@patch("driftdriver.executor_shim.subprocess.run")
+class TestCompleteTaskAcceptanceGate(unittest.TestCase):
+    """COMPLETE_TASK runs the acceptance gate before `wg done` fires."""
+
+    def _make_directive(self, action: Action, params: dict) -> Directive:
+        return Directive(
+            source="test",
+            repo="test-repo",
+            action=action,
+            params=params,
+            reason="unit test",
+        )
+
+    def _gate(self, status: str, **kwargs):
+        from driftdriver.acceptance_gate import GateResult
+        return GateResult(status=status, task_id="t1", **kwargs)
+
+    def test_blocked_gate_prevents_wg_done(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with TemporaryDirectory() as tmp:
+            wg_dir = Path(tmp)
+            log = DirectiveLog(wg_dir / "directives")
+            shim = ExecutorShim(wg_dir=wg_dir, log=log)
+            d = self._make_directive(Action.COMPLETE_TASK, {"task_id": "t1"})
+            with patch(
+                "driftdriver.executor_shim.check_task",
+                return_value=self._gate("blocked", reason="ceiling reached"),
+            ) as mock_gate:
+                result = shim.execute(d)
+            self.assertEqual(result, "blocked")
+            mock_gate.assert_called_once()
+            # wg done must never fire when the gate blocks.
+            for call in mock_run.call_args_list:
+                self.assertNotIn("done", call[0][0])
+            failed = log.read_failed()
+            self.assertEqual(len(failed), 1)
+            self.assertEqual(
+                failed[0].get("error_code"),
+                "acceptance_gate_blocked",
+            )
+
+    def test_passing_gate_allows_wg_done(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with TemporaryDirectory() as tmp:
+            wg_dir = Path(tmp)
+            log = DirectiveLog(wg_dir / "directives")
+            shim = ExecutorShim(wg_dir=wg_dir, log=log)
+            d = self._make_directive(Action.COMPLETE_TASK, {"task_id": "t1"})
+            with patch(
+                "driftdriver.executor_shim.check_task",
+                return_value=self._gate("pass"),
+            ):
+                result = shim.execute(d)
+            self.assertEqual(result, "completed")
+            self.assertIn("done", mock_run.call_args[0][0])
+
+    def test_no_criteria_passes_through(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with TemporaryDirectory() as tmp:
+            wg_dir = Path(tmp)
+            log = DirectiveLog(wg_dir / "directives")
+            shim = ExecutorShim(wg_dir=wg_dir, log=log)
+            d = self._make_directive(Action.COMPLETE_TASK, {"task_id": "t1"})
+            with patch(
+                "driftdriver.executor_shim.check_task",
+                return_value=self._gate("no_criteria"),
+            ):
+                result = shim.execute(d)
+            self.assertEqual(result, "completed")
+            self.assertIn("done", mock_run.call_args[0][0])
+
+    def test_degraded_gate_allows_completion(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        with TemporaryDirectory() as tmp:
+            wg_dir = Path(tmp)
+            log = DirectiveLog(wg_dir / "directives")
+            shim = ExecutorShim(wg_dir=wg_dir, log=log)
+            d = self._make_directive(Action.COMPLETE_TASK, {"task_id": "t1"})
+            with patch(
+                "driftdriver.executor_shim.check_task",
+                return_value=self._gate("degraded", reason="override 1/3"),
+            ):
+                result = shim.execute(d)
+            self.assertEqual(result, "completed")
+            self.assertIn("done", mock_run.call_args[0][0])
+
+
 @unittest.skipUnless(shutil.which("wg"), "wg CLI not installed")
 class TestExecutorShimLive(unittest.TestCase):
     """Live integration tests — runs real wg commands."""
