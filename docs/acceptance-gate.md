@@ -17,9 +17,16 @@ Spec: `docs/superpowers/specs/2026-08-06-add-a-deterministic-acceptance-criteria
 3. Tasks with no verify commands pass with status `no_criteria` — the gate
    only does deterministic checks; semantic criteria remain the critic's job.
 
-The gate fires inside `cmd_check` on every post-task check. Degrade
-recording is guarded to completion attempts (task status `in-progress`);
-pre-task and manual checks are read-only.
+The gate fires at two points:
+
+1. **Dispatched-agent completions** — `executor_shim.py` runs the gate
+   before executing `wg done`. A blocked gate keeps the task's current
+   status and fails the directive with `error_code: acceptance_gate_blocked`
+   plus the full gate report.
+2. **Post-task checks** — `cmd_check` reports the gate in
+   `plugins_json["acceptance_gate"]`. Degrade recording is guarded to
+   completion attempts (task status `in-progress`); pre-task and manual
+   checks are read-only.
 
 ## Degrade-to-advisory escape hatch
 
@@ -50,6 +57,9 @@ budget. Only the wired completion path records a degrade.
 - `tests/test_acceptance_gate_integration.py` — completion-path blocking,
   degrade flow, ceiling trip, reset, passthrough via `check_task` on a real
   temp workgraph.
+- `tests/test_executor_shim.py::TestCompleteTaskAcceptanceGate` — the
+  COMPLETE_TASK intercept: blocked prevents `wg done`, pass/degraded/
+  no_criteria allow it.
 - `tests/test_acceptance_gate_e2e.py` — the `acceptance` CLI subcommands
   end to end against a real repo directory.
 
