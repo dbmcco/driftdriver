@@ -1,8 +1,8 @@
 # wg Binary Lineage Blocker — orphan-fix installation
 
-Date: 2026-08-14
+Date: 2026-08-14 — **RESOLVED same day** (see Resolution below)
 
-## Situation
+## Situation (historical)
 
 The orphan-process fix (macOS descendant collection + process-group
 signaling) is complete, tested, and committed on
@@ -49,3 +49,28 @@ source state that does not exist in any local branch of
    changes parser semantics and needs deliberate review.
 
 Until one of these lands, the orphan fix ships only as the verified branch.
+
+## Resolution (2026-08-14, later same day)
+
+The production binary's lineage was **Erik's upstream** (`graphwork/workgraph`).
+Upstream `origin/main` advanced `b0892ea7 → 29459696` (2026-08-10), and the
+`finalizer` actor variant landed upstream on 2026-07-28 (`0dd48b92`, "lazily
+mint candidate evaluation evidence"). Local main in workgraph-pr-staging was
+386 commits behind and contained no unique commits — the version string's
+`79fb2ddf0525` is a build/service-identity hash, not a git commit.
+
+Resolution steps:
+1. Fast-forwarded `workgraph-pr-staging` main to `origin/main` (`29459696`).
+2. Cherry-picked the orphan fix (`8aaed6d6` → `5cb7978f`), which also carries
+   the macOS `pipe2` fix that upstream still lacks.
+3. Verified: 3 orphan tests green; the 12 remaining lib-test failures are the
+   same pre-existing worktree-cleanup/graph-watcher set present on upstream
+   HEAD without the fix.
+4. Built release, confirmed the binary parses every live graph (driftdriver,
+   paia-os, paia-agent-runtime, founder-finance), installed (with ad-hoc
+   codesign), restarted the driftdriver daemon. Other repos' daemons pick up
+   the binary at their next natural restart.
+
+Status: **installed and live.** Upstream push of the cherry-pick is blocked
+(graphwork remote is 403); the fix rides on the local main and is also
+preserved on branch `fix/orphan-process-cleanup`.
