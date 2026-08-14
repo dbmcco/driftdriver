@@ -173,6 +173,87 @@ class GateResultTests(unittest.TestCase):
         self.assertIn("exit 1", failed.summary)
 
 
+class ConfiguredCeilingTests(unittest.TestCase):
+    """The degrade ceiling is configurable via drift-policy.toml [acceptance]."""
+
+    @staticmethod
+    def _write_policy(repo: Path, body: str, wg_name: str = ".workgraph") -> None:
+        wg = repo / wg_name
+        wg.mkdir(parents=True, exist_ok=True)
+        (wg / "drift-policy.toml").write_text(body, encoding="utf-8")
+
+    def test_policy_ceiling_overrides_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._write_policy(repo, '[acceptance]\ndegrade_ceiling = 1\n')
+            first = evaluate_acceptance("t1", ["false"], repo)
+            second = evaluate_acceptance("t1", ["false"], repo)
+        self.assertEqual(first.status, "degraded")
+        self.assertEqual(first.degrade_ceiling, 1)
+        self.assertEqual(second.status, "blocked")
+        self.assertEqual(second.degrade_ceiling, 1)
+
+    def test_policy_ceiling_overrides_default_wg_dir(self) -> None:
+        """The .wg workgraph dir is honored like .workgraph."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._write_policy(repo, '[acceptance]\ndegrade_ceiling = 1\n', wg_name=".wg")
+            first = evaluate_acceptance("t1", ["false"], repo)
+            second = evaluate_acceptance("t1", ["false"], repo)
+        self.assertEqual(first.status, "degraded")
+        self.assertEqual(second.status, "blocked")
+
+    def test_missing_policy_falls_back_to_three(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            statuses = [
+                evaluate_acceptance("t1", ["false"], repo).status for _ in range(4)
+            ]
+        self.assertEqual(statuses, ["degraded", "degraded", "degraded", "blocked"])
+
+    def test_invalid_ceiling_falls_back_to_three(self) -> None:
+        """Non-integer values fall back safely to the default."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._write_policy(repo, '[acceptance]\ndegrade_ceiling = "bogus"\n')
+            result = evaluate_acceptance("t1", ["false"], repo)
+            self.assertEqual(result.degrade_ceiling, 3)
+
+    def test_zero_ceiling_falls_back_to_three(self) -> None:
+        """Values below 1 are invalid; the gate never runs with a zero ceiling."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._write_policy(repo, '[acceptance]\ndegrade_ceiling = 0\n')
+            result = evaluate_acceptance("t1", ["false"], repo)
+            self.assertEqual(result.degrade_ceiling, 3)
+
+    def test_corrupt_policy_falls_back_to_three(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._write_policy(repo, 'not [ valid toml {{{')
+            result = evaluate_acceptance("t1", ["false"], repo)
+            self.assertEqual(result.degrade_ceiling, 3)
+
+    def test_explicit_arg_overrides_policy(self) -> None:
+        """An explicit degrade_ceiling argument wins over the policy file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._write_policy(repo, '[acceptance]\ndegrade_ceiling = 2\n')
+            first = evaluate_acceptance("t1", ["false"], repo, degrade_ceiling=1)
+            second = evaluate_acceptance("t1", ["false"], repo, degrade_ceiling=1)
+        self.assertEqual(first.status, "degraded")
+        self.assertEqual(second.status, "blocked")
+
+    def test_degrade_status_reports_policy_ceiling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._write_policy(repo, '[acceptance]\ndegrade_ceiling = 2\n')
+            save_degrade_state(repo, {"t1": 2, "t2": 1})
+            status = degrade_status(repo)
+        self.assertEqual(status["ceiling"], 2)
+        self.assertEqual(status["at_ceiling"], ["t1"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

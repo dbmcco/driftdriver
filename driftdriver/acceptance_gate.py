@@ -18,9 +18,15 @@ import datetime as dt
 import json
 import re
 import subprocess
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# Default per-repo degrade ceiling. Overridable via drift-policy.toml:
+#   [acceptance]
+#   degrade_ceiling = 5
+DEFAULT_DEGRADE_CEILING = 3
 
 
 # ---------------------------------------------------------------------------
@@ -127,14 +133,51 @@ def reset_degrade(repo: Path, task_id: str | None = None) -> int:
     return count
 
 
+def _policy_path(repo: Path) -> Path:
+    """Path to the repo's drift-policy.toml (same wg-dir resolution as the
+    degrade state file: .workgraph preferred, .wg accepted)."""
+    wg = repo / ".workgraph"
+    if not wg.exists():
+        wg = repo / ".wg"
+    return wg / "drift-policy.toml"
+
+
+def _load_ceiling(repo: Path) -> int:
+    """Load the degrade ceiling from drift-policy.toml ``[acceptance]``.
+
+    Falls back to ``DEFAULT_DEGRADE_CEILING`` when the policy file, the
+    section, or the key is missing, when the file is unreadable/corrupt, or
+    when the value is invalid (non-integer or < 1 — a zero ceiling would
+    silently make the gate un-degradable, which is not a sane config).
+    """
+    path = _policy_path(repo)
+    if not path.exists():
+        return DEFAULT_DEGRADE_CEILING
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return DEFAULT_DEGRADE_CEILING
+    section = data.get("acceptance")
+    if not isinstance(section, dict):
+        return DEFAULT_DEGRADE_CEILING
+    try:
+        value = int(section.get("degrade_ceiling"))
+    except (TypeError, ValueError):
+        return DEFAULT_DEGRADE_CEILING
+    if value < 1:
+        return DEFAULT_DEGRADE_CEILING
+    return value
+
+
 def degrade_status(repo: Path) -> dict[str, Any]:
     """Return a summary of degrade state for CLI display."""
     state = load_degrade_state(repo)
+    ceiling = _load_ceiling(repo)
     return {
         "total_degraded_tasks": len(state),
         "per_task": dict(state),
-        "ceiling": 3,  # default; could be config-driven
-        "at_ceiling": [tid for tid, c in state.items() if c >= 3],
+        "ceiling": ceiling,
+        "at_ceiling": [tid for tid, c in state.items() if c >= ceiling],
     }
 
 
@@ -148,7 +191,7 @@ def evaluate_acceptance(
     verify_commands: list[str],
     repo: Path,
     *,
-    degrade_ceiling: int = 3,
+    degrade_ceiling: int | None = None,
     timeout: int = 120,
     record_degrade: bool = True,
 ) -> GateResult:
@@ -157,6 +200,10 @@ def evaluate_acceptance(
     Each verify command is run in the repo. If all pass, the gate passes.
     If any fail, the gate blocks unless the task is under its degrade ceiling.
 
+    The degrade ceiling defaults to the repo's drift-policy.toml
+    ``[acceptance] degrade_ceiling`` (fallback ``DEFAULT_DEGRADE_CEILING``);
+    an explicit ``degrade_ceiling`` argument wins over the policy file.
+
     Tasks with no verify commands pass with status ``no_criteria`` (the gate
     can't check what it can't run; the critic handles semantic criteria).
 
@@ -164,6 +211,8 @@ def evaluate_acceptance(
     degrade slot. When False (inspection), the result is read-only — the gate
     reports what would happen without consuming the override.
     """
+    if degrade_ceiling is None:
+        degrade_ceiling = _load_ceiling(repo)
     if not verify_commands:
         return GateResult(
             status="no_criteria",

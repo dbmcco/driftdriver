@@ -39,6 +39,21 @@ blocks completion until the failures are fixed or the counter is reset.
 The ceiling is per-task within a per-repo state file, so a broken repo
 cannot rack up waived gates across unrelated tasks and lose signal.
 
+## Configuring the ceiling
+
+The degrade ceiling is configurable per repo in `drift-policy.toml`:
+
+```toml
+[acceptance]
+degrade_ceiling = 5   # default 3
+```
+
+Invalid values (non-integer or < 1), a missing section, or an unreadable
+policy file all fall back safely to the default of 3 — a zero ceiling would
+silently make the gate un-degradable, so it is treated as invalid. The
+`wg_dir` resolution matches the degrade state file (`.workgraph` preferred,
+`.wg` accepted).
+
 ## CLI
 
 ```
@@ -66,5 +81,5 @@ budget. Only the wired completion path records a degrade.
 ## Pattern lineage
 
 Matches `signal_gate.py`: hard gate by default, degrade-to-advisory hatch,
-escalate when ignored. Future work (out of scope this phase): config-driven
-ceiling in `drift-policy.toml`, cross-repo degrade aggregation.
+escalate when ignored. Future work (out of scope this phase): cross-repo
+degrade aggregation.

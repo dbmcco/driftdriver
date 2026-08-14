@@ -148,6 +148,20 @@ class TestDegradeFlow(unittest.TestCase):
         self.assertEqual(result.status, "no_criteria")
         self.assertFalse(result.is_blocking)
 
+    def test_check_task_uses_policy_ceiling(self) -> None:
+        """The wired completion path honors drift-policy.toml [acceptance]."""
+        with tempfile.TemporaryDirectory() as tmp:
+            wg_dir = _make_workgraph(tmp)
+            (wg_dir / "drift-policy.toml").write_text(
+                "[acceptance]\ndegrade_ceiling = 1\n", encoding="utf-8"
+            )
+            first = check_task(wg_dir, TASK_DEGRADE, record_degrade=True)
+            second = check_task(wg_dir, TASK_DEGRADE, record_degrade=True)
+        self.assertEqual(first.status, "degraded")
+        self.assertEqual(first.degrade_ceiling, 1)
+        self.assertEqual(second.status, "blocked")
+        self.assertIn("ceiling reached", second.reason)
+
 
 if __name__ == "__main__":
     unittest.main()
