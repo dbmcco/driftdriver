@@ -14,8 +14,11 @@ Model-mediated split:
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import fcntl
 import json
+import os
 import re
 import subprocess
 import tomllib
@@ -103,34 +106,114 @@ def _degrade_state_path(repo: Path) -> Path:
     return wg / "service" / "acceptance-degrade.json"
 
 
-def load_degrade_state(repo: Path) -> dict[str, int]:
-    """Load the per-repo degrade counter: {task_id: degrade_count}."""
-    path = _degrade_state_path(repo)
-    if not path.exists():
+def _degrade_quarantine_path(repo: Path) -> Path:
+    """Marker file: present while the degrade state was quarantined as corrupt.
+
+    While this marker exists the gate fails closed (hard block) for the repo
+    until an operator runs `driftdriver acceptance reset`. This prevents the
+    CRIT-1 fail-open: corrupt/missing-content state can never silently
+    restore a task's degrade budget.
+    """
+    return _degrade_state_path(repo).with_suffix(".quarantine")
+
+
+def _degrade_lock_path(repo: Path) -> Path:
+    return _degrade_state_path(repo).with_suffix(".lock")
+
+
+@contextlib.contextmanager
+def _degrade_lock(repo: Path):
+    """Serialize the degrade read-modify-write cycle (CRIT-2).
+
+    flock-based: releases automatically on process death, so a crashed
+    holder cannot wedge the gate. Advisory, same-uid — the threat model is
+    lost updates between concurrent completions, not hostile locking.
+    """
+    path = _degrade_lock_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def load_degrade_state(repo: Path) -> dict[str, int] | None:
+    """Load the per-repo degrade counter: {task_id: degrade_count}.
+
+    Returns None when the state is quarantined (corrupt or previously
+    corrupt): the caller must fail closed, not treat it as a fresh budget.
+    On corruption the offending file is renamed to
+    ``acceptance-degrade.json.corrupt-<timestamp>`` for inspection and a
+    quarantine marker is left behind; only `reset_degrade` clears it.
+    """
+    state_path = _degrade_state_path(repo)
+    if _degrade_quarantine_path(repo).exists():
+        return None
+    if not state_path.exists():
         return {}
     try:
-        return json.loads(path.read_text())
+        state = json.loads(state_path.read_text())
     except (json.JSONDecodeError, OSError):
+        # CRIT-1 remediation: quarantine + fail closed. Never silently
+        # reset the budget — that is the outcome the ceiling exists to
+        # prevent.
+        ts = dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+        try:
+            state_path.rename(state_path.with_name(f"{state_path.name}.corrupt-{ts}"))
+        except OSError:
+            pass
+        try:
+            _degrade_quarantine_path(repo).write_text(
+                f"quarantined {dt.datetime.now().isoformat()}\n", encoding="utf-8"
+            )
+        except OSError:
+            pass
+        return None
+    if not isinstance(state, dict):
         return {}
+    return {str(k): int(v) for k, v in state.items() if isinstance(v, (int, float))}
 
 
 def save_degrade_state(repo: Path, state: dict[str, int]) -> None:
-    """Persist the per-repo degrade counter."""
+    """Persist the per-repo degrade counter atomically (tmp + replace)."""
     path = _degrade_state_path(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def reset_degrade(repo: Path, task_id: str | None = None) -> int:
-    """Reset degrade count for a task (or all tasks if None). Returns count reset."""
-    state = load_degrade_state(repo)
-    if task_id:
-        count = state.pop(task_id, 0)
-        save_degrade_state(repo, state)
-        return 1 if count else 0
-    count = len(state)
-    save_degrade_state(repo, {})
-    return count
+    """Reset degrade count for a task (or all tasks if None). Returns count reset.
+
+    Also clears any quarantine marker: reset is the operator escape from the
+    fail-closed state left by a corrupt state file.
+    """
+    with _degrade_lock(repo):
+        quarantine = _degrade_quarantine_path(repo)
+        was_quarantined = quarantine.exists()
+        state = load_degrade_state(repo)
+        if state is None:
+            state = {}
+        if task_id:
+            count = state.pop(task_id, 0)
+            save_degrade_state(repo, state)
+        else:
+            count = len(state)
+            save_degrade_state(repo, {})
+        if was_quarantined or not task_id:
+            # Clear the marker on full reset, and on task reset if present
+            # (a quarantined repo has no live budget to selectively clear).
+            try:
+                quarantine.unlink()
+            except FileNotFoundError:
+                pass
+        return 1 if (task_id and count) else count
 
 
 def _policy_path(repo: Path) -> Path:
@@ -173,11 +256,20 @@ def degrade_status(repo: Path) -> dict[str, Any]:
     """Return a summary of degrade state for CLI display."""
     state = load_degrade_state(repo)
     ceiling = _load_ceiling(repo)
+    quarantined = state is None
+    if state is None:
+        state = {}
     return {
         "total_degraded_tasks": len(state),
         "per_task": dict(state),
         "ceiling": ceiling,
         "at_ceiling": [tid for tid, c in state.items() if c >= ceiling],
+        "quarantined": quarantined,
+        "note": (
+            "degrade state corrupt (gate fails closed); run `driftdriver acceptance reset` after inspection"
+            if quarantined
+            else None
+        ),
     }
 
 
@@ -234,27 +326,44 @@ def evaluate_acceptance(
             results=results,
         )
 
-    # Some commands failed — check degrade ceiling
-    state = load_degrade_state(repo)
-    current_degrades = state.get(task_id, 0)
+    # Some commands failed — check degrade ceiling. The whole
+    # read-modify-write cycle is serialized under the degrade lock so
+    # concurrent completions cannot lose updates or exceed the ceiling
+    # (CRIT-2).
+    with _degrade_lock(repo):
+        state = load_degrade_state(repo)
+        if state is None:
+            # CRIT-1 remediation: corrupt state fails closed.
+            return GateResult(
+                status="blocked",
+                task_id=task_id,
+                results=results,
+                reason=(
+                    "Degrade state is corrupt (quarantined); the gate fails closed "
+                    "rather than silently restoring override budget. Run "
+                    "`driftdriver acceptance reset` after inspecting the "
+                    "quarantined file."
+                ),
+            )
+        current_degrades = state.get(task_id, 0)
 
-    if current_degrades < degrade_ceiling:
-        # Under ceiling: allow with a degrade (operator override)
-        if record_degrade:
-            state[task_id] = current_degrades + 1
-            save_degrade_state(repo, state)
-        return GateResult(
-            status="degraded",
-            task_id=task_id,
-            results=results,
-            degrade_count=current_degrades + 1,
-            degrade_ceiling=degrade_ceiling,
-            reason=(
-                f"{len(failures)} of {len(results)} verify commands failed. "
-                f"Degraded (override {current_degrades + 1}/{degrade_ceiling}). "
-                f"Task completes with a warning."
-            ),
-        )
+        if current_degrades < degrade_ceiling:
+            # Under ceiling: allow with a degrade (operator override)
+            if record_degrade:
+                state[task_id] = current_degrades + 1
+                save_degrade_state(repo, state)
+            return GateResult(
+                status="degraded",
+                task_id=task_id,
+                results=results,
+                degrade_count=current_degrades + 1,
+                degrade_ceiling=degrade_ceiling,
+                reason=(
+                    f"{len(failures)} of {len(results)} verify commands failed. "
+                    f"Degraded (override {current_degrades + 1}/{degrade_ceiling}). "
+                    f"Task completes with a warning."
+                ),
+            )
 
     # At or above ceiling: hard block
     return GateResult(

@@ -101,14 +101,114 @@ class DegradeStateTests(unittest.TestCase):
             loaded = load_degrade_state(Path(tmp))
         self.assertEqual(loaded, {})
 
-    def test_load_corrupt_returns_empty(self) -> None:
+    def test_load_corrupt_returns_none_and_quarantines(self) -> None:
+        """CRIT-1: corrupt state must NOT silently reset the budget.
+
+        load_degrade_state returns None (corrupt marker) and quarantines the
+        file; the gate then fails closed (hard block) until an operator reset.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             path = repo / ".workgraph" / "service" / "acceptance-degrade.json"
             path.parent.mkdir(parents=True)
             path.write_text("not json")
             loaded = load_degrade_state(repo)
-        self.assertEqual(loaded, {})
+            self.assertIsNone(loaded)
+            quarantined = list(path.parent.glob("acceptance-degrade.json.corrupt-*"))
+            self.assertEqual(len(quarantined), 1)
+
+    def test_corrupt_state_blocks_hard(self) -> None:
+        """CRIT-1: after corruption the gate fails closed, not open."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            path = repo / ".workgraph" / "service" / "acceptance-degrade.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("{")
+            result = evaluate_acceptance("t1", ["false"], repo)
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(result.is_blocking)
+        self.assertIn("corrupt", result.reason.lower())
+
+    def test_missing_state_file_is_fresh_budget(self) -> None:
+        """A missing file is not corruption — fresh state, gate operates."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            loaded = load_degrade_state(repo)
+            self.assertEqual(loaded, {})
+
+    def test_reset_clears_quarantine(self) -> None:
+        """Operator reset is the escape from the quarantined (fail-closed) state."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            path = repo / ".workgraph" / "service" / "acceptance-degrade.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("not json")
+            self.assertEqual(evaluate_acceptance("t1", ["false"], repo).status, "blocked")
+            reset_degrade(repo)
+            result = evaluate_acceptance("t1", ["false"], repo)
+        self.assertEqual(result.status, "degraded")
+
+    def test_save_leaves_no_temp_file(self) -> None:
+        """CRIT-2: save is tmp+replace — no partial files remain."""
+        from driftdriver.acceptance_gate import _degrade_state_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            save_degrade_state(repo, {"t1": 1})
+            service = _degrade_state_path(repo).parent
+            leftovers = [p for p in service.iterdir() if p.name.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
+
+
+class TestConcurrentDegrade(unittest.TestCase):
+    """CRIT-2: concurrent degrades must neither lose updates nor exceed the ceiling."""
+
+    def test_concurrent_degrades_increment_exactly(self) -> None:
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            threads = []
+            statuses = []
+
+            def degrade_once() -> None:
+                r = evaluate_acceptance("t1", ["false"], repo, degrade_ceiling=20)
+                statuses.append(r.status)
+
+            for _ in range(8):
+                t = threading.Thread(target=degrade_once)
+                threads.append(t)
+                t.start()
+            for t in threads:
+                t.join()
+
+            state = load_degrade_state(repo)
+        self.assertEqual(state.get("t1"), 8, "lost updates: counter must record every granted degrade")
+        self.assertEqual(statuses.count("degraded"), 8)
+
+    def test_concurrent_degrades_cannot_exceed_ceiling(self) -> None:
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            threads = []
+            statuses = []
+
+            def degrade_once() -> None:
+                r = evaluate_acceptance("t1", ["false"], repo, degrade_ceiling=3)
+                statuses.append(r.status)
+
+            for _ in range(8):
+                t = threading.Thread(target=degrade_once)
+                threads.append(t)
+                t.start()
+            for t in threads:
+                t.join()
+
+            state = load_degrade_state(repo)
+        self.assertLessEqual(state.get("t1", 0), 3, "ceiling exceedance: more degrades granted than budget")
+        self.assertEqual(statuses.count("degraded"), 3)
+        self.assertEqual(statuses.count("blocked"), 5)
 
     def test_reset_single_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -299,3 +399,27 @@ acceptance = ["Tests pass"]
         with tempfile.TemporaryDirectory() as tmp:
             result = check_task(Path(tmp) / ".workgraph", "t1")
         self.assertEqual(result.status, "no_criteria")
+
+
+class TestQuarantineVisibility(unittest.TestCase):
+    """The quarantine state must be operator-visible in acceptance status."""
+
+    def test_status_reports_quarantine(self) -> None:
+        from driftdriver.acceptance_gate import degrade_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            path = repo / ".workgraph" / "service" / "acceptance-degrade.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("{oops")
+            status = degrade_status(repo)
+        self.assertTrue(status["quarantined"])
+        self.assertIn("reset", (status["note"] or ""))
+
+    def test_status_clean_when_healthy(self) -> None:
+        from driftdriver.acceptance_gate import degrade_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            status = degrade_status(Path(tmp))
+        self.assertFalse(status["quarantined"])
+        self.assertIsNone(status["note"])

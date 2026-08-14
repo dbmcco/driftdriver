@@ -32,9 +32,23 @@ The gate fires at two points:
 
 A failing gate first *degrades*: the task completes with a warning, and a
 per-repo counter (`.workgraph/service/acceptance-degrade.json`) increments
-for that task. Each task gets a degrade budget (ceiling, default 3). Once a
+for that task. Each task gets a degrade budget (ceiling, default 3,
+configurable via `drift-policy.toml` `[acceptance] degrade_ceiling`). Once a
 task hits the ceiling, the gate reverts to hard mode for that task and
 blocks completion until the failures are fixed or the counter is reset.
+
+The counter state is hardened (adversarial review 2026-08-14, CRIT-1/CRIT-2
+in `docs/plans/accept-gate-review.md`):
+
+- **Atomic persistence** — tmp + `os.replace`; no torn writes.
+- **Locked read-modify-write** — an `flock` sidecar serializes concurrent
+  completions; concurrent degrades record exactly and can never exceed the
+  ceiling (`TestConcurrentDegrade`).
+- **Fail closed on corruption** — a corrupt state file is quarantined
+  (renamed `*.corrupt-<ts>`) and a quarantine marker flips the gate to hard
+  block repo-wide until `driftdriver acceptance reset` clears it. Corruption
+  can never silently restore override budget. `acceptance status` reports
+  `"quarantined": true` with a remediation note.
 
 The ceiling is per-task within a per-repo state file, so a broken repo
 cannot rack up waived gates across unrelated tasks and lose signal.
@@ -83,3 +97,12 @@ budget. Only the wired completion path records a degrade.
 Matches `signal_gate.py`: hard gate by default, degrade-to-advisory hatch,
 escalate when ignored. Future work (out of scope this phase): cross-repo
 degrade aggregation.
+
+## Open remediation backlog
+
+From the adversarial review (`docs/plans/accept-gate-review.md` §10), tracked
+as graph tasks: `accept-gate-escalate-wiring` (loud degrades + audit log),
+`accept-gate-drifts-budget-burn` (pre-task checks must not consume budget),
+`accept-gate-verify-extraction` (fence-scoped TOML + claim-time snapshot),
+`accept-gate-spec-reconcile` (spec/runtime/worktree drift). CRIT-1 and
+CRIT-2 are resolved above.
