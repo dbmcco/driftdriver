@@ -150,6 +150,7 @@ def evaluate_acceptance(
     *,
     degrade_ceiling: int = 3,
     timeout: int = 120,
+    record_degrade: bool = True,
 ) -> GateResult:
     """Evaluate a task's acceptance by running its verify commands.
 
@@ -158,6 +159,10 @@ def evaluate_acceptance(
 
     Tasks with no verify commands pass with status ``no_criteria`` (the gate
     can't check what it can't run; the critic handles semantic criteria).
+
+    ``record_degrade``: when True (completion path), a failing gate consumes a
+    degrade slot. When False (inspection), the result is read-only — the gate
+    reports what would happen without consuming the override.
     """
     if not verify_commands:
         return GateResult(
@@ -186,8 +191,9 @@ def evaluate_acceptance(
 
     if current_degrades < degrade_ceiling:
         # Under ceiling: allow with a degrade (operator override)
-        state[task_id] = current_degrades + 1
-        save_degrade_state(repo, state)
+        if record_degrade:
+            state[task_id] = current_degrades + 1
+            save_degrade_state(repo, state)
         return GateResult(
             status="degraded",
             task_id=task_id,
@@ -273,7 +279,7 @@ def _extract_verify_commands(description: str) -> list[str]:
     return [c for c in commands if c.strip()]
 
 
-def check_task(wg_dir: Path, task_id: str) -> GateResult:
+def check_task(wg_dir: Path, task_id: str, *, record_degrade: bool = True) -> GateResult:
     """Read a task's verify commands from graph.jsonl and run the acceptance gate.
 
     This is the integration point: the coordinator (or speedrift post-task
@@ -308,4 +314,6 @@ def check_task(wg_dir: Path, task_id: str) -> GateResult:
         pass
 
     verify_commands = _extract_verify_commands(description)
-    return evaluate_acceptance(task_id, verify_commands, repo)
+    return evaluate_acceptance(
+        task_id, verify_commands, repo, record_degrade=record_degrade
+    )

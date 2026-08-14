@@ -20,6 +20,7 @@ from driftdriver.speedriftd_state import (
     load_runtime_snapshot,
     write_control_state,
 )
+from driftdriver.cli.acceptance_cmd import register_acceptance_parser
 from driftdriver.cli.debate_cmd import register_debate_parser
 from driftdriver.cli.graph_dir_cmd import register_graph_dir_parser
 from driftdriver.workgraph import find_workgraph_dir
@@ -1326,6 +1327,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_debate_parser(sub)
     register_graph_dir_parser(sub)
+    register_acceptance_parser(sub)
 
     from driftdriver.tmux_monitor.cli import register_tmux_monitor_parser
     register_tmux_monitor_parser(sub)
