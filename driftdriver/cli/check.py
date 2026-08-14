@@ -1014,6 +1014,22 @@ def cmd_check(args: argparse.Namespace) -> int:
                 "report": il_result.get("report"),
             }
 
+        # Acceptance gate: deterministic verify-command check on the completed task.
+        # Fires only when the task is in-progress (a completion attempt) — not on
+        # pre_task or manual checks — and records a degrade on failure only then.
+        try:
+            from driftdriver.acceptance_gate import check_task as _acceptance_check
+            _task_status = str((task or {}).get("status", "")).lower()
+            _is_completion_attempt = _task_status in ("in-progress", "inprogress", "in_progress")
+            _gate = _acceptance_check(wg_dir, task_id, record_degrade=_is_completion_attempt)
+            plugins_json["acceptance_gate"] = {
+                "ran": True,
+                "exit_code": 1 if _gate.is_blocking else 0,
+                "report": _gate.to_dict(),
+            }
+        except Exception as _gate_exc:
+            plugins_json["acceptance_gate"] = {"ran": False, "exit_code": 0, "report": {"error": str(_gate_exc)}}
+
         # Enforcement quality gates — evaluate severity-based thresholds.
         enforcement_findings = collect_enforcement_findings(plugins_json)
         enforcement_result = evaluate_enforcement(policy, enforcement_findings)
