@@ -173,6 +173,34 @@ class ParsePlanOutputTests(unittest.TestCase):
         self.assertEqual(result[0].after, [])
         self.assertIsNone(result[0].pattern)
 
+    def test_preserves_routing_properties(self) -> None:
+        raw = json.dumps({"tasks": [
+            {"id": "n1", "title": "N1",
+             "routing_properties": {"blast_radius": "shared_module"}}
+        ]})
+        result = parse_plan_output(raw)
+        self.assertEqual(result[0].routing_properties,
+                         {"blast_radius": "shared_module"})
+
+    def test_routing_properties_absent_defaults_to_none(self) -> None:
+        raw = json.dumps([{"id": "n1", "title": "N1"}])
+        result = parse_plan_output(raw)
+        self.assertIsNone(result[0].routing_properties)
+
+    def test_non_dict_routing_properties_normalized_to_none(self) -> None:
+        raw = json.dumps([{"id": "n1", "title": "N1",
+                           "routing_properties": "oops"}])
+        result = parse_plan_output(raw)
+        self.assertIsNone(result[0].routing_properties)
+
+    def test_non_list_fields_normalized_to_empty(self) -> None:
+        raw = json.dumps([{"id": "n1", "title": "N1", "after": "impl-0",
+                           "touch": "src/", "acceptance": "must pass"}])
+        result = parse_plan_output(raw)
+        self.assertEqual(result[0].after, [])
+        self.assertEqual(result[0].touch, [])
+        self.assertEqual(result[0].acceptance, [])
+
 
 class ValidateModelRoutesTests(unittest.TestCase):
     def test_anthropic_colon_prefix_flagged(self) -> None:

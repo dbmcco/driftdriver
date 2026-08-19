@@ -565,6 +565,11 @@ def build_decompose_prompt(
 # ---------------------------------------------------------------------------
 
 
+def _safe_list(value: Any) -> list[Any]:
+    """Return list-typed planner fields unchanged; other values become []."""
+    return value if isinstance(value, list) else []
+
+
 def parse_plan_output(raw: str) -> list[PlannedNode]:
     """Extract and parse a JSON task list from an LLM response.
 
@@ -636,22 +641,26 @@ def parse_plan_output(raw: str) -> list[PlannedNode]:
     for t in task_list:
         if not isinstance(t, dict):
             continue
+        routing_properties = t.get("routing_properties")
         nodes.append(
             PlannedNode(
                 id=t.get("id", ""),
                 title=t.get("title", ""),
-                after=t.get("after", []),
+                after=_safe_list(t.get("after", [])),
                 task_type=t.get("type", "code"),
                 risk=t.get("risk", "medium"),
                 description=t.get("description", ""),
                 pattern=t.get("pattern"),
                 max_iterations=t.get("max_iterations"),
                 verify=t.get("verify", ""),
-                touch=t.get("touch", []),
-                acceptance=t.get("acceptance", []),
+                touch=_safe_list(t.get("touch", [])),
+                acceptance=_safe_list(t.get("acceptance", [])),
                 model=t.get("model", ""),
                 route_tier=t.get("route_tier", ""),
                 escalation_reason=t.get("escalation_reason", ""),
+                routing_properties=(
+                    routing_properties if isinstance(routing_properties, dict) else None
+                ),
             )
         )
     return nodes
