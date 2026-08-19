@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from driftdriver.acceptance_gate import _extract_verify_commands
 from driftdriver.planner_core import (
     BUILTIN_PATTERNS,
     BUNDLE_DECOMPOSE_CLI,
@@ -27,6 +28,7 @@ from driftdriver.planner_core import (
     materialize_plan,
     minimum_tier_for,
     parse_plan_output,
+    render_validation_contract,
     validate_model_routes,
     _normalize_worker_route,
 )
@@ -328,14 +330,15 @@ class MaterializePlanTests(unittest.TestCase):
         # --blocked-by
         idx = cmd.index("--blocked-by")
         self.assertEqual(cmd[idx + 1], "setup-deps")
-        # -d carries the description plus the folded Validation section
+        # -d carries the description plus the canonical Validation contract
         idx = cmd.index("-d")
         self.assertTrue(cmd[idx + 1].startswith("Build OAuth"))
-        # verify folds into the description's ## Validation section (wg deprecated --verify)
+        # verify renders into the description's canonical ## Validation
+        # wg-contract section (wg deprecated --verify)
         self.assertNotIn("--verify", cmd)
         idx = cmd.index("-d")
         self.assertIn("## Validation", cmd[idx + 1])
-        self.assertIn("`pytest tests/` passes", cmd[idx + 1])
+        self.assertIn('verify = ["pytest tests/"]', cmd[idx + 1])
 
     def test_added_count_accuracy(self) -> None:
         nodes = [
@@ -453,7 +456,7 @@ class MaterializePlanTests(unittest.TestCase):
             runner=runner,
         )
         idx = calls[0].index("-d")
-        self.assertIn("`test x` passes", calls[0][idx + 1])
+        self.assertIn('verify = ["test x"]', calls[0][idx + 1])
 
     def test_tag_builder_adds_tags(self) -> None:
         calls: list[list[str]] = []
@@ -531,6 +534,71 @@ class MaterializePlanTests(unittest.TestCase):
         node = PlannedNode(id="plain", title="Plain")
         materialize_plan([node], Path("/repo"), runner=runner)
         self.assertNotIn("--max-iterations", calls[0])
+
+
+class CanonicalValidationRenderingTests(unittest.TestCase):
+    """Verify commands render as a structured, gate-parseable contract.
+
+    The canonical ## Validation section carries a wg-contract fence with the
+    exact verify command and acceptance criteria, so the acceptance gate can
+    parse verification back out at completion time instead of losing it in
+    prose.
+    """
+
+    def test_structured_block_replaces_prose_fold(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(
+            id="impl-auth", title="Implement auth",
+            description="Build OAuth",
+            verify="pytest tests/",
+            acceptance=["All tests pass"],
+        )
+        materialize_plan([node], Path("/repo"), runner=runner)
+
+        idx = calls[0].index("-d")
+        desc = calls[0][idx + 1]
+        self.assertTrue(desc.startswith("Build OAuth"))
+        self.assertIn("## Validation", desc)
+        self.assertIn("```wg-contract", desc)
+        # the exact shell command survives, not a prose paraphrase
+        self.assertIn('verify = ["pytest tests/"]', desc)
+        self.assertIn('acceptance = ["All tests pass"]', desc)
+        self.assertNotIn("--verify", calls[0])
+
+    def test_shell_text_is_byte_identical(self) -> None:
+        rendered = render_validation_contract("Do work", "pytest tests/ -q", [])
+        self.assertIn('verify = ["pytest tests/ -q"]', rendered)
+
+    def test_quoted_command_round_trips_through_the_gate(self) -> None:
+        cmd = 'pytest tests/ -k "gateway or core"'
+        rendered = render_validation_contract("Do work", cmd, ["criterion"])
+        extraction = _extract_verify_commands(rendered)
+        self.assertFalse(extraction.malformed)
+        self.assertEqual(extraction.commands, [cmd])
+
+    def test_rendering_is_idempotent(self) -> None:
+        once = render_validation_contract("Base description", "pytest tests/", ["c1"])
+        twice = render_validation_contract(once, "pytest tests/", ["c1"])
+        self.assertEqual(once, twice)
+        self.assertEqual(once.count("## Validation"), 1)
+        self.assertEqual(once.count("```wg-contract"), 1)
+
+    def test_re_render_replaces_stale_section(self) -> None:
+        first = render_validation_contract("Base", "pytest tests/", ["old"])
+        second = render_validation_contract(first, "pytest tests/", ["new"])
+        self.assertEqual(second.count("## Validation"), 1)
+        self.assertIn('acceptance = ["new"]', second)
+        self.assertNotIn('acceptance = ["old"]', second)
+
+    def test_empty_description_renders_section_alone(self) -> None:
+        rendered = render_validation_contract(None, "pytest", [])
+        self.assertTrue(rendered.startswith("## Validation"))
+        self.assertIn('verify = ["pytest"]', rendered)
 
 
 class PlannedNodeRouteFieldsTests(unittest.TestCase):

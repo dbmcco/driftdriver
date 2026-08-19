@@ -57,7 +57,7 @@ class CriterionResult:
 class GateResult:
     """Overall gate verdict for a task."""
 
-    status: str  # "pass" | "blocked" | "degraded" | "no_criteria"
+    status: str  # "pass" | "blocked" | "degraded" | "no_criteria" | "malformed_contract"
     task_id: str
     results: list[CriterionResult] = field(default_factory=list)
     degrade_count: int = 0
@@ -74,8 +74,8 @@ class GateResult:
 
     @property
     def is_blocking(self) -> bool:
-        """True when the gate blocks completion (status == 'blocked')."""
-        return self.status == "blocked"
+        """True when the gate blocks completion (blocked / malformed_contract)."""
+        return self.status in ("blocked", "malformed_contract")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -419,22 +419,131 @@ def _run_verify(command: str, repo: Path, timeout: int) -> CriterionResult:
 # ---------------------------------------------------------------------------
 
 
-def _extract_verify_commands(description: str) -> list[str]:
-    """Extract the verify command list from a task's wg-contract description.
+@dataclass(frozen=True)
+class VerifyExtraction:
+    """Typed result of extracting verify commands from a description.
 
-    The contract block contains ``verify = ["cmd1", "cmd2"]`` in TOML-ish
-    syntax inside a ```wg-contract fence. This extracts and parses it.
+    ``malformed`` is True when the description advertises verification but
+    the advertised contract cannot be parsed (``error`` says why). A
+    description whose verification section is explicitly absent yields
+    empty ``commands`` with ``malformed`` False — that is the ``no_criteria``
+    case, and the only one that may keep it.
     """
-    # Find the verify = [...] line in the description
-    match = re.search(r'verify\s*=\s*\[(.*?)\]', description, re.DOTALL)
-    if not match:
-        return []
-    raw = match.group(1).strip()
-    if not raw:
-        return []
-    # Parse the TOML-ish list: items are quoted strings
-    commands = re.findall(r'"([^"]*)"', raw)
-    return [c for c in commands if c.strip()]
+
+    commands: list[str]
+    malformed: bool = False
+    error: str = ""
+
+
+_CONTRACT_OPEN_RE = re.compile(r"```wg-contract[ \t]*\r?\n")
+_BARE_VERIFY_LIST_RE = re.compile(r"verify\s*=\s*\[(.*?)\]", re.DOTALL)
+_BARE_VERIFY_KEY_RE = re.compile(r"verify\s*=")
+
+
+def _contract_fences(description: str) -> tuple[list[tuple[int, int, str]], str | None]:
+    """Return ``(start, end, body)`` per ``wg-contract`` fence, or an error.
+
+    An unclosed fence is an error, not an ignored fence: a contract that
+    advertises itself must be parseable for its verification to count.
+    """
+    fences: list[tuple[int, int, str]] = []
+    pos = 0
+    while True:
+        opening = _CONTRACT_OPEN_RE.search(description, pos)
+        if opening is None:
+            return fences, None
+        closing = description.find("```", opening.end())
+        if closing < 0:
+            return fences, "wg-contract fence is missing a closing fence"
+        fences.append(
+            (opening.start(), closing + 3, description[opening.end() : closing])
+        )
+        pos = closing + 3
+
+
+def _verify_from_table(table: dict[str, Any]) -> list[str] | None | str:
+    """Read ``verify`` from a parsed contract table.
+
+    Returns the filtered command list, ``None`` when the table declares no
+    ``verify`` key, or an error string when the advertised value is not a
+    list of strings.
+    """
+    if "verify" not in table:
+        return None
+    value = table["verify"]
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        return 'wg-contract verify must be a list of quoted commands'
+    return [command for command in value if command.strip()]
+
+
+def _extract_verify_commands(description: str) -> VerifyExtraction:
+    """Extract the verify command list from a task's contract, fail-closed.
+
+    Every ``wg-contract`` fence in the description is parsed as TOML
+    (materialized tasks carry an LLM-authored contract fence plus the
+    canonical ``## Validation`` fence). Legacy fence-less ``verify = [...]``
+    declarations keep working. A description that advertises verification
+    anywhere but cannot be parsed is malformed — it must block completion
+    rather than silently degrade to ``no_criteria``.
+    """
+    fences, fence_error = _contract_fences(description)
+    if fence_error:
+        return VerifyExtraction([], True, fence_error)
+
+    declared: list[list[str]] = []
+    for _, _, body in fences:
+        try:
+            table = tomllib.loads(body)
+        except (tomllib.TOMLDecodeError, TypeError, ValueError) as exc:
+            return VerifyExtraction([], True, f"wg-contract TOML is malformed: {exc}")
+        if not isinstance(table, dict):
+            return VerifyExtraction([], True, "wg-contract TOML must decode to a table")
+        commands = _verify_from_table(table)
+        if isinstance(commands, str):
+            return VerifyExtraction([], True, commands)
+        if commands:
+            declared.append(commands)
+
+    # Legacy fence-less declarations: same fail-closed rule outside fences.
+    remainder = ""
+    prev = 0
+    for start, end, _ in fences:
+        remainder += description[prev:start]
+        prev = end
+    remainder += description[prev:]
+
+    bracket = _BARE_VERIFY_LIST_RE.search(remainder)
+    if bracket is not None:
+        raw = bracket.group(1).strip()
+        if raw:
+            try:
+                value = tomllib.loads(f"verify = [{raw}]")["verify"]
+            except (KeyError, tomllib.TOMLDecodeError, TypeError, ValueError) as exc:
+                return VerifyExtraction([], True, f"verify declaration is malformed: {exc}")
+            if not isinstance(value, list) or not all(
+                isinstance(item, str) for item in value
+            ):
+                return VerifyExtraction([], True, "verify must be a list of quoted commands")
+            commands = [command for command in value if command.strip()]
+            if commands:
+                declared.append(commands)
+    elif _BARE_VERIFY_KEY_RE.search(remainder):
+        return VerifyExtraction(
+            [], True, 'verify is advertised but is not a list: expected verify = ["command"]'
+        )
+
+    if not declared:
+        # Verification section explicitly absent (or declared empty).
+        return VerifyExtraction([])
+    first, *rest = declared
+    for other in rest:
+        if other != first:
+            return VerifyExtraction(
+                [],
+                True,
+                f"contradictory verify declarations: {first} vs {other}",
+            )
+    return VerifyExtraction(first)
 
 
 def check_task(wg_dir: Path, task_id: str, *, record_degrade: bool = True) -> GateResult:
@@ -447,6 +556,8 @@ def check_task(wg_dir: Path, task_id: str, *, record_degrade: bool = True) -> Ga
 
     Tasks without verify commands pass with ``no_criteria`` — the gate can't
     check what it can't run, and semantic criteria are the critic's job.
+    A contract that advertises verification but cannot be parsed returns
+    ``malformed_contract`` and blocks completion: fail closed, no degrade.
     """
     repo = wg_dir.parent if wg_dir.name in (".workgraph", ".wg") else wg_dir
     graph_path = wg_dir / "graph.jsonl"
@@ -471,7 +582,21 @@ def check_task(wg_dir: Path, task_id: str, *, record_degrade: bool = True) -> Ga
     except (json.JSONDecodeError, OSError):
         pass
 
-    verify_commands = _extract_verify_commands(description)
+    extraction = _extract_verify_commands(description)
+    if extraction.malformed:
+        # Fail closed: an advertised-but-unparseable contract blocks
+        # completion outright. It is not a degrade-able verify failure —
+        # the override budget exists for failing commands, not for
+        # contracts the gate cannot even read.
+        return GateResult(
+            status="malformed_contract",
+            task_id=task_id,
+            reason=(
+                "Task contract advertises verification but it cannot be parsed: "
+                f"{extraction.error}. Completion blocked — fix the wg-contract "
+                "verify entry."
+            ),
+        )
     return evaluate_acceptance(
-        task_id, verify_commands, repo, record_degrade=record_degrade
+        task_id, extraction.commands, repo, record_degrade=record_degrade
     )

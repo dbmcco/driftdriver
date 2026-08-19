@@ -163,5 +163,60 @@ class TestDegradeFlow(unittest.TestCase):
         self.assertIn("ceiling reached", second.reason)
 
 
+class TestMalformedContractCompletion(unittest.TestCase):
+    """A contract that advertises verification but cannot be parsed blocks
+    completion hard — it never degrades and never reports no_criteria."""
+
+    def _gate(self, tmp: str, task_id: str, description: str) -> object:
+        wg_dir = Path(tmp) / ".workgraph"
+        wg_dir.mkdir(parents=True, exist_ok=True)
+        task = {"kind": "task", "id": task_id, "title": task_id, "description": description}
+        with open(wg_dir / "graph.jsonl", "a") as fh:
+            fh.write(json.dumps(task) + "\n")
+        return check_task(wg_dir, task_id, record_degrade=True)
+
+    def test_malformed_verify_blocks_and_never_consumes_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for _ in range(5):
+                result = self._gate(
+                    tmp,
+                    "integration.malformed",
+                    '```wg-contract\nverify = "not-a-list"\n```',
+                )
+                self.assertEqual(result.status, "malformed_contract")
+                self.assertTrue(result.is_blocking)
+                self.assertNotEqual(result.status, "no_criteria")
+            state = load_degrade_state(Path(tmp))
+        self.assertEqual(state, {})
+
+    def test_contradictory_verify_declarations_block(self) -> None:
+        description = (
+            "```wg-contract\n"
+            'verify = ["true"]\n'
+            "```\n\n"
+            "## Validation\n\n"
+            "```wg-contract\n"
+            'verify = ["false"]\n'
+            "```"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._gate(tmp, "integration.contradictory", description)
+        self.assertEqual(result.status, "malformed_contract")
+        self.assertTrue(result.is_blocking)
+        self.assertIn("contradictory", result.reason)
+
+    def test_canonical_validation_section_gates_cleanly(self) -> None:
+        """Descriptions materialized by render_validation_contract gate on
+        their verify command — the command is not lost in prose."""
+        from driftdriver.planner_core import render_validation_contract
+
+        description = render_validation_contract(
+            "Implement the feature", "true", ["Feature works"]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._gate(tmp, "integration.canonical", description)
+        self.assertEqual(result.status, "pass")
+
+
 if __name__ == "__main__":
     unittest.main()

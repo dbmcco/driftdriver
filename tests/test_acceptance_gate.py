@@ -10,6 +10,7 @@ from pathlib import Path
 from driftdriver.acceptance_gate import (
     CriterionResult,
     GateResult,
+    VerifyExtraction,
     evaluate_acceptance,
     load_degrade_state,
     save_degrade_state,
@@ -367,12 +368,18 @@ schema = 1
 verify = ["pytest tests/test_foo.py", "npm run build"]
 acceptance = ["Tests pass"]
 ```'''
-        cmds = _extract_verify_commands(desc)
-        self.assertEqual(cmds, ["pytest tests/test_foo.py", "npm run build"])
+        result = _extract_verify_commands(desc)
+        self.assertIsInstance(result, VerifyExtraction)
+        self.assertFalse(result.malformed)
+        self.assertEqual(
+            result.commands, ["pytest tests/test_foo.py", "npm run build"]
+        )
 
     def test_extract_verify_no_verify_field(self) -> None:
         desc = "```wg-contract\nschema = 1\n```"
-        self.assertEqual(_extract_verify_commands(desc), [])
+        result = _extract_verify_commands(desc)
+        self.assertEqual(result.commands, [])
+        self.assertFalse(result.malformed)
 
     def test_check_task_with_verify_commands(self) -> None:
         """End-to-end: graph.jsonl with a task that has verify commands."""
@@ -399,6 +406,119 @@ acceptance = ["Tests pass"]
         with tempfile.TemporaryDirectory() as tmp:
             result = check_task(Path(tmp) / ".workgraph", "t1")
         self.assertEqual(result.status, "no_criteria")
+
+
+class MalformedContractTests(unittest.TestCase):
+    """Advertised-but-unparseable verification fails closed, never no_criteria."""
+
+    def test_scalar_verify_value_is_malformed(self) -> None:
+        desc = '```wg-contract\nverify = "pytest"\n```'
+        result = _extract_verify_commands(desc)
+        self.assertTrue(result.malformed)
+        self.assertEqual(result.commands, [])
+        self.assertTrue(result.error)
+
+    def test_unquoted_list_items_are_malformed(self) -> None:
+        desc = '```wg-contract\nverify = [pytest tests]\n```'
+        result = _extract_verify_commands(desc)
+        self.assertTrue(result.malformed)
+        self.assertEqual(result.commands, [])
+
+    def test_mixed_type_list_is_malformed(self) -> None:
+        desc = '```wg-contract\nverify = ["true", 2]\n```'
+        result = _extract_verify_commands(desc)
+        self.assertTrue(result.malformed)
+
+    def test_unclosed_fence_is_malformed(self) -> None:
+        desc = '```wg-contract\nverify = ["true"]'
+        result = _extract_verify_commands(desc)
+        self.assertTrue(result.malformed)
+
+    def test_duplicate_verify_keys_are_malformed(self) -> None:
+        desc = '```wg-contract\nverify = ["true"]\nverify = ["false"]\n```'
+        result = _extract_verify_commands(desc)
+        self.assertTrue(result.malformed)
+
+    def test_contradictory_verify_fences_are_malformed(self) -> None:
+        desc = (
+            '```wg-contract\ntouch = ["src/"]\nverify = ["true"]\n```\n\n'
+            '## Validation\n\n```wg-contract\nverify = ["false"]\n```'
+        )
+        result = _extract_verify_commands(desc)
+        self.assertTrue(result.malformed)
+        self.assertIn("contradictory", result.error)
+
+    def test_identical_verify_fences_are_not_malformed(self) -> None:
+        desc = (
+            '```wg-contract\nverify = ["true"]\n```\n\n'
+            '## Validation\n\n```wg-contract\nverify = ["true"]\n```'
+        )
+        result = _extract_verify_commands(desc)
+        self.assertFalse(result.malformed)
+        self.assertEqual(result.commands, ["true"])
+
+    def test_legacy_bare_scalar_verify_is_malformed(self) -> None:
+        result = _extract_verify_commands('verify = "pytest"')
+        self.assertTrue(result.malformed)
+        self.assertEqual(result.commands, [])
+
+    def test_legacy_unquoted_list_is_malformed(self) -> None:
+        result = _extract_verify_commands("verify = [pytest tests]")
+        self.assertTrue(result.malformed)
+
+    def test_canonical_rendered_description_extracts_cleanly(self) -> None:
+        from driftdriver.planner_core import render_validation_contract
+
+        desc = render_validation_contract(
+            "Implement the feature", "pytest tests/", ["Tests pass"]
+        )
+        result = _extract_verify_commands(desc)
+        self.assertFalse(result.malformed)
+        self.assertEqual(result.commands, ["pytest tests/"])
+
+    def _gate(self, description: str) -> GateResult:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            wg = repo / ".workgraph"
+            wg.mkdir()
+            task = {"id": "t1", "description": description}
+            (wg / "graph.jsonl").write_text(json.dumps(task) + "\n")
+            result = check_task(wg, "t1", record_degrade=True)
+            state = load_degrade_state(repo)
+        return result, state
+
+    def test_check_task_malformed_verify_blocks_completion(self) -> None:
+        result, state = self._gate('```wg-contract\nverify = "pytest"\n```')
+        self.assertEqual(result.status, "malformed_contract")
+        self.assertNotEqual(result.status, "no_criteria")
+        self.assertTrue(result.is_blocking)
+        self.assertTrue(result.reason)
+        # A malformed contract is not a degrade-able failure: the operator
+        # must fix the contract, not spend override budget on it.
+        self.assertEqual(state, {})
+
+    def test_check_task_malformed_blocks_repeatedly_without_budget(self) -> None:
+        for _ in range(5):
+            result, state = self._gate("verify = [pytest tests]")
+            self.assertEqual(result.status, "malformed_contract")
+        self.assertEqual(state, {})
+
+    def test_check_task_contradictory_declarations_block(self) -> None:
+        description = (
+            '```wg-contract\nverify = ["true"]\n```\n\n'
+            '## Validation\n\n```wg-contract\nverify = ["false"]\n```'
+        )
+        result, _ = self._gate(description)
+        self.assertEqual(result.status, "malformed_contract")
+        self.assertTrue(result.is_blocking)
+
+    def test_check_task_canonical_description_gates_on_verify(self) -> None:
+        from driftdriver.planner_core import render_validation_contract
+
+        desc = render_validation_contract("Do work", "true", ["It works"])
+        result, _ = self._gate(desc)
+        self.assertEqual(result.status, "pass")
+
 
 
 class TestQuarantineVisibility(unittest.TestCase):

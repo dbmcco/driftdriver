@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -745,18 +746,59 @@ def _normalize_worker_route(model: str) -> str:
     return f"pi:{model}"
 
 
-def _fold_verify_into_description(desc: str | None, verify: str) -> str:
-    """Fold a verify command into the description's ## Validation section.
+# Characters that must be escaped inside a TOML basic (double-quoted)
+# string so rendered commands round-trip byte-identically through tomllib.
+_TOML_ESCAPES = {
+    ord("\\"): "\\\\",
+    ord('"'): '\\"',
+    ord("\n"): "\\n",
+    ord("\r"): "\\r",
+    ord("\t"): "\\t",
+}
 
-    Mechanical placement only: appends to an existing Validation section or
-    creates one at the end. Never alters the command itself.
+# A canonical validation section previously appended by this module (and
+# therefore anchored at the end of the description).
+_CANONICAL_VALIDATION_RE = re.compile(
+    r"\n*## Validation\n\n```wg-contract\n.*?\n```\s*\Z", re.DOTALL
+)
+
+
+def _toml_quote(value: str) -> str:
+    """Encode a string as a TOML basic string (double-quoted)."""
+    return '"' + value.translate(_TOML_ESCAPES) + '"'
+
+
+def render_validation_contract(
+    desc: str | None,
+    verify: str,
+    acceptance: list[str] | None = None,
+) -> str:
+    """Append the canonical Validation contract to a task description.
+
+    One canonical section: a ``## Validation`` heading carrying a
+    ``wg-contract`` fence with the exact verify command and acceptance
+    criteria. The shell text is preserved byte-for-byte (TOML quoting only
+    escapes what the fence syntax requires), and the acceptance gate parses
+    the fence back out at completion time instead of losing the command in
+    prose.
+
+    Rendering is idempotent: a canonical section previously appended by
+    this function is replaced, never duplicated, so re-materializing the
+    same node does not grow the description.
     """
-    line = f"- [ ] `{verify}` passes"
-    if not desc:
-        return f"## Validation\n{line}"
-    if "## Validation" in desc:
-        return desc.rstrip() + "\n" + line
-    return desc.rstrip() + f"\n\n## Validation\n{line}"
+    lines = ["## Validation", "", "```wg-contract"]
+    lines.append(f"verify = [{_toml_quote(verify)}]")
+    if acceptance:
+        quoted = ", ".join(_toml_quote(criterion) for criterion in acceptance)
+        lines.append(f"acceptance = [{quoted}]")
+    lines.append("```")
+    section = "\n".join(lines)
+
+    base = (desc or "").rstrip()
+    base = _CANONICAL_VALIDATION_RE.sub("", base).rstrip()
+    if not base:
+        return section
+    return f"{base}\n\n{section}"
 
 
 def materialize_plan(
@@ -866,9 +908,10 @@ def materialize_plan(
 
         verify = node.verify or (verify_fallback(node) if verify_fallback else "")
         if verify:
-            # wg deprecated --verify: validation belongs in the description's
-            # ## Validation section, which the agency evaluator reads.
-            desc = _fold_verify_into_description(desc, verify)
+            # wg deprecated --verify: validation travels inside the
+            # description's canonical ## Validation contract, which the
+            # acceptance gate parses back out at completion time.
+            desc = render_validation_contract(desc, verify, node.acceptance)
             # Re-sync the -d flag if the description changed after being added.
             if "-d" in cmd:
                 cmd[cmd.index("-d") + 1] = desc
