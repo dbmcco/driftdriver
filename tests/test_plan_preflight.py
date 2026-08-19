@@ -217,6 +217,113 @@ def test_malformed_contract_fence_is_fatal() -> None:
     assert [f.category for f in result2.findings] == ["malformed-contract"]
 
 
+def test_second_malformed_fence_is_fatal() -> None:
+    # Every wg-contract fence is authoritative, matching the acceptance
+    # gate: a malformed second fence must not slip past first-fence parsing.
+    node = PlannedNode(
+        id="impl",
+        title="Implement evaluator",
+        touch=["src/evaluator.py"],
+        description=(
+            '```wg-contract\ntouch = ["src/**"]\n```\n\n'
+            'Prose between fences.\n\n'
+            '```wg-contract\ncreates = ["dist/"]'
+        ),
+    )
+    result = preflight_plan([node], Path("/repo"))
+    assert not result.ok
+    assert [f.category for f in result.findings] == ["malformed-contract"]
+
+
+def test_second_fence_scope_covers_required_path() -> None:
+    # Declared scope is the union across every fence, so a required path
+    # covered only by a later fence still passes.
+    node = PlannedNode(
+        id="impl",
+        title="Implement evaluator",
+        touch=["src/evaluator.py"],
+        description=(
+            '```wg-contract\nschema = 1\n```\n\n'
+            '```wg-contract\ntouch = ["src/**"]\n```'
+        ),
+    )
+    result = preflight_plan([node], Path("/repo"))
+    assert result.ok
+    assert result.findings == []
+
+
+# ---------------------------------------------------------------------------
+# Fence verify reconciliation (fail-closed against gate-time dead ends)
+# ---------------------------------------------------------------------------
+
+
+def test_fence_verify_matching_node_verify_passes() -> None:
+    node = PlannedNode(
+        id="impl",
+        title="Implement evaluator",
+        verify="pytest tests/evaluator.py",
+        description=(
+            '```wg-contract\ntouch = ["src/**"]\n'
+            'verify = ["pytest tests/evaluator.py"]\n```'
+        ),
+    )
+    result = preflight_plan([node], Path("/repo"))
+    assert result.ok
+    assert result.findings == []
+
+
+def test_fence_verify_disagreeing_with_node_verify_blocks() -> None:
+    # A fence verify that differs from node.verify passes preflight today,
+    # publishes, then blocks completion forever at gate time (contradictory
+    # verify declarations, no degrade). The disagreement must block here.
+    node = PlannedNode(
+        id="impl",
+        title="Implement evaluator",
+        verify="pytest tests/evaluator.py",
+        description=(
+            '```wg-contract\ntouch = ["src/**"]\n'
+            'verify = ["make check"]\n```'
+        ),
+    )
+    result = preflight_plan([node], Path("/repo"))
+    assert not result.ok
+    assert [f.category for f in result.findings] == ["contract-contradiction"]
+    finding = result.findings[0]
+    assert finding.task_id == "impl"
+    assert "make check" in finding.message
+    assert "pytest tests/evaluator.py" in finding.message
+
+
+def test_fence_verify_without_node_verify_blocks() -> None:
+    # node.verify is authoritative: a fence declaring verify commands the
+    # structured field does not confirm is the same drift seam, not a
+    # second, unvalidated path to gate commands.
+    node = PlannedNode(
+        id="impl",
+        title="Implement evaluator",
+        description=(
+            '```wg-contract\ntouch = ["src/**"]\n'
+            'verify = ["make check"]\n```'
+        ),
+    )
+    result = preflight_plan([node], Path("/repo"))
+    assert not result.ok
+    assert [f.category for f in result.findings] == ["contract-contradiction"]
+    assert "verify" in result.findings[0].message
+
+
+def test_scalar_fence_verify_is_malformed_at_preflight() -> None:
+    node = PlannedNode(
+        id="impl",
+        title="Implement evaluator",
+        verify="make check",
+        description='```wg-contract\nverify = "make check"\n```',
+    )
+    result = preflight_plan([node], Path("/repo"))
+    assert not result.ok
+    assert [f.category for f in result.findings] == ["malformed-contract"]
+
+
 # ---------------------------------------------------------------------------
 # Shared path matcher (Task 5 reuses this helper)
 # ---------------------------------------------------------------------------

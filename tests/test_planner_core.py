@@ -696,6 +696,33 @@ class CanonicalValidationRenderingTests(unittest.TestCase):
         self.assertIn('verify = ["pytest tests/"]', explicit)
         self.assertNotIn("advisory", explicit)
 
+    def test_matching_planner_fence_survives_publication_and_gate(self) -> None:
+        # A description fence that agrees with node.verify must round-trip
+        # cleanly: canonical render appends its own fence, and the gate's
+        # all-fences comparison sees two identical verify lists, not a
+        # contradiction that blocks completion forever.
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(
+            id="impl-auth",
+            title="Implement auth",
+            description=(
+                '```wg-contract\ntouch = ["src/**"]\n'
+                'verify = ["pytest tests/"]\n```\n\n'
+                "Build OAuth."
+            ),
+            verify="pytest tests/",
+        )
+        materialize_plan([node], Path("/repo"), runner=runner)
+        idx = calls[0].index("-d")
+        extraction = _extract_verify_commands(calls[0][idx + 1])
+        self.assertFalse(extraction.malformed)
+        self.assertEqual(extraction.commands, ["pytest tests/"])
+
 
 class PlannedNodeRouteFieldsTests(unittest.TestCase):
     def test_to_dict_includes_route_fields_when_set(self) -> None:

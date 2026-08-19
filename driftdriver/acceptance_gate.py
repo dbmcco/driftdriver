@@ -440,13 +440,39 @@ _BARE_VERIFY_LIST_RE = re.compile(r"verify\s*=\s*\[(.*?)\]", re.DOTALL)
 _BARE_VERIFY_KEY_RE = re.compile(r"verify\s*=")
 
 
-def _contract_fences(description: str) -> tuple[list[tuple[int, int, str]], str | None]:
-    """Return ``(start, end, body)`` per ``wg-contract`` fence, or an error.
+@dataclass(frozen=True)
+class ContractFence:
+    """One ``wg-contract`` fence: its span and its decoded TOML table.
 
-    An unclosed fence is an error, not an ignored fence: a contract that
-    advertises itself must be parseable for its verification to count.
+    ``start``/``end`` span the full fence — opening backticks through the
+    closing fence — so callers can strip fenced regions when scanning the
+    prose outside contracts.
     """
-    fences: list[tuple[int, int, str]] = []
+
+    start: int
+    end: int
+    body: str
+    table: dict[str, Any]
+
+
+def parse_contract_fences(description: str) -> tuple[list[ContractFence], str | None]:
+    """Parse every ``wg-contract`` fence in a description, fail-closed.
+
+    This is the ONE shared fence parser for plan preflight and the
+    acceptance gate, with one documented semantic:
+
+    - Every ``wg-contract`` fence is authoritative. All of them are parsed,
+      in order of appearance; there is no "first fence wins" reading.
+    - A fence that is unclosed, is malformed TOML, or does not decode to a
+      table is an error for the whole description — an advertised contract
+      must be parseable for its verification to count.
+    - ``verify``, when declared in a fence, must be a list of strings (see
+      :func:`verify_from_table`). Command lists declared across multiple
+      fences must agree; callers decide what ``agree`` means for them
+      (the gate requires equality across every declaration, preflight
+      requires equality with the node's explicit ``verify`` field).
+    """
+    fences: list[ContractFence] = []
     pos = 0
     while True:
         opening = _CONTRACT_OPEN_RE.search(description, pos)
@@ -455,13 +481,18 @@ def _contract_fences(description: str) -> tuple[list[tuple[int, int, str]], str 
         closing = description.find("```", opening.end())
         if closing < 0:
             return fences, "wg-contract fence is missing a closing fence"
-        fences.append(
-            (opening.start(), closing + 3, description[opening.end() : closing])
-        )
+        body = description[opening.end() : closing]
+        try:
+            table = tomllib.loads(body)
+        except (tomllib.TOMLDecodeError, TypeError, ValueError) as exc:
+            return fences, f"wg-contract TOML is malformed: {exc}"
+        if not isinstance(table, dict):
+            return fences, "wg-contract TOML must decode to a table"
+        fences.append(ContractFence(opening.start(), closing + 3, body, table))
         pos = closing + 3
 
 
-def _verify_from_table(table: dict[str, Any]) -> list[str] | None | str:
+def verify_from_table(table: dict[str, Any]) -> list[str] | None | str:
     """Read ``verify`` from a parsed contract table.
 
     Returns the filtered command list, ``None`` when the table declares no
@@ -479,26 +510,20 @@ def _verify_from_table(table: dict[str, Any]) -> list[str] | None | str:
 def _extract_verify_commands(description: str) -> VerifyExtraction:
     """Extract the verify command list from a task's contract, fail-closed.
 
-    Every ``wg-contract`` fence in the description is parsed as TOML
-    (materialized tasks carry an LLM-authored contract fence plus the
-    canonical ``## Validation`` fence). Legacy fence-less ``verify = [...]``
-    declarations keep working. A description that advertises verification
-    anywhere but cannot be parsed is malformed — it must block completion
-    rather than silently degrade to ``no_criteria``.
+    Every ``wg-contract`` fence in the description is parsed as TOML via the
+    shared fence parser (materialized tasks carry an LLM-authored contract
+    fence plus the canonical ``## Validation`` fence). Legacy fence-less
+    ``verify = [...]`` declarations keep working. A description that
+    advertises verification anywhere but cannot be parsed is malformed — it
+    must block completion rather than silently degrade to ``no_criteria``.
     """
-    fences, fence_error = _contract_fences(description)
+    fences, fence_error = parse_contract_fences(description)
     if fence_error:
         return VerifyExtraction([], True, fence_error)
 
     declared: list[list[str]] = []
-    for _, _, body in fences:
-        try:
-            table = tomllib.loads(body)
-        except (tomllib.TOMLDecodeError, TypeError, ValueError) as exc:
-            return VerifyExtraction([], True, f"wg-contract TOML is malformed: {exc}")
-        if not isinstance(table, dict):
-            return VerifyExtraction([], True, "wg-contract TOML must decode to a table")
-        commands = _verify_from_table(table)
+    for fence in fences:
+        commands = verify_from_table(fence.table)
         if isinstance(commands, str):
             return VerifyExtraction([], True, commands)
         if commands:
@@ -507,9 +532,9 @@ def _extract_verify_commands(description: str) -> VerifyExtraction:
     # Legacy fence-less declarations: same fail-closed rule outside fences.
     remainder = ""
     prev = 0
-    for start, end, _ in fences:
-        remainder += description[prev:start]
-        prev = end
+    for fence in fences:
+        remainder += description[prev:fence.start]
+        prev = fence.end
     remainder += description[prev:]
 
     bracket = _BARE_VERIFY_LIST_RE.search(remainder)

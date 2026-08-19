@@ -5,20 +5,19 @@
 ``preflight_plan`` validates the complete node list before publication:
 ID presence and uniqueness, dependency closure (batch ids plus explicitly
 supplied existing ids), self-dependencies, cycles, per-node contract
-contradictions, and touch/creates scope coverage. It is deliberately
-filesystem- and subprocess-free: findings derive only from the planned
-nodes themselves, so provider, daemon, authentication, and rate-limit
-conditions — which remain execution failures — can never surface as
-contract findings here.
+contradictions, fence-vs-field verify reconciliation, and touch/creates
+scope coverage. It is deliberately filesystem- and subprocess-free:
+findings derive only from the planned nodes themselves, so provider,
+daemon, authentication, and rate-limit conditions — which remain execution
+failures — can never surface as contract findings here.
 """
 from __future__ import annotations
 
 import fnmatch
-import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
+from driftdriver.acceptance_gate import parse_contract_fences, verify_from_table
 from driftdriver.contract_validator import ContractFinding, validate_node_contract
 from driftdriver.planner_core import PlannedNode
 
@@ -54,42 +53,6 @@ def path_matches(path: str, pattern: str) -> bool:
     return normalized_path == normalized_pattern or fnmatch.fnmatchcase(
         normalized_path, normalized_pattern
     )
-
-
-# ---------------------------------------------------------------------------
-# Contract fence parsing (fail-closed)
-# ---------------------------------------------------------------------------
-
-_CONTRACT_OPEN_RE = re.compile(r"```wg-contract[ \t]*\r?\n")
-
-
-def _parse_contract_description(
-    description: str,
-) -> tuple[dict[str, object] | None, str | None]:
-    """Parse an optional ``wg-contract`` fence without failing open.
-
-    Plain descriptions are not contracts. Once a contract fence is
-    advertised, however, both its closing fence and its TOML document are
-    mandatory so scope validation cannot silently degrade into an
-    empty-scope check.
-    """
-    opening = _CONTRACT_OPEN_RE.search(description)
-    if opening is None:
-        return None, None
-    closing = description.find("```", opening.end())
-    if closing < 0:
-        return None, "wg-contract fence is missing a closing fence"
-    body = description[opening.end() : closing]
-    try:
-        parsed = tomllib.loads(body)
-    except (tomllib.TOMLDecodeError, TypeError, ValueError) as exc:
-        return None, f"wg-contract TOML is malformed: {exc}"
-    if not isinstance(parsed, dict):
-        return None, "wg-contract TOML must decode to a table"
-    for key in ("touch", "creates"):
-        if key in parsed and not isinstance(parsed[key], list):
-            return None, f"wg-contract {key} must be a list"
-    return parsed, None
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +126,39 @@ def _cycle_findings(nodes: list[PlannedNode], node_ids: set[str]) -> list[Contra
         if node.id in node_ids and state.get(node.id, 0) == 0:
             visit(node.id)
     return findings
+
+
+def _verify_reconciliation_findings(
+    node: PlannedNode, declared_verify: list[list[str]]
+) -> list[ContractFinding]:
+    """Reconcile fence-declared verify lists against the node's verify field.
+
+    The node's explicit ``verify`` field is authoritative: every
+    fence-declared command list must equal ``[node.verify]``. A fence that
+disagrees — or that declares commands the structured field does not
+confirm — describes a task whose completion the acceptance gate would
+block with no repair path (contradictory verify declarations, no
+degrade), so the disagreement must block publication here instead.
+    """
+    verify = node.verify if isinstance(node.verify, str) else ""
+    expected: list[str] | None = [verify] if verify else None
+    for commands in declared_verify:
+        if commands != expected:
+            expected_text = f"{expected}" if expected is not None else "empty"
+            return [
+                _finding(
+                    "contract-contradiction",
+                    node,
+                    (
+                        f"Description fence declares verify {commands} but the "
+                        f"node verify field is {expected_text}; the fence and "
+                        f"the field must agree or the gate blocks completion "
+                        f"with no repair path."
+                    ),
+                    source="description",
+                )
+            ]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -242,26 +238,43 @@ def preflight_plan(
         findings.extend(validate_node_contract(node, repo_path))
 
         description = node.description if isinstance(node.description, str) else ""
-        contract, contract_error = _parse_contract_description(description)
-        if contract_error:
+        fences, contract_error = parse_contract_fences(description)
+        declared_patterns: list[str] = []
+        declared_verify: list[list[str]] = []
+        if contract_error is None:
+            for fence in fences:
+                for key in ("touch", "creates"):
+                    if key in fence.table and not isinstance(fence.table[key], list):
+                        contract_error = f"wg-contract {key} must be a list"
+                        break
+                    values = fence.table.get(key)
+                    if isinstance(values, list):
+                        declared_patterns.extend(
+                            str(value).strip()
+                            for value in values
+                            if str(value).strip()
+                        )
+                if contract_error is not None:
+                    break
+                commands = verify_from_table(fence.table)
+                if isinstance(commands, str):
+                    contract_error = commands
+                    break
+                if commands:
+                    declared_verify.append(commands)
+        if contract_error is not None:
             findings.append(
                 _finding(
                     "malformed-contract", node, contract_error, source="description"
                 )
             )
             continue
-        declared_patterns: list[str] = []
+        findings.extend(_verify_reconciliation_findings(node, declared_verify))
         # Plain descriptions are not contracts: without an advertised fence
         # there is no declared scope to conflict with (canonical fences arrive
         # with structured verification). An advertised contract, however, is
         # checked fail-closed — including an empty declared scope.
-        if contract is not None:
-            for key in ("touch", "creates"):
-                values = contract.get(key)
-                if isinstance(values, list):
-                    declared_patterns.extend(
-                        str(value).strip() for value in values if str(value).strip()
-                    )
+        if fences:
             for path_index, required_path in enumerate(node.touch):
                 if not isinstance(required_path, str):
                     continue
