@@ -437,7 +437,10 @@ class VerifyExtraction:
 
 _CONTRACT_OPEN_RE = re.compile(r"```wg-contract[ \t]*\r?\n")
 _BARE_VERIFY_LIST_RE = re.compile(r"verify\s*=\s*\[(.*?)\]", re.DOTALL)
-_BARE_VERIFY_KEY_RE = re.compile(r"verify\s*=")
+# A bare verify declaration only counts at the start of a line (with
+# optional indentation): mid-sentence prose ("set verify = true in config")
+# and prefixed words ("reverify = x") are not declarations.
+_BARE_VERIFY_KEY_RE = re.compile(r"^[ \t]*verify[ \t]*=", re.MULTILINE)
 
 
 @dataclass(frozen=True)

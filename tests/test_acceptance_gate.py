@@ -466,6 +466,33 @@ class MalformedContractTests(unittest.TestCase):
         result = _extract_verify_commands("verify = [pytest tests]")
         self.assertTrue(result.malformed)
 
+    def test_mid_sentence_verify_prose_is_not_malformed(self) -> None:
+        # 'set verify = true in config' is prose about a config knob, not a
+        # declaration line: it must not trip the bare verify key check.
+        result = _extract_verify_commands(
+            "Configure the gate first: set verify = true in config before "
+            "retrying the release."
+        )
+        self.assertFalse(result.malformed)
+        self.assertEqual(result.commands, [])
+
+    def test_prefixed_word_verify_assignment_is_not_malformed(self) -> None:
+        result = _extract_verify_commands(
+            "After the gate passes, reverify = x is required for audit."
+        )
+        self.assertFalse(result.malformed)
+        self.assertEqual(result.commands, [])
+
+    def test_line_start_bare_verify_declaration_still_fails_closed(self) -> None:
+        # A genuine bare declaration at line start keeps blocking: the
+        # anchor only removes mid-sentence and prefixed-word false positives.
+        result = _extract_verify_commands("verify = true")
+        self.assertTrue(result.malformed)
+        self.assertIn("not a list", result.error)
+
+        indented = _extract_verify_commands("notes:\n    verify = 5")
+        self.assertTrue(indented.malformed)
+
     def test_canonical_rendered_description_extracts_cleanly(self) -> None:
         from driftdriver.planner_core import render_validation_contract
 
