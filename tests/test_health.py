@@ -33,24 +33,91 @@ class HealthTests(unittest.TestCase):
     def test_blockers_done_and_cycle_detection(self) -> None:
         tasks = {
             "a": {"id": "a", "status": "done"},
-            "b": {"id": "b", "status": "open", "blocked_by": ["a"]},
-            "c": {"id": "c", "status": "open", "blocked_by": ["d"]},
-            "d": {"id": "d", "status": "open", "blocked_by": ["c"]},
+            "b": {"id": "b", "status": "open", "after": ["a"]},
+            "c": {"id": "c", "status": "open", "after": ["d"]},
+            "d": {"id": "d", "status": "open", "after": ["c"]},
         }
         self.assertTrue(blockers_done(tasks["b"], tasks))
         self.assertFalse(blockers_done(tasks["c"], tasks))
         self.assertTrue(detect_cycle_from("c", tasks))
         self.assertFalse(detect_cycle_from("b", tasks))
 
-    def test_blockers_done_no_blockers(self) -> None:
-        """Task with no blocked_by should return True — nothing is blocking it."""
-        no_blocker_task: dict = {"id": "free", "status": "open"}
-        self.assertTrue(blockers_done(no_blocker_task, {}))
+    def test_blockers_done_no_dependencies(self) -> None:
+        """Task with no after should return True — nothing is blocking it."""
+        no_dependency_task: dict = {"id": "free", "status": "open"}
+        self.assertTrue(blockers_done(no_dependency_task, {}))
 
-    def test_blockers_done_missing_blocker_treated_as_resolved(self) -> None:
-        """If a blocker ID is not in the graph (deleted), treat it as resolved."""
-        task = {"id": "orphan", "status": "open", "blocked_by": ["deleted-task"]}
+    def test_blockers_done_missing_dependency_treated_as_resolved(self) -> None:
+        """If a dependency ID is not in the graph (deleted), treat it as resolved."""
+        task = {"id": "orphan", "status": "open", "after": ["deleted-task"]}
         self.assertTrue(blockers_done(task, {}))
+
+    def test_blockers_done_reads_canonical_after(self) -> None:
+        """Dependencies are read from the canonical ``after`` field."""
+        tasks = {
+            "setup": {"id": "setup", "status": "open"},
+            "work": {"id": "work", "status": "open", "after": ["setup"]},
+        }
+        self.assertFalse(blockers_done(tasks["work"], tasks))
+
+    def test_detect_cycle_reads_canonical_after(self) -> None:
+        """Cycle detection follows canonical ``after`` dependencies."""
+        tasks = {
+            "a": {"id": "a", "status": "open", "after": ["b"]},
+            "b": {"id": "b", "status": "open", "after": ["a"]},
+        }
+        self.assertTrue(detect_cycle_from("a", tasks))
+
+    def test_ready_queue_excludes_tasks_blocked_via_after(self) -> None:
+        """Tasks whose canonical ``after`` dependencies are open stay out of the queue."""
+        tasks = [
+            {"id": "setup", "status": "open"},
+            {
+                "id": "drift-harden-setup",
+                "title": "harden: setup",
+                "status": "open",
+                "after": ["setup"],
+                "created_at": "2026-02-18T12:00:00+00:00",
+            },
+        ]
+        ranked = rank_ready_drift_queue(tasks, limit=10)
+        self.assertEqual([x["task_id"] for x in ranked], [])
+
+    def test_ready_queue_reports_canonical_after(self) -> None:
+        """Ranked entries report dependencies under the canonical field name."""
+        tasks = [
+            {"id": "setup", "status": "done"},
+            {
+                "id": "drift-harden-setup",
+                "title": "harden: setup",
+                "status": "open",
+                "after": ["setup"],
+                "created_at": "2026-02-18T12:00:00+00:00",
+            },
+        ]
+        ranked = rank_ready_drift_queue(tasks, limit=10)
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["after"], ["setup"])
+        self.assertNotIn("blocked_by", ranked[0])
+
+    def test_legacy_blocked_by_translated_only_for_explicit_legacy_source(self) -> None:
+        """Legacy ``blocked_by`` is honored only when the source is identified as legacy."""
+        tasks = {
+            "setup": {"id": "setup", "status": "open"},
+            "work": {"id": "work", "status": "open", "blocked_by": ["setup"]},
+        }
+        # Canonical read ignores the legacy field: the task is not blocked.
+        self.assertTrue(blockers_done(tasks["work"], tasks))
+        # Explicit legacy identification translates blocked_by to dependencies.
+        self.assertFalse(blockers_done(tasks["work"], tasks, blocked_by_is_legacy=True))
+
+    def test_conflicting_after_and_blocked_by_surfaces(self) -> None:
+        """A task carrying both spellings with different values cannot be guessed."""
+        task = {"id": "work", "status": "open", "after": ["a"], "blocked_by": ["b"]}
+        with self.assertRaises(ValueError):
+            blockers_done(task, {})
+        with self.assertRaises(ValueError):
+            blockers_done(task, {}, blocked_by_is_legacy=True)
 
     def test_queue_ranking_and_duplicates(self) -> None:
         tasks = [
@@ -60,21 +127,21 @@ class HealthTests(unittest.TestCase):
                 "id": "coredrift-pit-parent-1",
                 "title": "pit-stop: Parent",
                 "status": "open",
-                "blocked_by": ["parent-1"],
+                "after": ["parent-1"],
                 "created_at": "2026-02-18T12:00:00+00:00",
             },
             {
                 "id": "drift-harden-parent-2",
                 "title": "harden: Parent",
                 "status": "open",
-                "blocked_by": ["parent-2"],
+                "after": ["parent-2"],
                 "created_at": "2026-02-18T12:01:00+00:00",
             },
             {
                 "id": "drift-scope-parent-2",
                 "title": "scope: Parent",
                 "status": "open",
-                "blocked_by": ["parent-2"],
+                "after": ["parent-2"],
                 "created_at": "2026-02-18T12:01:30+00:00",
                 "not_before": "2099-01-01T00:00:00+00:00",
             },
@@ -82,14 +149,14 @@ class HealthTests(unittest.TestCase):
                 "id": "redrift-build-redrift-app",
                 "title": "redrift build: redrift analyze: App",
                 "status": "open",
-                "blocked_by": ["parent-1"],
+                "after": ["parent-1"],
                 "created_at": "2026-02-18T12:02:00+00:00",
             },
             {
                 "id": "redrift-design-redrift-app",
                 "title": "redrift design: redrift analyze: App",
                 "status": "open",
-                "blocked_by": ["parent-1"],
+                "after": ["parent-1"],
                 "created_at": "2026-02-18T12:03:00+00:00",
             },
         ]
@@ -112,8 +179,8 @@ class HealthTests(unittest.TestCase):
         risk = [
             {"id": "task-1", "status": "open", "description": ""},
             {"id": "task-2", "status": "open", "description": ""},
-            {"id": "redrift-build-redrift-redrift-app", "title": "drift", "status": "open", "blocked_by": ["task-1"]},
-            {"id": "drift-harden-task-2", "title": "drift", "status": "open", "blocked_by": ["task-2"]},
+            {"id": "redrift-build-redrift-redrift-app", "title": "drift", "status": "open", "after": ["task-1"]},
+            {"id": "drift-harden-task-2", "title": "drift", "status": "open", "after": ["task-2"]},
         ]
 
         healthy_score = compute_scoreboard(healthy)

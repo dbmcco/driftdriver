@@ -49,21 +49,57 @@ def redrift_depth(task_id: str) -> int:
     return str(task_id or "").count("redrift-")
 
 
-def blockers_done(task: dict[str, Any], tasks_by_id: dict[str, dict[str, Any]]) -> bool:
-    blockers = task.get("blocked_by")
-    if not isinstance(blockers, list) or not blockers:
-        return True  # No blockers → nothing blocking it → ready
+def task_dependencies(
+    task: dict[str, Any], *, blocked_by_is_legacy: bool = False
+) -> list[str]:
+    """Return a task's dependency ids, reading the canonical ``after`` field.
 
-    for blocker_id in blockers:
-        blocker = tasks_by_id.get(str(blocker_id))
-        if not blocker:
-            continue  # treat deleted/missing blocker as resolved
-        if task_status(blocker) != "done":
+    Workgraph stores dependencies in ``after``. ``blocked_by`` is a legacy
+    spelling that is translated only when the caller explicitly identifies
+    the task source as legacy. A task carrying both spellings with different
+    values cannot be translated unambiguously, so it raises ``ValueError``
+    instead of guessing which field to honor.
+    """
+    after = task.get("after")
+    blocked = task.get("blocked_by")
+    if isinstance(after, list):
+        if isinstance(blocked, list) and [str(x) for x in blocked] != [str(x) for x in after]:
+            raise ValueError(
+                "task carries both canonical 'after' and legacy 'blocked_by' "
+                f"with different values: after={after!r}, blocked_by={blocked!r}; "
+                "identify the source and align the fields"
+            )
+        return [str(dep) for dep in after]
+    if isinstance(blocked, list) and blocked_by_is_legacy:
+        return [str(dep) for dep in blocked]
+    return []
+
+
+def blockers_done(
+    task: dict[str, Any],
+    tasks_by_id: dict[str, dict[str, Any]],
+    *,
+    blocked_by_is_legacy: bool = False,
+) -> bool:
+    dependencies = task_dependencies(task, blocked_by_is_legacy=blocked_by_is_legacy)
+    if not dependencies:
+        return True  # No dependencies → nothing blocking it → ready
+
+    for dependency_id in dependencies:
+        dependency = tasks_by_id.get(dependency_id)
+        if not dependency:
+            continue  # treat deleted/missing dependency as resolved
+        if task_status(dependency) != "done":
             return False
     return True
 
 
-def detect_cycle_from(task_id: str, tasks_by_id: dict[str, dict[str, Any]]) -> bool:
+def detect_cycle_from(
+    task_id: str,
+    tasks_by_id: dict[str, dict[str, Any]],
+    *,
+    blocked_by_is_legacy: bool = False,
+) -> bool:
     target = str(task_id or "")
     if not target:
         return False
@@ -80,11 +116,9 @@ def detect_cycle_from(task_id: str, tasks_by_id: dict[str, dict[str, Any]]) -> b
         stack.add(cur)
         node = tasks_by_id.get(cur)
         if isinstance(node, dict):
-            blockers = node.get("blocked_by")
-            if isinstance(blockers, list):
-                for blocker in blockers:
-                    if _dfs(str(blocker)):
-                        return True
+            for dependency in task_dependencies(node, blocked_by_is_legacy=blocked_by_is_legacy):
+                if _dfs(dependency):
+                    return True
         stack.remove(cur)
         return False
 
@@ -177,7 +211,12 @@ def _queue_priority(task: dict[str, Any]) -> int:
     return 50
 
 
-def rank_ready_drift_queue(tasks: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
+def rank_ready_drift_queue(
+    tasks: list[dict[str, Any]],
+    *,
+    limit: int = 10,
+    blocked_by_is_legacy: bool = False,
+) -> list[dict[str, Any]]:
     tasks_by_id = {str(t.get("id") or ""): t for t in tasks}
     ready: list[dict[str, Any]] = []
     for task in tasks:
@@ -187,13 +226,14 @@ def rank_ready_drift_queue(tasks: list[dict[str, Any]], *, limit: int = 10) -> l
             continue
         if _future_not_before(task):
             continue
-        if not blockers_done(task, tasks_by_id):
+        if not blockers_done(task, tasks_by_id, blocked_by_is_legacy=blocked_by_is_legacy):
             continue
         ready.append(task)
 
     ready.sort(key=lambda t: (-_queue_priority(t), _task_epoch(t), str(t.get("id") or "")))
     out: list[dict[str, Any]] = []
     for task in ready[: max(1, int(limit))]:
+        dependencies = task_dependencies(task, blocked_by_is_legacy=blocked_by_is_legacy)
         out.append(
             {
                 "task_id": str(task.get("id") or ""),
@@ -201,17 +241,21 @@ def rank_ready_drift_queue(tasks: list[dict[str, Any]], *, limit: int = 10) -> l
                 "status": task_status(task),
                 "priority": _queue_priority(task),
                 "created_at": str(task.get("created_at") or ""),
-                "blocked_by": [str(x) for x in (task.get("blocked_by") or []) if str(x)],
+                "after": [dep for dep in dependencies if dep],
             }
         )
     return out
 
 
-def compute_scoreboard(tasks: list[dict[str, Any]]) -> dict[str, Any]:
+def compute_scoreboard(
+    tasks: list[dict[str, Any]], *, blocked_by_is_legacy: bool = False
+) -> dict[str, Any]:
     active = [t for t in tasks if is_active(t)]
     drift = [t for t in tasks if is_drift_task(t)]
     active_drift = [t for t in drift if is_active(t)]
-    ready = rank_ready_drift_queue(tasks, limit=10_000)
+    ready = rank_ready_drift_queue(
+        tasks, limit=10_000, blocked_by_is_legacy=blocked_by_is_legacy
+    )
 
     active_with_contract = sum(1 for t in active if has_contract(t))
     active_total = len(active)

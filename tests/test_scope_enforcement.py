@@ -1,6 +1,7 @@
 # ABOUTME: Tests for file scope enforcement module
 # ABOUTME: Verifies that agent changes stay within declared scope
 
+from driftdriver.plan_preflight import path_matches
 from driftdriver.scope_enforcement import (
     check_file_scope,
     _matches_any_pattern,
@@ -76,3 +77,47 @@ def test_scope_double_star_glob():
     """src/**/*.py should match deeply nested paths like src/foo/bar.py."""
     assert _matches_any_pattern("src/foo/bar.py", ["src/**/*.py"]) is True
     assert _matches_any_pattern("src/a/b/c.py", ["src/**/*.py"]) is True
+
+
+def test_check_scope_touch_src_double_star_covers_src():
+    """A touch=["src/**"] scope covers src/evaluator.py."""
+    result = check_file_scope([("modified", "src/evaluator.py")], ["src/**"])
+    assert result.in_scope is True
+    assert result.violations == []
+
+
+def test_check_scope_touch_src_double_star_excludes_tests():
+    """A touch=["src/**"] scope does not cover tests/evaluator_test.py."""
+    result = check_file_scope([("modified", "tests/evaluator_test.py")], ["src/**"])
+    assert result.in_scope is False
+    assert [v.file_path for v in result.violations] == ["tests/evaluator_test.py"]
+
+
+def test_scope_matching_agrees_with_preflight_path_matcher():
+    """Post-completion scope checks must use the preflight path semantics.
+
+    Preflight and post-completion scope checks must agree on glob coverage,
+    so every case below must hold for both matchers. The semantics are
+    fnmatch's: ``*`` and ``**`` cross separators, a bare directory pattern
+    is not subtree coverage, and paths never match on basename alone.
+    """
+    cases = [
+        ("src/evaluator.py", "src/**", True),
+        ("src/deep/nested/mod.py", "src/**", True),
+        ("tests/evaluator_test.py", "src/**", False),
+        ("docs/a/b.md", "docs/*", True),
+        ("src/evaluator.py", "src", False),
+        ("src/evaluator.py", "src/", False),
+        ("nested/evaluator.py", "evaluator.py", False),
+    ]
+    for file_path, pattern, expected in cases:
+        assert _matches_any_pattern(file_path, [pattern]) is expected, (
+            file_path,
+            pattern,
+            "scope matcher disagrees",
+        )
+        assert path_matches(file_path, pattern) is expected, (
+            file_path,
+            pattern,
+            "preflight matcher disagrees",
+        )

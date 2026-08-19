@@ -2,9 +2,10 @@
 # ABOUTME: Compares git diff against task contract's allowed files/paths
 
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import subprocess
-import fnmatch
+
+from driftdriver.plan_preflight import path_matches
 
 
 @dataclass
@@ -64,19 +65,13 @@ def check_file_scope(
 
 
 def _matches_any_pattern(file_path: str, patterns: list[str]) -> bool:
-    """Check if a file path matches any of the allowed patterns."""
-    for pattern in patterns:
-        # PurePosixPath.match supports ** for recursive matching
-        if PurePosixPath(file_path).match(pattern):
-            return True
-        if fnmatch.fnmatch(file_path, pattern):
-            return True
-        # Also check if the pattern is a prefix (directory scope)
-        if file_path.startswith(pattern.rstrip("/*") + "/"):
-            return True
-        if file_path == pattern:
-            return True
-    return False
+    """Check if a file path matches any of the allowed patterns.
+
+    Delegates to the preflight path matcher so post-completion scope
+    checks agree with plan preflight on glob coverage: exact paths plus
+    fnmatch globs where ``*`` and ``**`` cross directory separators.
+    """
+    return any(path_matches(file_path, pattern) for pattern in patterns)
 
 
 def extract_scope_from_contract(contract: dict) -> list[str]:

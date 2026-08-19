@@ -509,8 +509,8 @@ class TestComputeLoopSafety:
 
     def test_cycle_detected(self, tmp_path: Path) -> None:
         tasks = [
-            {"id": "drift-a", "kind": "task", "status": "open", "blocked_by": ["drift-b"]},
-            {"id": "drift-b", "kind": "task", "status": "open", "blocked_by": ["drift-a"]},
+            {"id": "drift-a", "kind": "task", "status": "open", "after": ["drift-b"]},
+            {"id": "drift-b", "kind": "task", "status": "open", "after": ["drift-a"]},
         ]
         wg_dir = self._make_wg_dir(tmp_path, tasks)
 
