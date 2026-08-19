@@ -13,10 +13,15 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from driftdriver.acceptance_gate import check_task
 from driftdriver.manual_owner import apply_manual_owner_policy
 from driftdriver.policy import load_drift_policy
 from driftdriver.speedriftd_state import load_dispatch_authority
-from driftdriver.workgraph import WorkgraphDirectoryConflictError, resolve_workgraph_dir
+from driftdriver.workgraph import (
+    WorkgraphDirectoryConflictError,
+    classify_publication_result,
+    resolve_workgraph_dir,
+)
 
 
 @dataclass
@@ -688,6 +693,38 @@ def _completion_failure_reason(task: dict[str, Any], data: dict[str, Any]) -> st
     return None
 
 
+# Named internal recovery path for the only ``--skip-verify`` use in this
+# repository. Per the installed wg CLI (``wg done --help``), ``--skip-verify``
+# skips the binary's own verify-command gate and is a human escape hatch
+# (blocked when WG_AGENT_ID is set — the router's daemon context is the one
+# context that can pass it). The router uses it solely to complete work that
+# a remote HTTP executor already ran, after driftdriver's acceptance gate
+# (``check_task``) has evaluated the task locally; the reason is recorded in
+# the task log with every such completion.
+_ROUTER_SKIP_VERIFY_REASON = (
+    "router-internal completion path: the remote HTTP executor already ran "
+    "the work, and driftdriver's acceptance gate (check_task) evaluated the "
+    "task locally before this wg done; wg's own verify-command gate is "
+    "skipped only for this named path"
+)
+
+
+def _skip_verify_args(reason: str | None) -> list[str]:
+    """Authorize ``--skip-verify`` only with a non-empty internal reason.
+
+    A blank reason can never authorize a verify-gate bypass: the guard fails
+    closed instead of silently emitting (or dropping) the flag.
+    """
+    if reason is None:
+        return []
+    if not reason.strip():
+        raise ValueError(
+            "--skip-verify requires a non-empty internal reason; refusing to "
+            "build a verify-gate bypass"
+        )
+    return ["--skip-verify"]
+
+
 def check_agent_completions(
     repo_path: Path, config: RoutingConfig
 ) -> list[CompletionResult]:
@@ -696,10 +733,12 @@ def check_agent_completions(
     For each in-progress task with an agent tag:
     1. Match the tag to an HTTP executor
     2. GET the task status from the agent endpoint
-    3. If status is "done", mark the wg task as done via ``wg done`` (flock-safe)
+    3. If status is "done", run the acceptance gate, then mark the wg task
+       as done via ``wg done`` (flock-safe)
     4. If status is "failed", mark the wg task as failed via ``wg fail`` (flock-safe)
     """
-    graph_path = resolve_workgraph_dir(repo_path).path / "graph.jsonl"
+    wg_dir = resolve_workgraph_dir(repo_path).path
+    graph_path = wg_dir / "graph.jsonl"
     nodes = _read_graph_lines(graph_path)
     results: list[CompletionResult] = []
 
@@ -741,9 +780,40 @@ def check_agent_completions(
                     task_id=task_id, completed=True, error=failure_reason,
                 ))
                 continue
+            # Acceptance gate first: ordinary completion cannot silently
+            # bypass verification. A blocking gate keeps the task in its
+            # current status (same contract as ExecutorShim's COMPLETE_TASK).
+            gate = check_task(wg_dir, task_id, record_degrade=True)
+            if gate.is_blocking:
+                _run_wg(repo_path, "log", task_id,
+                        f"Router completion blocked by acceptance gate: {gate.reason}")
+                results.append(CompletionResult(
+                    task_id=task_id, completed=False,
+                    error=f"acceptance gate blocked completion: {gate.reason}",
+                ))
+                continue
             _run_wg(repo_path, "log", task_id,
-                     f"Completed by agent via router. Summary: {str(summary)[:200]}")
-            _run_wg(repo_path, "done", task_id, "--skip-verify")
+                    f"Completed by agent via router. Summary: {str(summary)[:200]} "
+                    f"(--skip-verify reason: {_ROUTER_SKIP_VERIFY_REASON})")
+            done_result = _run_wg(
+                repo_path, "done", task_id,
+                *_skip_verify_args(_ROUTER_SKIP_VERIFY_REASON),
+            )
+            outcome = classify_publication_result(done_result)
+            if outcome.status != "published":
+                # Publication (here: the completion state change) did not
+                # apply — e.g. shared-root contention or a dependency the
+                # binary refuses to complete. Record the wait and return a
+                # structured retryable result instead of reporting success,
+                # which would silently re-issue wg done on the next poll.
+                _run_wg(repo_path, "log", task_id,
+                        f"Completion publication waiting: {outcome.reason}")
+                results.append(CompletionResult(
+                    task_id=task_id, completed=False,
+                    error=f"completion not published (coordination wait): "
+                          f"{outcome.reason}",
+                ))
+                continue
             results.append(CompletionResult(
                 task_id=task_id, completed=True, summary=str(summary)[:500],
             ))

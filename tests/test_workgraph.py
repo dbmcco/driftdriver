@@ -2,6 +2,7 @@
 # ABOUTME: Covers happy path, filtering, and missing-id guard.
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,8 @@ import pytest
 
 from driftdriver.workgraph import (
     WorkgraphDirectoryConflictError,
+    build_publish_command,
+    classify_publication_result,
     find_workgraph_dir,
     load_workgraph,
     parse_workgraph_status,
@@ -140,6 +143,41 @@ def test_load_workgraph_malformed_json(tmp_path):
     result = load_workgraph(tmp_path / ".workgraph")
     assert "t1" in result.tasks
     assert len(result.tasks) == 1
+
+
+# ---------------------------------------------------------------------------
+# Publication fence semantics (one helper, confirmed CLI behavior)
+# ---------------------------------------------------------------------------
+def test_build_publish_command_matches_installed_cli_semantics():
+    """The single place that knows the confirmed wg publication flags.
+
+    Confirmed from the installed wg binary's help output: ``wg add`` always
+    creates a paused visible draft, ``wg publish <task>`` validates
+    dependencies and resumes the subgraph, and ``--only`` releases exactly
+    the named task. No draft/place flags belong on the release command.
+    """
+    assert build_publish_command("feat-auth") == ["wg", "publish", "feat-auth", "--only"]
+    assert build_publish_command("feat-auth", only=False) == [
+        "wg",
+        "publish",
+        "feat-auth",
+    ]
+
+
+def test_classify_publication_result_distinguishes_coordination_wait():
+    applied = subprocess.CompletedProcess(args=[], returncode=0, stderr="")
+    outcome = classify_publication_result(applied)
+    assert outcome.status == "published"
+    assert not outcome.retryable
+
+    contended = subprocess.CompletedProcess(
+        args=[], returncode=1, stderr="lock contention on shared root"
+    )
+    outcome = classify_publication_result(contended)
+    assert outcome.status == "coordination_wait"
+    assert outcome.retryable
+    assert "exit 1" in outcome.reason
+    assert "lock contention" in outcome.reason
 
 
 class GraphDirectoryResolutionTests(unittest.TestCase):

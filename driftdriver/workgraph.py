@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -192,3 +193,69 @@ def load_workgraph(wg_dir: Path) -> Workgraph:
         tasks[tid] = obj
 
     return Workgraph(wg_dir=wg_dir, project_dir=wg_dir.parent, tasks=tasks)
+
+
+# ---------------------------------------------------------------------------
+# Publication fence semantics (confirmed against the installed wg CLI)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PublicationOutcome:
+    """Explicit outcome of one Workgraph publication mutation.
+
+    A mutation that did not apply (non-zero exit — e.g. shared-root lock
+    contention, or dependency validation refusing the release) is a
+    ``coordination_wait``: retryable, recorded, and never reported as a
+    silent success that would spin through repeated attempts.
+    """
+
+    status: str  # "published" | "coordination_wait"
+    retryable: bool
+    reason: str
+
+
+def build_publish_command(task_id: str, *, only: bool = True) -> list[str]:
+    """Build the publication fence-release command for one task.
+
+    This is the single place encoding the installed wg CLI's publication
+    semantics, confirmed from its help output (``wg add --help`` /
+    ``wg publish --help``, wg 0.1.0):
+
+    - ``wg add`` always creates a paused visible draft (``--paused`` is only
+      a compatibility spelling), so publication is fenced at add time and no
+      guessed draft/place flags belong in planner code;
+    - ``wg publish <task>`` validates dependencies, then resumes the entire
+      subgraph; ``--only`` releases exactly the named task;
+    - ``--place-near`` / ``--place-before`` are placement hints, not fences.
+
+    Because the native binary can represent the fence itself, no local
+    shadow-fence state is maintained here.
+    """
+    cmd = ["wg", "publish", task_id]
+    if only:
+        cmd.append("--only")
+    return cmd
+
+
+def classify_publication_result(
+    result: subprocess.CompletedProcess[str],
+) -> PublicationOutcome:
+    """Classify a publication mutation result (``wg publish`` or ``wg done``).
+
+    Exit 0 means the state change applied. Any other exit is a coordination
+    wait: the mutation did not take effect, a later attempt may apply once
+    contention clears or dependencies complete, and the caller must record
+    the wait rather than reporting success and re-issuing the mutation.
+    """
+    if result.returncode == 0:
+        return PublicationOutcome(
+            status="published", retryable=False, reason=""
+        )
+    stderr = (result.stderr or "").strip()
+    detail = f": {stderr[:200]}" if stderr else ""
+    return PublicationOutcome(
+        status="coordination_wait",
+        retryable=True,
+        reason=f"publication did not apply (exit {result.returncode}){detail}",
+    )
