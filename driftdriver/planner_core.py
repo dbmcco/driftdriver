@@ -798,6 +798,21 @@ def materialize_plan(
     if policy is None:
         policy = load_route_policy(repo_path)
 
+    # All-or-nothing publication: validate the whole batch's graph and node
+    # contracts before route diagnostics or the first wg add. Imported here
+    # because plan_preflight imports PlannedNode from this module.
+    from .plan_preflight import preflight_plan
+
+    preflight = preflight_plan(nodes, repo_path)
+    if not preflight.ok:
+        for finding in preflight.findings:
+            print(
+                "error: plan preflight blocked publication: "
+                f"[{finding.category}] {finding.task_id or '<blank>'}: {finding.message}",
+                file=sys.stderr,
+            )
+        return 0
+
     # Derive route_models from nodes if not provided
     if route_models is None:
         route_models = {n.id: n.model for n in nodes if n.model}

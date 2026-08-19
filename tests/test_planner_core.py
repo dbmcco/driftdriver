@@ -308,14 +308,17 @@ class MaterializePlanTests(unittest.TestCase):
             calls.append(cmd)
             return _ok()
 
-        node = PlannedNode(
-            id="impl-auth", title="Implement auth",
-            after=["setup-deps"], description="Build OAuth", verify="pytest tests/",
-        )
-        materialize_plan([node], Path("/repo"), runner=runner)
+        nodes = [
+            PlannedNode(id="setup-deps", title="Set up dependencies"),
+            PlannedNode(
+                id="impl-auth", title="Implement auth",
+                after=["setup-deps"], description="Build OAuth", verify="pytest tests/",
+            ),
+        ]
+        materialize_plan(nodes, Path("/repo"), runner=runner)
 
-        self.assertEqual(len(calls), 1)
-        cmd = calls[0]
+        self.assertEqual(len(calls), 2)
+        cmd = calls[1]
         self.assertEqual(cmd[0], "wg")
         self.assertEqual(cmd[1], "add")
         self.assertIn("Implement auth", cmd)
@@ -342,6 +345,75 @@ class MaterializePlanTests(unittest.TestCase):
         ]
         count = materialize_plan(nodes, Path("/repo"), runner=lambda cmd, **kw: _ok())
         self.assertEqual(count, 3)
+
+    def test_invalid_later_node_prevents_all_wg_add_calls(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        nodes = [
+            PlannedNode(id="valid", title="Valid", after=[]),
+            PlannedNode(
+                id="impl-judge",
+                title="Impossible",
+                description=(
+                    "Define class Evaluator and forbid every occurrence "
+                    "of Evaluator."
+                ),
+            ),
+        ]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            count = materialize_plan(nodes, Path("/repo"), runner=runner)
+        self.assertEqual(count, 0)
+        self.assertEqual(calls, [])
+        lines = [line for line in err.getvalue().splitlines() if line]
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(
+            lines[0].startswith(
+                "error: plan preflight blocked publication: "
+                "[contract-contradiction] impl-judge: "
+            ),
+            f"unexpected diagnostic: {lines[0]!r}",
+        )
+        self.assertIn("Evaluator", lines[0])
+
+    def test_blocked_batch_skips_post_commands(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        nodes = [
+            PlannedNode(id="loop", title="Loop", after=["loop"]),
+        ]
+        count = materialize_plan(
+            nodes, Path("/repo"),
+            post_commands=[["./.workgraph/coredrift", "ensure-contracts", "--apply"]],
+            runner=runner,
+        )
+        self.assertEqual(count, 0)
+        self.assertEqual(calls, [])
+
+    def test_valid_graph_preserves_blocked_by_arguments(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        nodes = [
+            PlannedNode(id="base", title="Base"),
+            PlannedNode(id="child", title="Child", after=["base"]),
+        ]
+        count = materialize_plan(nodes, Path("/repo"), runner=runner)
+        self.assertEqual(count, 2)
+        self.assertIn("--blocked-by", calls[1])
+        idx = calls[1].index("--blocked-by")
+        self.assertEqual(calls[1][idx + 1], "base")
 
     def test_nonzero_returncode_not_counted(self) -> None:
         node = PlannedNode(id="fail-task", title="Failing")
