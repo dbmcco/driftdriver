@@ -1,0 +1,16 @@
+{
+  "tasks": [
+    {
+      "id": "impl-judge",
+      "title": "Implement judge contract",
+      "type": "code",
+      "risk": "medium",
+      "description": "Implement the judge. Define class Evaluator in the delivered code. The delivered artifact must contain Evaluator.",
+      "verify": "python -c 'import judge_contract'",
+      "touch": ["src/judge/evaluator.py"],
+      "acceptance": [
+        "Importing judge_contract must succeed"
+      ]
+    }
+  ]
+}

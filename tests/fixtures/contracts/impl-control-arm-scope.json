@@ -1,0 +1,16 @@
+{
+  "tasks": [
+    {
+      "id": "impl-control-arm",
+      "title": "Implement control arm",
+      "type": "code",
+      "risk": "medium",
+      "description": "```wg-contract\nschema = 1\nmode = \"core\"\nobjective = \"Implement the control arm module\"\nnon_goals = [\"Rewriting the judge\"]\ntouch = [\"docs/**\"]\ncreates = []\nacceptance = [\"Control arm module implemented\"]\nmax_files = 5\nmax_loc = 200\n```\n\nImplement the control arm module behind the documented interface.",
+      "verify": "pytest tests/test_control_arm.py -q",
+      "touch": ["src/control/arm.py"],
+      "acceptance": [
+        "Control arm module implemented"
+      ]
+    }
+  ]
+}

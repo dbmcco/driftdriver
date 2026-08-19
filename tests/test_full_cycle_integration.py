@@ -1,14 +1,20 @@
 # ABOUTME: Integration test for the full Speedrift quality cycle.
 # ABOUTME: Planner output → drift check → bridge writes evaluations.
+# ABOUTME: Contract-preflight fixtures prove malformed plans never reach wg add.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import TestCase
 
+from driftdriver.planner_core import PlannedNode, materialize_plan
+from driftdriver.plan_preflight import preflight_plan
 from driftdriver.quality_planner import (
     PlannedTask,
     PlannerOutput,
@@ -187,3 +193,88 @@ class FullCycleIntegrationTests(TestCase):
             self.assertIn(required_field, eval_data, f"Missing required field: {required_field}")
         self.assertTrue(eval_data["evaluator"].startswith("speedrift:"))
         self.assertEqual(eval_data["source"], "drift")
+
+
+# ---------------------------------------------------------------------------
+# Speedrift contract preflight — fixture-driven integration
+#
+# The fixtures below are regression captures of the observed failure modes:
+# the malformed impl-judge contract (define+forbid Evaluator, import
+# succeed+fail, AST present+absent), its satisfiable counterpart, and the
+# impl-control-arm scope case. Each is loaded through the real planner
+# parser and driven through materialize_plan with a fake runner so the
+# whole parse → preflight → publication path is exercised.
+# ---------------------------------------------------------------------------
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "contracts"
+
+
+def load_fixture(name: str) -> list[PlannedNode]:
+    """Load a planner-output JSON fixture through the real planner parser."""
+    raw = (FIXTURES_DIR / name).read_text(encoding="utf-8")
+    nodes = _parse_plan_output(raw).tasks
+    assert nodes, f"fixture {name} parsed to zero nodes"
+    return nodes
+
+
+def recording_runner(calls: list[list[str]]):
+    """Return a runner that records every argv it is asked to execute."""
+
+    def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return runner
+
+
+def successful_runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+
+def test_impl_judge_fixture_is_rejected_before_publication(tmp_path: Path) -> None:
+    nodes = load_fixture("impl-judge-impossible.json")
+    result = preflight_plan(nodes, tmp_path)
+    assert not result.ok
+    assert [f.category for f in result.findings] == [
+        "contract-contradiction",
+        "contract-contradiction",
+        "contract-contradiction",
+    ]
+    assert all(f.task_id == "impl-judge" for f in result.findings)
+
+    calls: list[list[str]] = []
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        count = materialize_plan(nodes, tmp_path, runner=recording_runner(calls))
+    assert count == 0
+    assert calls == []
+    diagnostics = err.getvalue()
+    assert diagnostics.count("error: plan preflight blocked publication:") == 3
+    assert "[contract-contradiction] impl-judge:" in diagnostics
+
+
+def test_valid_judge_fixture_is_publishable(tmp_path: Path) -> None:
+    nodes = load_fixture("impl-judge-valid.json")
+    result = preflight_plan(nodes, tmp_path)
+    assert result.ok
+    assert result.findings == []
+    count = materialize_plan(nodes, tmp_path, runner=successful_runner)
+    assert count == 1
+
+
+def test_impl_control_arm_scope_fixture_conflicts_before_publication(
+    tmp_path: Path,
+) -> None:
+    nodes = load_fixture("impl-control-arm-scope.json")
+    result = preflight_plan(nodes, tmp_path)
+    assert not result.ok
+    assert [f.category for f in result.findings] == ["scope-contract-conflict"]
+    assert result.findings[0].task_id == "impl-control-arm"
+
+    calls: list[list[str]] = []
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        count = materialize_plan(nodes, tmp_path, runner=recording_runner(calls))
+    assert count == 0
+    assert calls == []
+    assert "[scope-contract-conflict] impl-control-arm:" in err.getvalue()

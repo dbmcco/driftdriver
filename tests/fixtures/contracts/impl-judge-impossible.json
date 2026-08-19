@@ -1,0 +1,17 @@
+{
+  "tasks": [
+    {
+      "id": "impl-judge",
+      "title": "Implement judge contract",
+      "type": "code",
+      "risk": "medium",
+      "description": "Implement the judge. Define class Evaluator in the delivered code. Forbid every occurrence of Evaluator anywhere in the delivered artifact. The AST must contain Evaluator. The AST must not contain Evaluator.",
+      "verify": "python -c 'import judge_contract'",
+      "touch": ["src/judge/evaluator.py"],
+      "acceptance": [
+        "Importing judge_contract must succeed",
+        "Import of judge_contract must fail"
+      ]
+    }
+  ]
+}

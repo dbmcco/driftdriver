@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "artifact": "speedrift-contract-preflight validation receipt",
+  "plan": "Speedrift contract preflight",
+  "branch": "feat/speedrift-contract-preflight",
+  "recorded_date": "2026-08-19",
+  "purpose": "Durable validation evidence for the Speedrift contract preflight work, inspectable without rerunning the original relational-memory graph.",
+  "fixtures": [
+    {
+      "name": "impl-judge-impossible.json",
+      "task_id": "impl-judge",
+      "regression": "Observed failure: a task that had to both define and forbid Evaluator, require an import to both succeed and fail, and require an AST symbol to both exist and not exist.",
+      "expected": "Rejected before publication; zero wg add invocations.",
+      "node_count": 1,
+      "preflight_ok": false,
+      "finding_count": 3,
+      "finding_categories": { "contract-contradiction": 3 },
+      "contradictory_pairs": [
+        "symbol 'Evaluator' present (description) vs absent (description)",
+        "ast 'Evaluator' present (description) vs absent (description)",
+        "import 'judge_contract' succeed (acceptance[0]) vs fail (acceptance[1])"
+      ],
+      "publication_calls": 0,
+      "stderr_diagnostics": 3
+    },
+    {
+      "name": "impl-judge-valid.json",
+      "task_id": "impl-judge",
+      "regression": "Satisfiable counterpart of the impossible fixture: requires class Evaluator and a successful import, with no negative-occurrence or failure assertion.",
+      "expected": "Publishable; one wg add invocation.",
+      "node_count": 1,
+      "preflight_ok": true,
+      "finding_count": 0,
+      "finding_categories": {},
+      "publication_calls": 1
+    },
+    {
+      "name": "impl-control-arm-scope.json",
+      "task_id": "impl-control-arm",
+      "regression": "Scope case: the wg-contract fence declares touch = [\"docs/**\"] while the required path is src/control/arm.py.",
+      "expected": "Rejected before publication; zero wg add invocations.",
+      "node_count": 1,
+      "preflight_ok": false,
+      "finding_count": 1,
+      "finding_categories": { "scope-contract-conflict": 1 },
+      "publication_calls": 0,
+      "stderr_diagnostics": 1
+    }
+  ],
+  "commands": [
+    {
+      "command": "uv run pytest tests/test_full_cycle_integration.py -q",
+      "exit_code": 0,
+      "result": "9 passed",
+      "note": "Fixture-driven integration suite. TDD red phase recorded first: 3 failed (fixtures absent), 6 passed, exit 1; green after fixtures were added."
+    },
+    {
+      "command": "uv run pytest tests/test_contract_validator.py tests/test_plan_preflight.py tests/test_planner_core.py tests/test_acceptance_gate.py tests/test_acceptance_gate_integration.py tests/test_scope_enforcement.py tests/test_full_cycle_integration.py -q",
+      "exit_code": 0,
+      "result": "264 passed"
+    },
+    {
+      "command": "uv run pytest tests/ -q",
+      "exit_code": 0,
+      "result": "2679 passed, 29 skipped, 9 xfailed, 2 subtests passed"
+    },
+    {
+      "command": "uv run python -m compileall -q driftdriver",
+      "exit_code": 0,
+      "result": "clean compile, no output"
+    }
+  ],
+  "lint_typecheck": "pyproject.toml declares no lint or typecheck command (pytest is the only configured quality gate); none was run.",
+  "content_policy": "This receipt contains no provider credentials, API tokens, or raw worker transcripts. Finding counts and categories derive from the deterministic preflight over the fixture files listed above."
+}
