@@ -1,5 +1,27 @@
 # ABOUTME: Contract assertion normalization for planned Speedrift nodes —
 # ABOUTME: bounded, deterministic patterns only; no fuzzy synonyms, no models.
+"""Bounded contract-assertion normalization for planned Speedrift nodes.
+
+The vocabulary normalizes only mechanically recognizable assertions: class
+declarations and contains/no-occurrence assertions (``symbol``), import
+success/failure, AST present/absent, and backticked command pass/fail.
+
+Absent-symbol vocabulary — hard precondition: only contains/no-occurrence
+phrasings normalize as ``symbol`` absent assertions — ``must (not) contain
+[no] X``, ``forbid every occurrence of X``, ``contains no occurrence of X``.
+Weaker phrasings that merely mention, reference, or use a symbol ("The tests
+must not reference X", "no mentions of X") are NOT normalized: scoped to a
+subset of the artifact they are satisfiable alongside a class declaration,
+so treating them as absent would reject provably satisfiable contracts.
+
+File-scope assumption — hard precondition: the patterns cannot parse scope
+qualifiers, so any contains/no-occurrence phrasing — including an unscoped
+bare "must not contain X" — is read as a whole-artifact prohibition: ANY
+delivered file containing an occurrence of the symbol violates it. That
+whole-artifact reading is what makes it provably contradictory with a class
+declaration in the same task. Callers must treat every normalized
+absent-symbol assertion as carrying this reading.
+"""
 from __future__ import annotations
 
 import re
@@ -64,23 +86,23 @@ _ASSERTION_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     # symbol must be absent (no occurrence anywhere, including comments/strings)
     (re.compile(
         rf"\bmust\s+(?:contain|include)\s+(?:no|zero)\s+"
-        rf"(?:occurrences?|mentions?|references?)\s+(?:of|to)\s+(?P<subject>{_SYMBOL})\b",
+        rf"occurrences?\s+(?:of|to)\s+(?P<subject>{_SYMBOL})\b",
         re.IGNORECASE,
     ), "symbol", "absent"),
     (re.compile(
-        rf"\bmust\s+not\s+(?:contain|include|mention|reference|use)\s+"
+        rf"\bmust\s+not\s+(?:contain|include)\s+"
         rf"(?:any\s+|every\s+|all\s+)?"
         rf"(?:occurrences?\s+(?:of|to)\s+)?(?P<subject>{_SYMBOL})\b",
         re.IGNORECASE,
     ), "symbol", "absent"),
     (re.compile(
         rf"\b(?:forbid|forbids|forbidden)\s+(?:every|any|all|the)?\s*"
-        rf"(?:occurrences?|mentions?|references?)\s+(?:of|to)\s+(?P<subject>{_SYMBOL})\b",
+        rf"occurrences?\s+(?:of|to)\s+(?P<subject>{_SYMBOL})\b",
         re.IGNORECASE,
     ), "symbol", "absent"),
     (re.compile(
         rf"\b(?:have|has|contains?|includes?)\s+no\s+"
-        rf"(?:occurrences?|mentions?|references?)\s+(?:of|to)\s+(?P<subject>{_SYMBOL})\b",
+        rf"occurrences?\s+(?:of|to)\s+(?P<subject>{_SYMBOL})\b",
         re.IGNORECASE,
     ), "symbol", "absent"),
     # symbol must be present (class declaration, or contains assertion)

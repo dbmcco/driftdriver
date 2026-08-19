@@ -122,6 +122,24 @@ def test_ambiguous_assertion_language_not_rejected() -> None:
     assert validate_node_contract(node, Path("/repo")) == []
 
 
+def test_mention_reference_use_not_normalized_as_absent() -> None:
+    # mention/reference/use phrasings (verb or noun) are weaker than
+    # contains/no-occurrence: scoped to a subset of the artifact they are
+    # satisfiable alongside a class declaration, so they must not normalize.
+    for phrase in (
+        "The tests must not reference Evaluator.",
+        "The docs must not mention Evaluator.",
+        "The runner must not use Evaluator directly.",
+        "The docs must contain no references to Evaluator.",
+    ):
+        node = PlannedNode(
+            id="impl-judge",
+            title="Implement evaluator",
+            description=f"Define class Evaluator. {phrase}",
+        )
+        assert validate_node_contract(node, Path("/repo")) == [], phrase
+
+
 def test_contradiction_across_acceptance_and_description() -> None:
     node = PlannedNode(
         id="impl-judge",
