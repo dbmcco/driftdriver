@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -521,6 +522,62 @@ class MaterializePlanTests(unittest.TestCase):
         # Acceptance alone never rendered a section before structured
         # verification and still must not: nothing gate-executable exists.
         self.assertNotIn("-d", calls[0])
+
+    def test_cross_batch_after_ref_accepted_when_id_in_graph(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            wg_dir = repo / ".workgraph"
+            wg_dir.mkdir()
+            (wg_dir / "graph.jsonl").write_text(
+                json.dumps({"kind": "task", "id": "prior-1", "status": "done"})
+                + "\n"
+                + json.dumps({"kind": "note", "id": "not-a-task"}) + "\n",
+                encoding="utf-8",
+            )
+            node = PlannedNode(id="follow-up", title="Follow-up", after=["prior-1"])
+            count = materialize_plan([node], repo, runner=runner)
+        self.assertEqual(count, 1)
+        self.assertIn("--blocked-by", calls[0])
+        idx = calls[0].index("--blocked-by")
+        self.assertEqual(calls[0][idx + 1], "prior-1")
+
+    def test_cross_batch_after_ref_still_blocked_without_graph(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        with tempfile.TemporaryDirectory() as td:
+            node = PlannedNode(id="follow-up", title="Follow-up", after=["ghost"])
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                count = materialize_plan([node], Path(td), runner=runner)
+        self.assertEqual(count, 0)
+        self.assertEqual(calls, [])
+        self.assertIn("[unknown-dependency] follow-up:", err.getvalue())
+
+    def test_graph_note_entries_do_not_satisfy_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            wg_dir = repo / ".workgraph"
+            wg_dir.mkdir()
+            (wg_dir / "graph.jsonl").write_text(
+                json.dumps({"kind": "note", "id": "not-a-task"}) + "\n",
+                encoding="utf-8",
+            )
+            node = PlannedNode(id="follow-up", title="Follow-up", after=["not-a-task"])
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                count = materialize_plan([node], repo, runner=lambda c, **k: _ok())
+        self.assertEqual(count, 0)
+        self.assertIn("[unknown-dependency] follow-up:", err.getvalue())
 
     def test_tag_builder_adds_tags(self) -> None:
         calls: list[list[str]] = []

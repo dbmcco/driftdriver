@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .workgraph import find_workgraph_dir, load_workgraph
+
 
 # ---------------------------------------------------------------------------
 # Quality pattern repertoire
@@ -810,6 +812,22 @@ def render_validation_contract(
     return f"{base}\n\n{section}"
 
 
+def _existing_graph_task_ids(repo_path: Path) -> set[str]:
+    """Read task ids already present in the repo's workgraph, best effort.
+
+    Plans may depend on tasks published by earlier batches. The ids come
+    from a plain graph.jsonl read (never a subprocess) so preflight itself
+    stays filesystem-free; a missing, uninitialized, unreadable, or
+    ambiguous graph directory yields an empty set, leaving dependency
+    closure exactly as batch-only as it was before cross-batch ids were
+    wired.
+    """
+    try:
+        return set(load_workgraph(find_workgraph_dir(repo_path)).tasks)
+    except (OSError, RuntimeError):
+        return set()
+
+
 def materialize_plan(
     nodes: list[PlannedNode],
     repo_path: Path,
@@ -854,7 +872,12 @@ def materialize_plan(
     # because plan_preflight imports PlannedNode from this module.
     from .plan_preflight import preflight_plan
 
-    preflight = preflight_plan(nodes, repo_path)
+    # Cross-batch dependencies: ids already in the repo's graph satisfy
+    # dependency closure. The read happens here, before preflight, which
+    # itself stays filesystem-free.
+    existing_ids = _existing_graph_task_ids(repo_path)
+
+    preflight = preflight_plan(nodes, repo_path, existing_ids=existing_ids)
     if not preflight.ok:
         for finding in preflight.findings:
             print(
