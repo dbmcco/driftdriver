@@ -442,7 +442,7 @@ class MaterializePlanTests(unittest.TestCase):
         idx = calls[0].index("-d")
         self.assertEqual(calls[0][idx + 1], "CUSTOM:x")
 
-    def test_verify_fallback_used_when_verify_empty(self) -> None:
+    def test_verify_fallback_renders_as_advisory_not_gate_command(self) -> None:
         calls: list[list[str]] = []
 
         def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
@@ -456,7 +456,71 @@ class MaterializePlanTests(unittest.TestCase):
             runner=runner,
         )
         idx = calls[0].index("-d")
-        self.assertIn('verify = ["test x"]', calls[0][idx + 1])
+        desc = calls[0][idx + 1]
+        # Fallback prose is advisory guidance for the executing agent, never
+        # a gate command: it must not become a verify the gate would execute.
+        self.assertIn('advisory = "test x"', desc)
+        self.assertNotIn("verify = ", desc)
+        extraction = _extract_verify_commands(desc)
+        self.assertFalse(extraction.malformed)
+        self.assertEqual(extraction.commands, [])
+
+    def test_fallback_advisory_keeps_acceptance_rendering(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(
+            id="gate-1", title="Gate", acceptance=["All tests pass"],
+        )
+        materialize_plan(
+            [node], Path("/repo"),
+            verify_fallback=lambda n: "run tests and confirm all pass",
+            runner=runner,
+        )
+        idx = calls[0].index("-d")
+        desc = calls[0][idx + 1]
+        self.assertIn('acceptance = ["All tests pass"]', desc)
+        self.assertIn('advisory = "run tests and confirm all pass"', desc)
+        self.assertNotIn("verify = ", desc)
+        extraction = _extract_verify_commands(desc)
+        self.assertFalse(extraction.malformed)
+        self.assertEqual(extraction.commands, [])
+
+    def test_explicit_verify_beats_fallback(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(id="x", title="X", verify="pytest tests/")
+        materialize_plan(
+            [node], Path("/repo"),
+            verify_fallback=lambda n: "run tests and confirm all pass",
+            runner=runner,
+        )
+        idx = calls[0].index("-d")
+        desc = calls[0][idx + 1]
+        self.assertIn('verify = ["pytest tests/"]', desc)
+        self.assertNotIn("advisory", desc)
+        extraction = _extract_verify_commands(desc)
+        self.assertEqual(extraction.commands, ["pytest tests/"])
+
+    def test_no_verify_and_no_fallback_renders_no_contract(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+            calls.append(cmd)
+            return _ok()
+
+        node = PlannedNode(id="x", title="X", acceptance=["c1"])
+        materialize_plan([node], Path("/repo"), runner=runner)
+        # Acceptance alone never rendered a section before structured
+        # verification and still must not: nothing gate-executable exists.
+        self.assertNotIn("-d", calls[0])
 
     def test_tag_builder_adds_tags(self) -> None:
         calls: list[list[str]] = []
@@ -599,6 +663,38 @@ class CanonicalValidationRenderingTests(unittest.TestCase):
         rendered = render_validation_contract(None, "pytest", [])
         self.assertTrue(rendered.startswith("## Validation"))
         self.assertIn('verify = ["pytest"]', rendered)
+
+    def test_advisory_only_render_carries_no_verify(self) -> None:
+        rendered = render_validation_contract(
+            "Do work", "", ["criterion"], advisory="run tests and confirm all pass"
+        )
+        self.assertNotIn("verify = ", rendered)
+        self.assertIn('acceptance = ["criterion"]', rendered)
+        self.assertIn('advisory = "run tests and confirm all pass"', rendered)
+        extraction = _extract_verify_commands(rendered)
+        self.assertFalse(extraction.malformed)
+        self.assertEqual(extraction.commands, [])
+
+    def test_advisory_rendering_is_idempotent(self) -> None:
+        once = render_validation_contract("Base", "", [], advisory="note")
+        twice = render_validation_contract(once, "", [], advisory="note")
+        self.assertEqual(once, twice)
+        self.assertEqual(once.count("## Validation"), 1)
+        self.assertEqual(once.count("```wg-contract"), 1)
+
+    def test_advisory_re_render_replaces_stale_section(self) -> None:
+        first = render_validation_contract("Base", "", [], advisory="old note")
+        second = render_validation_contract(first, "", [], advisory="new note")
+        self.assertEqual(second.count("## Validation"), 1)
+        self.assertIn('advisory = "new note"', second)
+        self.assertNotIn('advisory = "old note"', second)
+
+    def test_explicit_verify_replaces_advisory_section(self) -> None:
+        advisory = render_validation_contract("Base", "", [], advisory="note")
+        explicit = render_validation_contract(advisory, "pytest tests/", [])
+        self.assertEqual(explicit.count("## Validation"), 1)
+        self.assertIn('verify = ["pytest tests/"]', explicit)
+        self.assertNotIn("advisory", explicit)
 
 
 class PlannedNodeRouteFieldsTests(unittest.TestCase):

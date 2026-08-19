@@ -772,6 +772,7 @@ def render_validation_contract(
     desc: str | None,
     verify: str,
     acceptance: list[str] | None = None,
+    advisory: str = "",
 ) -> str:
     """Append the canonical Validation contract to a task description.
 
@@ -782,15 +783,23 @@ def render_validation_contract(
     the fence back out at completion time instead of losing the command in
     prose.
 
+    Only an explicit *verify* command becomes a gate-executable
+    ``verify = [...]`` declaration. Fallback prose must travel in
+    *advisory*, which the gate ignores: rendering prose as a verify key
+    would gate completion on a command-not-found failure.
+
     Rendering is idempotent: a canonical section previously appended by
     this function is replaced, never duplicated, so re-materializing the
     same node does not grow the description.
     """
     lines = ["## Validation", "", "```wg-contract"]
-    lines.append(f"verify = [{_toml_quote(verify)}]")
+    if verify:
+        lines.append(f"verify = [{_toml_quote(verify)}]")
     if acceptance:
         quoted = ", ".join(_toml_quote(criterion) for criterion in acceptance)
         lines.append(f"acceptance = [{quoted}]")
+    if advisory:
+        lines.append(f"advisory = {_toml_quote(advisory)}")
     lines.append("```")
     section = "\n".join(lines)
 
@@ -906,12 +915,17 @@ def materialize_plan(
         if desc:
             cmd.extend(["-d", desc])
 
-        verify = node.verify or (verify_fallback(node) if verify_fallback else "")
-        if verify:
+        # Explicit verify commands are the only text that may become a
+        # gate-executable contract. Fallback prose stays advisory inside
+        # the same canonical section: the gate ignores the advisory key,
+        # so pseudo-commands cannot gate completion on command-not-found.
+        verify = node.verify
+        advisory = "" if verify else (verify_fallback(node) if verify_fallback else "")
+        if verify or advisory:
             # wg deprecated --verify: validation travels inside the
             # description's canonical ## Validation contract, which the
             # acceptance gate parses back out at completion time.
-            desc = render_validation_contract(desc, verify, node.acceptance)
+            desc = render_validation_contract(desc, verify, node.acceptance, advisory=advisory)
             # Re-sync the -d flag if the description changed after being added.
             if "-d" in cmd:
                 cmd[cmd.index("-d") + 1] = desc
