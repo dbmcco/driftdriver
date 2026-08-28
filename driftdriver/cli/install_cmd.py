@@ -57,7 +57,7 @@ from driftdriver.install import (
     write_yagnidrift_wrapper,
 )
 from driftdriver.policy import ensure_drift_policy
-from driftdriver.workgraph import find_workgraph_dir
+from driftdriver.workgraph import WorkgraphDirectoryConflictError, find_workgraph_dir
 
 from .check import ExitCode, _ensure_wg_init
 
@@ -66,10 +66,14 @@ def cmd_install(args: argparse.Namespace) -> int:
     project_dir = Path.cwd()
     if args.dir:
         project_dir = Path(args.dir)
-        if project_dir.name == ".workgraph":
+        if project_dir.name in (".workgraph", ".wg"):
             project_dir = project_dir.parent
 
-    _ensure_wg_init(project_dir)
+    try:
+        _ensure_wg_init(project_dir)
+    except WorkgraphDirectoryConflictError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return ExitCode.usage
 
     wg_dir = find_workgraph_dir(project_dir)
 

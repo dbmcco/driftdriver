@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import pytest
@@ -234,3 +235,73 @@ class GraphDirectoryResolutionTests(unittest.TestCase):
             self.assertEqual(result.path, repo / ".workgraph")
             self.assertFalse(result.initialized)
             self.assertEqual(result.source, "default")
+
+
+class HybridLayoutEnsureInitTests(unittest.TestCase):
+    """_ensure_wg_init must resolve the active graph dir in hybrid layouts.
+
+    Hybrid = legacy .workgraph/ residue (drift lanes, archives, config) next
+    to the active .wg/ graph. Initializing .workgraph there dies on wg's
+    cross-graph identity guard, so _ensure_wg_init must reuse the initialized
+    .wg instead.
+    """
+
+    def _make_hybrid_repo(self, repo: Path) -> None:
+        legacy = repo / ".workgraph"
+        legacy.mkdir()
+        (legacy / "config.toml").write_text("", encoding="utf-8")
+        (legacy / "archive.jsonl").write_text("", encoding="utf-8")
+        current = repo / ".wg"
+        current.mkdir()
+        (current / "graph.jsonl").write_text("", encoding="utf-8")
+
+    def test_hybrid_reuses_initialized_wg_without_init(self):
+        from driftdriver.cli.check import _ensure_wg_init
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            self._make_hybrid_repo(repo)
+            with unittest.mock.patch("driftdriver.cli.check.subprocess.check_call") as mock_init:
+                wg_dir = _ensure_wg_init(repo)
+            mock_init.assert_not_called()
+            self.assertEqual(wg_dir, repo / ".wg")
+
+    def test_uninitialized_wg_dir_initializes_wg_not_workgraph(self):
+        from driftdriver.cli.check import _ensure_wg_init
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            (repo / ".wg").mkdir()
+            with unittest.mock.patch(
+                "driftdriver.cli.check.subprocess.check_call"
+            ) as mock_init:
+                wg_dir = _ensure_wg_init(repo)
+            self.assertEqual(wg_dir, repo / ".wg")
+            self.assertEqual(
+                mock_init.call_args.args[0][:4],
+                ["wg", "--dir", str(repo / ".wg"), "init"],
+            )
+
+    def test_fresh_repo_defaults_to_workgraph(self):
+        from driftdriver.cli.check import _ensure_wg_init
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            with unittest.mock.patch(
+                "driftdriver.cli.check.subprocess.check_call"
+            ) as mock_init:
+                wg_dir = _ensure_wg_init(repo)
+            self.assertEqual(wg_dir, repo / ".workgraph")
+            mock_init.assert_called_once()
+
+    def test_two_initialized_graphs_raises_conflict(self):
+        from driftdriver.cli.check import _ensure_wg_init
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            for name in (".workgraph", ".wg"):
+                graph = repo / name
+                graph.mkdir()
+                (graph / "graph.jsonl").write_text("", encoding="utf-8")
+            with self.assertRaises(WorkgraphDirectoryConflictError):
+                _ensure_wg_init(repo)

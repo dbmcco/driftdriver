@@ -41,8 +41,8 @@ def _dispatch(args: Any) -> int:
 
 
 def _wg_dir(repo: Path) -> Path:
-    """Resolve the workgraph dir (.workgraph preferred, .wg accepted)."""
-    for name in (".workgraph", ".wg"):
+    """Resolve the workgraph dir (.wg preferred, .workgraph accepted as legacy)."""
+    for name in (".wg", ".workgraph"):
         candidate = repo / name
         if candidate.is_dir():
             return candidate

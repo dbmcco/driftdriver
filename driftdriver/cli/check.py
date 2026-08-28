@@ -38,7 +38,12 @@ from driftdriver.updates import (
     render_review_markdown,
     summarize_updates,
 )
-from driftdriver.workgraph import find_workgraph_dir, load_workgraph
+from driftdriver.workgraph import (
+    WorkgraphDirectoryConflictError,
+    find_workgraph_dir,
+    load_workgraph,
+    resolve_workgraph_dir,
+)
 
 from ._helpers import (
     _collect_findings,
@@ -154,14 +159,26 @@ def _run(cmd: list[str]) -> int:
     return subprocess.call(cmd)
 
 
-def _ensure_wg_init(project_dir: Path) -> None:
-    wg_dir = project_dir / ".workgraph"
-    if (wg_dir / "graph.jsonl").exists():
-        return
+def _ensure_wg_init(project_dir: Path) -> Path:
+    """Ensure a Workgraph exists for the project, resolving the active graph dir.
+
+    Uses :func:`resolve_workgraph_dir` so a hybrid repository — legacy
+    ``.workgraph/`` residue next to the active ``.wg/`` — initializes or
+    reuses the correct graph instead of blindly creating ``.workgraph``
+    (which the wg CLI's cross-graph identity guard would refuse anyway).
+
+    Returns the resolved graph directory; raises
+    :class:`WorkgraphDirectoryConflictError` when the layout is ambiguous.
+    """
+    resolution = resolve_workgraph_dir(project_dir)
+    if resolution.initialized:
+        return resolution.path
+    wg_dir = resolution.path
     subprocess.check_call(
         ["wg", "--dir", str(wg_dir), "init", "--model", "claude:opus"],
         cwd=str(project_dir),
     )
+    return wg_dir
 
 
 def _load_task(*, wg_dir: Path, task_id: str) -> dict[str, Any] | None:
@@ -850,7 +867,11 @@ def cmd_check(args: argparse.Namespace) -> int:
     if gate_mode:
         args.json = True
 
-    wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    try:
+        wg_dir = find_workgraph_dir(Path(args.dir) if args.dir else None)
+    except WorkgraphDirectoryConflictError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return ExitCode.usage
     project_dir = wg_dir.parent
     task_id = str(args.task)
     policy = load_drift_policy(wg_dir)
@@ -876,7 +897,11 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     coredrift = wg_dir / "coredrift"
     if not coredrift.exists():
-        print("error: .workgraph/coredrift not found; run driftdriver install first", file=sys.stderr)
+        graph_dir_name = wg_dir.name
+        print(
+            f"error: {graph_dir_name}/coredrift not found; run driftdriver install first",
+            file=sys.stderr,
+        )
         return ExitCode.usage
 
     contract_ensure = _maybe_auto_ensure_contracts(wg_dir=wg_dir, project_dir=project_dir, policy=policy)

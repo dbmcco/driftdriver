@@ -99,10 +99,15 @@ class GateResult:
 
 
 def _degrade_state_path(repo: Path) -> Path:
-    """Path to the per-repo degrade counter file."""
-    wg = repo / ".workgraph"
+    """Path to the per-repo degrade counter file.
+
+    Resolves against the ACTIVE graph dir: ``.wg`` preferred, legacy
+    ``.workgraph`` accepted (hybrid repos keep residue in .workgraph but the
+    live graph is .wg).
+    """
+    wg = repo / ".wg"
     if not wg.exists():
-        wg = repo / ".wg"
+        wg = repo / ".workgraph"
     return wg / "service" / "acceptance-degrade.json"
 
 
@@ -218,10 +223,10 @@ def reset_degrade(repo: Path, task_id: str | None = None) -> int:
 
 def _policy_path(repo: Path) -> Path:
     """Path to the repo's drift-policy.toml (same wg-dir resolution as the
-    degrade state file: .workgraph preferred, .wg accepted)."""
-    wg = repo / ".workgraph"
+    degrade state file: .wg preferred, .workgraph accepted as legacy)."""
+    wg = repo / ".wg"
     if not wg.exists():
-        wg = repo / ".wg"
+        wg = repo / ".workgraph"
     return wg / "drift-policy.toml"
 
 

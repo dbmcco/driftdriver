@@ -137,6 +137,23 @@ class DegradeStateTests(unittest.TestCase):
             loaded = load_degrade_state(repo)
             self.assertEqual(loaded, {})
 
+    def test_hybrid_layout_writes_degrade_state_under_active_wg(self) -> None:
+        """Hybrid repo: residue .workgraph exists but active graph is .wg."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            legacy = repo / ".workgraph"
+            legacy.mkdir()
+            (legacy / "archive.jsonl").write_text("", encoding="utf-8")
+            current = repo / ".wg"
+            current.mkdir()
+            (current / "graph.jsonl").write_text("", encoding="utf-8")
+            save_degrade_state(repo, {"t1": 1})
+            self.assertTrue(
+                (current / "service" / "acceptance-degrade.json").exists()
+            )
+            self.assertFalse((legacy / "service").exists())
+            self.assertEqual(load_degrade_state(repo), {"t1": 1})
+
     def test_reset_clears_quarantine(self) -> None:
         """Operator reset is the escape from the quarantined (fail-closed) state."""
         with tempfile.TemporaryDirectory() as tmp:
