@@ -102,6 +102,36 @@ if [[ -n "$THINKING" ]]; then
   THINKING_ARGS+=(--thinking "$THINKING")
 fi
 
+# Optional model-spec dry-run. Tests and tooling set WG_PRINT_MODEL_SPEC=1 to
+# print the resolved model spec as key=value lines and exit 0 WITHOUT reading a
+# prompt or spawning pi, so a repo can assert the wrapper's bridging contract
+# end-to-end. When the repo ships scripts/wg_resolve_pi_model.py (the standalone
+# provider-bridge resolver), delegate to it — it is the single source of truth
+# for base_url/api_key_env bridging. Without it, print the inline normalization.
+if [[ "${WG_PRINT_MODEL_SPEC:-0}" == "1" ]]; then
+  _RESOLVER="$PWD/scripts/wg_resolve_pi_model.py"
+  if [[ -f "$_RESOLVER" ]]; then
+    _SPEC="$(python3 "$_RESOLVER" --provider "$PROVIDER" --model "$MODEL")"
+    printf '%s\n' "$_SPEC"
+    _R_PROVIDER="$(printf '%s\n' "$_SPEC" | sed -n 's/^provider=//p')"
+    _R_MODEL="$(printf '%s\n' "$_SPEC" | sed -n 's/^model=//p')"
+    if [[ -n "$_R_PROVIDER" && -n "$_R_MODEL" && "$_R_MODEL" != */* ]]; then
+      echo "pi_args=--provider $_R_PROVIDER --model $_R_MODEL"
+    else
+      echo "pi_args=${MODEL_ARGS[*]}"
+    fi
+  else
+    echo "provider=$PROVIDER"
+    echo "model=$MODEL"
+    echo "selected=$SELECTED_MODEL"
+    echo "base_url="
+    echo "api_key_env="
+    echo "bridge=0"
+    echo "pi_args=${MODEL_ARGS[*]}"
+  fi
+  exit 0
+fi
+
 # Read the rendered task prompt from stdin (the [executor.prompt_template]).
 PROMPT="$(cat)"
 if [[ -z "${PROMPT//[[:space:]]/}" ]]; then

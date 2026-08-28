@@ -102,3 +102,70 @@ def test_pi_executor_preserves_selected_and_fallback_model_specs(tmp_path: Path)
     ]
     assert invocation["selected"] == "anthropic/claude-opus-4-8"
     assert invocation["fallback"] == "zai/glm-5.2:high"
+
+
+def test_pi_executor_dry_run_prints_model_spec_without_prompt(tmp_path: Path) -> None:
+    """WG_PRINT_MODEL_SPEC=1 prints key=value resolution and exits 0, no prompt.
+
+    Guards the dry-run contract repos use to assert the wrapper's model
+    bridging end-to-end without spawning pi. Without a repo-local resolver
+    script, the wrapper prints its inline normalization with no bridge.
+    """
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "driftdriver" / "templates" / "executors" / "pi-run.sh"),
+            "--model",
+            "zai:glm-5.2",
+        ],
+        input="",
+        text=True,
+        capture_output=True,
+        cwd=str(tmp_path),
+        env={**os.environ, "WG_PRINT_MODEL_SPEC": "1"},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    out = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    assert out["provider"] == "zai"
+    assert out["model"] == "glm-5.2"
+    assert out["selected"] == "zai/glm-5.2"
+    assert out["pi_args"] == "--provider zai --model glm-5.2"
+    assert out["bridge"] == "0"
+
+
+def test_pi_executor_dry_run_delegates_to_repo_resolver(tmp_path: Path) -> None:
+    """With scripts/wg_resolve_pi_model.py present, the dry-run delegates bridging."""
+    resolver = tmp_path / "scripts" / "wg_resolve_pi_model.py"
+    resolver.parent.mkdir(parents=True)
+    resolver.write_text(
+        "#!/usr/bin/env python3\n"
+        "print('provider=openai')\n"
+        "print('model=gpt-5.5')\n"
+        "print('selected=openai/gpt-5.5')\n"
+        "print('base_url=https://api.openai.com/v1')\n"
+        "print('api_key_env=OPENAI_API_KEY')\n"
+        "print('bridge=1')\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "driftdriver" / "templates" / "executors" / "pi-run.sh"),
+            "--model",
+            "openai-codex:gpt-5.5",
+        ],
+        input="",
+        text=True,
+        capture_output=True,
+        cwd=str(tmp_path),
+        env={**os.environ, "WG_PRINT_MODEL_SPEC": "1"},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    out = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    assert out["provider"] == "openai"
+    assert out["base_url"] == "https://api.openai.com/v1"
+    assert out["api_key_env"] == "OPENAI_API_KEY"
+    assert out["bridge"] == "1"
+    assert out["pi_args"] == "--provider openai --model gpt-5.5"
