@@ -141,7 +141,13 @@ block with no repair path (contradictory verify declarations, no
 degrade), so the disagreement must block publication here instead.
     """
     verify = node.verify if isinstance(node.verify, str) else ""
-    expected: list[str] | None = [verify] if verify else None
+    if not verify:
+        # Fence-authoritative shape (PlanForge V2): its node conversion
+        # deliberately leaves ``verify`` unmapped because ``wg add``
+        # deprecated ``--verify``; validation commands live only in the
+        # description fence. The declared commands ARE the contract.
+        return []
+    expected: list[str] = [verify]
     for commands in declared_verify:
         if commands != expected:
             expected_text = f"{expected}" if expected is not None else "empty"
