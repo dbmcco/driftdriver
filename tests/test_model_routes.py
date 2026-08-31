@@ -4,7 +4,7 @@ from driftdriver.model_routes import model_for_route, route_for
 
 
 def test_model_for_route_reads_central_registry() -> None:
-    assert model_for_route("driftdriver.hub_chat") == "claude-sonnet-4-6"
+    assert model_for_route("driftdriver.hub_chat") == "glm-5.3"
 
 
 def test_route_for_includes_provider_metadata() -> None:

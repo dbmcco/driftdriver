@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from hashlib import sha1
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import re
 
 from driftdriver.drift_task_guard import guarded_add_drift_task, record_finding_ledger
 from driftdriver.governancedrift import score_operational_health
-from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
+from driftdriver.llm_meter import extract_usage_from_openai_compat, record_spend
 from driftdriver.signal_gate import should_fire as _sg_should_fire, record_fire as _sg_record_fire
 
 
@@ -77,7 +80,7 @@ def default_northstardrift_cfg() -> dict[str, Any]:
             "anti_patterns": [],
             "last_reviewed": "",
             "review_interval_days": 30,
-            "alignment_model": "haiku",
+            "alignment_model": "lunaroute/glm-5.3-flash",
             "alignment_threshold_proceed": 0.7,
             "alignment_threshold_pause": 0.4,
             "decision_category": "alignment",
@@ -831,11 +834,11 @@ def _check_canary_alert(gate_state: dict[str, Any], *, alert_hours: int = 4) -> 
 def _score_alignment_with_llm(
     statement: str,
     tasks: list[dict[str, Any]],
-    model: str = "haiku",
+    model: str = "lunaroute/glm-5.3-flash",
     timeout: int = 30,
     gate_dir: Path | None = None,
 ) -> tuple[float, list[str]]:
-    """Score alignment using a Haiku LLM call.
+    """Score alignment using a zai glm-5.3-flash LLM call (lunaroute-sourced).
 
     Returns (score 0-100, findings list).
     Raises RuntimeError on failure so the caller can fall back to keyword scoring.
@@ -884,22 +887,40 @@ def _score_alignment_with_llm(
         f'"findings": [<specific misalignment observations as strings, empty list if well aligned>]}}'
     )
 
-    result = subprocess.run(
-        ["claude", "--model", model, "--print", "--output-format", "json",
-         "--dangerously-skip-permissions"],
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
+    # Call the zai OpenAI-compatible API directly (replaces the former
+    # `claude --print` CLI path; the ecosystem no longer routes through
+    # Anthropic). Strip any Pi-style ``provider/`` prefix so the bare model
+    # id reaches the zai endpoint.
+    api_model = model.split("/", 1)[-1] if "/" in model else model
+    api_key = (
+        os.environ.get("DRIFTDRIVER_ZAI_API_KEY")
+        or os.environ.get("ZAI_API_KEY")
+        or os.environ.get("PAIA_ZAI_API_KEY")
     )
-
-    if result.returncode != 0:
-        raise RuntimeError(f"LLM alignment call failed (exit {result.returncode}): {result.stderr[:200]}")
-
-    cli_output = json.loads(result.stdout)
+    if not api_key:
+        raise RuntimeError("ZAI_API_KEY not set for northstar alignment")
+    payload = {
+        "model": api_model,
+        "max_tokens": 512,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    request = Request(
+        "https://api.z.ai/api/paas/v4/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "content-type": "application/json",
+            "authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise RuntimeError(f"zai API error {exc.code}") from exc
 
     # Record LLM spend
-    usage = extract_usage_from_claude_json(cli_output)
+    usage = extract_usage_from_openai_compat(body)
     if usage:
         record_spend(
             agent="northstar",
@@ -908,9 +929,10 @@ def _score_alignment_with_llm(
             output_tokens=usage[1],
         )
 
-    # Extract the text result from CLI JSON envelope
-    raw = (cli_output.get("result", "") if isinstance(cli_output, dict)
-           else result.stdout).strip()
+    # Extract the text result from the OpenAI-compatible response envelope
+    choices = body.get("choices") if isinstance(body, dict) else None
+    message = choices[0].get("message") if isinstance(choices, list) and choices else None
+    raw = (message.get("content", "") if isinstance(message, dict) else "").strip()
     # Strip markdown fences if present
     if raw.startswith("```"):
         raw = raw.lstrip("`").removeprefix("json").strip().rstrip("`").strip()
@@ -1423,7 +1445,7 @@ def compute_northstardrift(
             task_scores: list[dict[str, Any]] = []
         else:
             # Try LLM scoring first; fall back to keyword matching on any failure.
-            llm_model = str(alignment_config.get("alignment_model") or "haiku")
+            llm_model = str(alignment_config.get("alignment_model") or "lunaroute/glm-5.3-flash")
             alignment_findings = []
             llm_used = False
             raw_score = 50.0

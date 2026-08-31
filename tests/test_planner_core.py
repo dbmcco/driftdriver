@@ -827,14 +827,19 @@ class TierOfTests(unittest.TestCase):
     def test_zai_is_standard(self) -> None:
         self.assertEqual(DEFAULT_MODEL_ROUTE_POLICY.tier_of("zai:glm-5.2"), "standard")
 
-    def test_kimi_coding_standard(self) -> None:
+    def test_lunaroute_is_standard(self) -> None:
         self.assertEqual(
-            DEFAULT_MODEL_ROUTE_POLICY.tier_of("kimi-coding:kimi-for-coding"), "standard",
+            DEFAULT_MODEL_ROUTE_POLICY.tier_of("lunaroute:glm-5.3"), "standard",
         )
 
-    def test_kimi_coding_k3_is_premium(self) -> None:
+    def test_openai_codex_luna_is_premium(self) -> None:
         self.assertEqual(
-            DEFAULT_MODEL_ROUTE_POLICY.tier_of("kimi-coding:k3"), "premium",
+            DEFAULT_MODEL_ROUTE_POLICY.tier_of("openai-codex:gpt-5.6-luna"), "premium",
+        )
+
+    def test_openai_codex_54_mini_is_standard(self) -> None:
+        self.assertEqual(
+            DEFAULT_MODEL_ROUTE_POLICY.tier_of("openai-codex:gpt-5.4-mini"), "standard",
         )
 
     def test_openai_codex_is_premium(self) -> None:
@@ -848,13 +853,13 @@ class TierOfTests(unittest.TestCase):
 
 class EscalationReasonTests(unittest.TestCase):
     def test_premium_without_reason_flagged(self) -> None:
-        violations = validate_model_routes({"n1": "kimi-coding:k3"})
+        violations = validate_model_routes({"n1": "openai-codex:gpt-5.5"})
         kinds = [v.kind for v in violations]
         self.assertIn("missing-escalation-reason", kinds)
 
     def test_premium_with_reason_passes(self) -> None:
         violations = validate_model_routes(
-            {"n1": "kimi-coding:k3"},
+            {"n1": "openai-codex:gpt-5.5"},
             escalation_reasons={"n1": "critical cross-system integration"},
         )
         self.assertEqual(violations, [])
@@ -889,7 +894,7 @@ class MaterializeStripPinTests(unittest.TestCase):
             calls.append(cmd)
             return _ok()
 
-        node = PlannedNode(id="premium-task", title="Premium", model="kimi-coding:k3")
+        node = PlannedNode(id="premium-task", title="Premium", model="openai-codex:gpt-5.5")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             count = materialize_plan([node], Path("/repo"), runner=runner)
@@ -918,7 +923,7 @@ class MaterializeStripPinTests(unittest.TestCase):
             calls.append(cmd)
             return _ok()
 
-        node = PlannedNode(id="premium-task", title="Premium", model="kimi-coding:k3")
+        node = PlannedNode(id="premium-task", title="Premium", model="openai-codex:gpt-5.5")
         materialize_plan(
             [node], Path("/repo"),
             escalation_reasons={"premium-task": "critical integration"},
@@ -926,7 +931,7 @@ class MaterializeStripPinTests(unittest.TestCase):
         )
         self.assertIn("--model", calls[0])
         idx = calls[0].index("--model")
-        self.assertEqual(calls[0][idx + 1], "pi:kimi-coding:k3")
+        self.assertEqual(calls[0][idx + 1], "pi:openai-codex:gpt-5.5")
 
 
 class MinimumTierForTests(unittest.TestCase):
@@ -1149,7 +1154,7 @@ class LoadRoutePolicyTests(unittest.TestCase):
         self.assertEqual(policy.tier_of("midname:mid"), "standard")
         self.assertEqual(policy.tier_of("smallname:tiny"), "fast")
         # Built-in premium prefix no longer premium once the file overrides it
-        self.assertNotEqual(policy.tier_of("kimi-coding:k3"), "premium")
+        self.assertNotEqual(policy.tier_of("openai-codex:gpt-5.5"), "premium")
 
     def test_missing_keys_fall_back_to_defaults(self) -> None:
         import tempfile
@@ -1159,7 +1164,7 @@ class LoadRoutePolicyTests(unittest.TestCase):
             policy = load_route_policy(Path(tmp))
         self.assertEqual(policy.prohibited_prefixes, ())
         self.assertEqual(policy.tier_of("ollama:gemma"), "fast")
-        self.assertEqual(policy.tier_of("kimi-coding:k3"), "premium")
+        self.assertEqual(policy.tier_of("openai-codex:gpt-5.5"), "premium")
 
     def test_invalid_toml_falls_back_with_warning(self) -> None:
         import tempfile

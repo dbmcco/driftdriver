@@ -31,7 +31,7 @@ def test_agency_pi_fallback_receipt_is_audit_only(
     receipt = record_agency_pi_fallback_receipt(
         tmp_path,
         task_id="phase0.workgraph-pi-compat",
-        selected_model="anthropic/claude-opus-4-8",
+        selected_model="openai-codex/gpt-5.5",
         fallback_model="zai/glm-5.2",
         reason="agency health endpoint unavailable",
         timestamp="2026-07-18T20:00:00+00:00",
@@ -45,7 +45,7 @@ def test_agency_pi_fallback_receipt_is_audit_only(
     assert receipt["repo"] == tmp_path.name
     assert receipt["task_id"] == "phase0.workgraph-pi-compat"
     assert receipt["preferred_runtime"] == "agency"
-    assert receipt["preferred_model"] == "anthropic/claude-opus-4-8"
+    assert receipt["preferred_model"] == "openai-codex/gpt-5.5"
     assert receipt["fallback_runtime"] == "pi"
     assert receipt["fallback_model"] == "zai/glm-5.2"
     assert receipt["reason"] == "agency health endpoint unavailable"
@@ -70,8 +70,8 @@ def test_fallback_receipt_persists_control_change_before_receipt_write(
         record_agency_pi_fallback_receipt(
             tmp_path,
             task_id="task",
-            selected_model="anthropic/claude-sonnet-4-5",
-            fallback_model="anthropic/claude-haiku-4-5",
+            selected_model="zai/glm-5.3",
+            fallback_model="zai/glm-5.3-flash",
             reason="agency unavailable",
             timestamp="2026-07-18T20:00:00+00:00",
         )
@@ -121,8 +121,8 @@ def test_fallback_receipt_lock_covers_actual_append_boundary(
     receipt = record_agency_pi_fallback_receipt(
         tmp_path,
         task_id="task",
-        selected_model="anthropic/claude-sonnet-4-5",
-        fallback_model="anthropic/claude-haiku-4-5",
+        selected_model="zai/glm-5.3",
+        fallback_model="zai/glm-5.3-flash",
         reason="agency unavailable",
         timestamp="2026-07-18T20:00:00+00:00",
     )
@@ -170,8 +170,8 @@ def test_fallback_receipt_writer_is_not_a_mode_setter(monkeypatch: pytest.Monkey
     receipt = record_agency_pi_fallback_receipt(
         tmp_path,
         task_id="task",
-        selected_model="anthropic/claude-sonnet-4-5",
-        fallback_model="anthropic/claude-haiku-4-5",
+        selected_model="zai/glm-5.3",
+        fallback_model="zai/glm-5.3-flash",
         reason="agency unavailable",
         timestamp="2026-07-18T20:00:00+00:00",
     )

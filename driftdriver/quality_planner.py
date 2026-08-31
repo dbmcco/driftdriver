@@ -98,7 +98,7 @@ def _read_north_star(repo_path: Path) -> str:
     return str(alignment.get("statement", ""))
 
 
-def _call_llm(prompt: str, model: str = "sonnet") -> str:
+def _call_llm(prompt: str, model: str = "glm-5.3") -> str:
     """Call claude CLI in non-interactive mode and return the response text.
 
     Thin wrapper delegating to planner_core.call_llm.
@@ -163,7 +163,7 @@ def plan_from_spec(
     spec_path: Path,
     repo_path: Path,
     dry_run: bool = False,
-    model: str = "sonnet",
+    model: str = "glm-5.3",
     grounding: bool = True,
 ) -> PlannerOutput:
     """Read a spec file and produce a quality-aware workgraph task plan.

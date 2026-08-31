@@ -12,21 +12,26 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Cost per million tokens (input, output) — approximate rates
+# Cost per million tokens (input, output) — drawn from the live Pi model
+# catalog (~/.pi/agent/models-store.json). Anthropic / legacy OpenAI o-series
+# entries removed; the ecosystem no longer routes through them.
 _COST_PER_MTOK: dict[str, tuple[float, float]] = {
-    "haiku": (0.80, 4.00),
-    "sonnet": (3.00, 15.00),
-    "opus": (15.00, 75.00),
-    # Full model IDs map to the same rates
-    "claude-haiku-4-5-20251001": (0.80, 4.00),
-    "claude-sonnet-4-6": (3.00, 15.00),
-    "claude-opus-4-6": (15.00, 75.00),
-    # Codex / OpenAI models
-    "o4-mini": (1.10, 4.40),
-    "o3": (10.00, 40.00),
+    # zai (callable from both layers)
+    "zai/glm-5.3": (1.40, 4.40),
+    "zai/glm-5.3-flash": (0.075, 0.25),
+    "zai/glm-5.2": (1.40, 4.40),
+    # lunaroute (Pi-layer only; same underlying glm-5.3 family pricing)
+    "lunaroute/glm-5.3": (1.40, 4.40),
+    "lunaroute/glm-5.3-flash": (0.075, 0.25),
+    # openai-codex (Pi-layer only)
+    "openai-codex/gpt-5.6-luna": (0.20, 1.20),
+    "openai-codex/gpt-5.5": (5.00, 30.00),
+    "openai-codex/gpt-5.4-mini": (0.75, 4.50),
+    # Local Ollama models are free
+    "ollama": (0.0, 0.0),
 }
 
-_DEFAULT_RATE = _COST_PER_MTOK["sonnet"]
+_DEFAULT_RATE = _COST_PER_MTOK["zai/glm-5.3"]
 
 _DEFAULT_LOG_PATH = Path(".workgraph/llm-spend.jsonl")
 
@@ -46,7 +51,15 @@ def _resolve_rate(model: str) -> tuple[float, float]:
     lower = model.lower()
     if lower in _COST_PER_MTOK:
         return _COST_PER_MTOK[lower]
-    for key in ("haiku", "opus", "sonnet", "o4-mini", "o3"):
+    for key in (
+        "glm-5.3-flash",
+        "glm-5.3",
+        "glm-5.2",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "gpt-5.4-mini",
+        "ollama",
+    ):
         if key in lower:
             return _COST_PER_MTOK[key]
     return _DEFAULT_RATE
@@ -75,12 +88,29 @@ def extract_usage_from_claude_json(cli_output: Any) -> tuple[int, int] | None:
 
 
 def extract_usage_from_api_response(body: dict[str, Any]) -> tuple[int, int] | None:
-    """Extract (input_tokens, output_tokens) from Anthropic Messages API response body."""
+    """Extract (input_tokens, output_tokens) from an Anthropic Messages API
+    response body. Kept for any residual Anthropic-shaped callers; new zai
+    callers should use :func:`extract_usage_from_openai_compat`."""
     usage = body.get("usage")
     if not isinstance(usage, dict):
         return None
     inp = usage.get("input_tokens")
     out = usage.get("output_tokens")
+    if inp is None or out is None:
+        return None
+    return (int(inp), int(out))
+
+
+def extract_usage_from_openai_compat(body: dict[str, Any]) -> tuple[int, int] | None:
+    """Extract (input_tokens, output_tokens) from an OpenAI-compatible response
+    body (zai, openai, openrouter). Handles both the ``prompt_tokens`` /
+    ``completion_tokens`` shape and the Anthropic-style ``input_tokens`` /
+    ``output_tokens`` shape as a fallback."""
+    usage = body.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    inp = usage.get("prompt_tokens", usage.get("input_tokens"))
+    out = usage.get("completion_tokens", usage.get("output_tokens"))
     if inp is None or out is None:
         return None
     return (int(inp), int(out))

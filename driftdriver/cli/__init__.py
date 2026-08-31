@@ -524,7 +524,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         spec_path=spec_path,
         repo_path=repo_path,
         dry_run=args.dry_run,
-        model=args.model or "sonnet",
+        model=args.model or "glm-5.3",
     )
 
     if args.dry_run:
@@ -1157,7 +1157,7 @@ def _build_parser() -> argparse.ArgumentParser:
     plan_p.add_argument("spec_file", help="Path to spec or plan file")
     plan_p.add_argument("--repo", default="", help="Target repo path (default: cwd)")
     plan_p.add_argument("--dry-run", action="store_true", help="Show plan without creating tasks")
-    plan_p.add_argument("--model", default="sonnet", help="LLM model (default: sonnet)")
+    plan_p.add_argument("--model", default="glm-5.3", help="LLM model (default: glm-5.3)")
     plan_p.set_defaults(func=cmd_plan)
 
     speedriftd_p = sub.add_parser("speedriftd", help="Run the repo-local runtime supervisor shell")

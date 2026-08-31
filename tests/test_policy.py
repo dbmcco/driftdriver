@@ -73,7 +73,7 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.northstardrift["alignment"]["anti_patterns"], [])
             self.assertEqual(p.northstardrift["alignment"]["last_reviewed"], "")
             self.assertEqual(p.northstardrift["alignment"]["review_interval_days"], 30)
-            self.assertEqual(p.northstardrift["alignment"]["alignment_model"], "haiku")
+            self.assertEqual(p.northstardrift["alignment"]["alignment_model"], "lunaroute/glm-5.3-flash")
             self.assertAlmostEqual(p.northstardrift["alignment"]["alignment_threshold_proceed"], 0.7)
             self.assertAlmostEqual(p.northstardrift["alignment"]["alignment_threshold_pause"], 0.4)
             self.assertEqual(p.northstardrift["alignment"]["decision_category"], "alignment")
@@ -254,7 +254,7 @@ class PolicyTests(unittest.TestCase):
                         'anti_patterns = ["gold-plating"]',
                         'last_reviewed = "2026-03-01"',
                         "review_interval_days = 14",
-                        'alignment_model = "sonnet"',
+                        'alignment_model = "glm-5.3"',
                         "alignment_threshold_proceed = 0.8",
                         "alignment_threshold_pause = 0.3",
                         'decision_category = "strategy"',
@@ -402,7 +402,7 @@ class PolicyTests(unittest.TestCase):
             self.assertEqual(p.northstardrift["alignment"]["anti_patterns"], ["gold-plating"])
             self.assertEqual(p.northstardrift["alignment"]["last_reviewed"], "2026-03-01")
             self.assertEqual(p.northstardrift["alignment"]["review_interval_days"], 14)
-            self.assertEqual(p.northstardrift["alignment"]["alignment_model"], "sonnet")
+            self.assertEqual(p.northstardrift["alignment"]["alignment_model"], "glm-5.3")
             self.assertAlmostEqual(p.northstardrift["alignment"]["alignment_threshold_proceed"], 0.8)
             self.assertAlmostEqual(p.northstardrift["alignment"]["alignment_threshold_pause"], 0.3)
             self.assertEqual(p.northstardrift["alignment"]["decision_category"], "strategy")

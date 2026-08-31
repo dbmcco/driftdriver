@@ -9,13 +9,22 @@ from typing import Any
 
 # This is the checked-in live Pi-resolvable set for the current plan. Keep this
 # explicit: silently accepting provider/model heuristics would make dispatch
-# non-deterministic when a provider catalog changes.
+# non-deterministic when a provider catalog changes. Anthropic is intentionally
+# absent — the ecosystem no longer routes through Anthropic models.
 ALLOWED_PI_MODEL_IDS = frozenset(
     {
-        "zai/glm-5.2",
-        "anthropic/claude-haiku-4-5",
-        "anthropic/claude-sonnet-4-5",
-        "anthropic/claude-opus-4-8",
+        # zai (callable from both the workgraph Pi layer and the cognition
+        # registry's zai_standard surface).
+        "zai/glm-5.3",
+        "zai/glm-5.3-flash",
+        "zai/glm-5.2",  # legacy compat — existing tests/init commands reference it
+        # openai-codex (Pi-layer only; no registry API surface provisioned).
+        "openai-codex/gpt-5.6-luna",  # frontier
+        "openai-codex/gpt-5.5",       # premium
+        "openai-codex/gpt-5.4-mini",   # standard
+        # lunaroute (Pi-layer only; conditional provider — needs escalation reason).
+        "lunaroute/glm-5.3",
+        "lunaroute/glm-5.3-flash",
     }
 )
 _ALLOWED_THINKING_SUFFIXES = frozenset({"low", "medium", "high"})

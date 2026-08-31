@@ -34,19 +34,20 @@ class TestAlignmentSignalGate:
         tasks = self._make_tasks(["add auth", "fix bug"])
         llm_called = []
 
-        def fake_subprocess_run(*args, **kwargs):
+        def fake_urlopen(*args, **kwargs):
             llm_called.append(True)
 
-            class FakeResult:
-                returncode = 0
-                stdout = json.dumps({
-                    "result": json.dumps({"score": 75, "findings": ["drift detected"]})
-                })
-                stderr = ""
-            return FakeResult()
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *_a):
+                    return None
+                def read(self):
+                    return json.dumps({"choices": [{"message": {"content": json.dumps({"score": 75, "findings": ["drift detected"]})}}]}).encode("utf-8")
+            return FakeResponse()
 
-        with patch("driftdriver.northstardrift.subprocess.run", side_effect=fake_subprocess_run):
-            with patch("driftdriver.northstardrift.extract_usage_from_claude_json", return_value=None):
+        with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", side_effect=fake_urlopen):
+            with patch("driftdriver.northstardrift.extract_usage_from_openai_compat", return_value=None):
                 score, findings = _score_alignment_with_llm(
                     "Keep code in sync", tasks, gate_dir=tmp_path,
                 )
@@ -62,19 +63,20 @@ class TestAlignmentSignalGate:
         tasks = self._make_tasks(["add auth", "fix bug"])
         llm_call_count = []
 
-        def fake_subprocess_run(*args, **kwargs):
+        def fake_urlopen(*args, **kwargs):
             llm_call_count.append(True)
 
-            class FakeResult:
-                returncode = 0
-                stdout = json.dumps({
-                    "result": json.dumps({"score": 80, "findings": []})
-                })
-                stderr = ""
-            return FakeResult()
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *_a):
+                    return None
+                def read(self):
+                    return json.dumps({"choices": [{"message": {"content": json.dumps({"score": 80, "findings": []})}}]}).encode("utf-8")
+            return FakeResponse()
 
-        with patch("driftdriver.northstardrift.subprocess.run", side_effect=fake_subprocess_run):
-            with patch("driftdriver.northstardrift.extract_usage_from_claude_json", return_value=None):
+        with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", side_effect=fake_urlopen):
+            with patch("driftdriver.northstardrift.extract_usage_from_openai_compat", return_value=None):
                 score1, f1 = _score_alignment_with_llm(
                     "Keep code in sync", tasks, gate_dir=tmp_path,
                 )
@@ -92,19 +94,20 @@ class TestAlignmentSignalGate:
 
         call_count = []
 
-        def fake_subprocess_run(*args, **kwargs):
+        def fake_urlopen(*args, **kwargs):
             call_count.append(True)
 
-            class FakeResult:
-                returncode = 0
-                stdout = json.dumps({
-                    "result": json.dumps({"score": 70, "findings": ["misaligned"]})
-                })
-                stderr = ""
-            return FakeResult()
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *_a):
+                    return None
+                def read(self):
+                    return json.dumps({"choices": [{"message": {"content": json.dumps({"score": 70, "findings": ["misaligned"]})}}]}).encode("utf-8")
+            return FakeResponse()
 
-        with patch("driftdriver.northstardrift.subprocess.run", side_effect=fake_subprocess_run):
-            with patch("driftdriver.northstardrift.extract_usage_from_claude_json", return_value=None):
+        with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", side_effect=fake_urlopen):
+            with patch("driftdriver.northstardrift.extract_usage_from_openai_compat", return_value=None):
                 _score_alignment_with_llm(
                     "Keep code in sync",
                     self._make_tasks(["task A"]),
@@ -124,17 +127,18 @@ class TestAlignmentSignalGate:
 
         tasks = self._make_tasks(["deploy feature"])
 
-        def fake_subprocess_run(*args, **kwargs):
-            class FakeResult:
-                returncode = 0
-                stdout = json.dumps({
-                    "result": json.dumps({"score": 90, "findings": ["good alignment"]})
-                })
-                stderr = ""
-            return FakeResult()
+        def fake_urlopen(*args, **kwargs):
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *_a):
+                    return None
+                def read(self):
+                    return json.dumps({"choices": [{"message": {"content": json.dumps({"score": 90, "findings": ["good alignment"]})}}]}).encode("utf-8")
+            return FakeResponse()
 
-        with patch("driftdriver.northstardrift.subprocess.run", side_effect=fake_subprocess_run):
-            with patch("driftdriver.northstardrift.extract_usage_from_claude_json", return_value=None):
+        with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", side_effect=fake_urlopen):
+            with patch("driftdriver.northstardrift.extract_usage_from_openai_compat", return_value=None):
                 _score_alignment_with_llm(
                     "Ship fast", tasks, gate_dir=tmp_path,
                 )
@@ -150,7 +154,7 @@ class TestAlignmentSignalGate:
         """Empty task list should return 50.0 without calling LLM."""
         from driftdriver.northstardrift import _score_alignment_with_llm
 
-        with patch("driftdriver.northstardrift.subprocess.run") as mock_run:
+        with patch("driftdriver.northstardrift.urlopen") as mock_run:
             score, findings = _score_alignment_with_llm(
                 "statement", [], gate_dir=tmp_path,
             )
@@ -300,19 +304,20 @@ class TestGatedResultPersistence:
         tasks = [{"id": "t1", "title": "do thing"}]
         call_count = []
 
-        def fake_subprocess_run(*args, **kwargs):
+        def fake_urlopen(*args, **kwargs):
             call_count.append(True)
 
-            class FakeResult:
-                returncode = 0
-                stdout = json.dumps({
-                    "result": json.dumps({"score": 85, "findings": ["minor drift"]})
-                })
-                stderr = ""
-            return FakeResult()
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *_a):
+                    return None
+                def read(self):
+                    return json.dumps({"choices": [{"message": {"content": json.dumps({"score": 85, "findings": ["minor drift"]})}}]}).encode("utf-8")
+            return FakeResponse()
 
-        with patch("driftdriver.northstardrift.subprocess.run", side_effect=fake_subprocess_run):
-            with patch("driftdriver.northstardrift.extract_usage_from_claude_json", return_value=None):
+        with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", side_effect=fake_urlopen):
+            with patch("driftdriver.northstardrift.extract_usage_from_openai_compat", return_value=None):
                 score1, _ = _score_alignment_with_llm(
                     "statement", tasks, gate_dir=tmp_path,
                 )

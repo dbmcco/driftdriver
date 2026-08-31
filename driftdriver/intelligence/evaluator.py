@@ -18,7 +18,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from driftdriver.intelligence.db import PostgresConfig, ensure_database_and_apply_migrations
-from driftdriver.llm_meter import extract_usage_from_claude_json, record_spend
+from driftdriver.llm_meter import extract_usage_from_openai_compat, record_spend
 from driftdriver.intelligence.models import Signal
 from driftdriver.model_routes import model_for_route
 from driftdriver.signal_gate import is_gate_enabled, record_fire, should_fire
@@ -36,9 +36,11 @@ from driftdriver.intelligence.store import (
 
 LOG = logging.getLogger(__name__)
 
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_API_VERSION = "2023-06-01"
-ANTHROPIC_DECISION_TOOL = "record_decisions"
+# zai OpenAI-compatible endpoint for the evaluator's structured decision
+# tool call. Replaces the former direct Anthropic Messages API path; the
+# ecosystem no longer routes through Anthropic models.
+ZAI_API_URL = "https://api.z.ai/api/paas/v4/chat/completions"
+DECISION_TOOL_NAME = "record_decisions"
 DEFAULT_CLASSIFICATION_MODEL = model_for_route("driftdriver.intelligence_classification")
 DEFAULT_BATCH_SIZES: dict[str, int] = {
     "repo_update": 10,
@@ -145,75 +147,102 @@ def _clean_env() -> dict[str, str]:
     return env
 
 
-def _anthropic_api_key() -> str:
+def _zai_api_key() -> str:
     value = (
-        os.environ.get("DRIFTDRIVER_ANTHROPIC_API_KEY")
-        or os.environ.get("ANTHROPIC_API_KEY")
-        or os.environ.get("CLAUDE_API_KEY")
+        os.environ.get("DRIFTDRIVER_ZAI_API_KEY")
+        or os.environ.get("ZAI_API_KEY")
+        or os.environ.get("PAIA_ZAI_API_KEY")
     )
     if value:
         return value
-    raise RuntimeError("Anthropic API key not configured. Set ANTHROPIC_API_KEY.")
+    raise RuntimeError("zai API key not configured. Set ZAI_API_KEY.")
 
 
-def _has_anthropic_api_key() -> bool:
+def _has_zai_api_key() -> bool:
     try:
-        _anthropic_api_key()
+        _zai_api_key()
     except RuntimeError:
         return False
     return True
 
 
-def _extract_anthropic_tool_input(payload: dict[str, Any]) -> dict[str, Any]:
-    content = payload.get("content")
-    if not isinstance(content, list) or not content:
-        raise RuntimeError("Anthropic response missing content blocks")
-    for block in content:
-        if not isinstance(block, dict):
+def _extract_zai_tool_input(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pull the decision tool call from an OpenAI-compatible zai response."""
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("zai response missing choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        raise RuntimeError("zai response missing message")
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        raise RuntimeError("zai response missing tool calls")
+    for call in tool_calls:
+        if not isinstance(call, dict):
             continue
-        if block.get("type") != "tool_use" or block.get("name") != ANTHROPIC_DECISION_TOOL:
+        function = call.get("function")
+        if not isinstance(function, dict):
             continue
-        tool_input = block.get("input")
-        if not isinstance(tool_input, dict):
-            raise RuntimeError("Anthropic tool response missing structured input")
-        return tool_input
-    raise RuntimeError("Anthropic response missing decision tool output")
+        if function.get("name") != DECISION_TOOL_NAME:
+            continue
+        args = function.get("arguments")
+        if isinstance(args, dict):
+            return args
+        if isinstance(args, str):
+            try:
+                return json.loads(args)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("zai tool arguments not valid JSON") from exc
+    raise RuntimeError("zai response missing decision tool output")
 
 
-def _invoke_anthropic_api(model: str, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+def _invoke_zai_api(model: str, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "model": model,
         "max_tokens": 2048,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
         "tools": [
             {
-                "name": ANTHROPIC_DECISION_TOOL,
-                "description": "Return evaluator decisions matching the provided schema exactly.",
-                "input_schema": schema,
-                "strict": True,
+                "type": "function",
+                "function": {
+                    "name": DECISION_TOOL_NAME,
+                    "description": "Return evaluator decisions matching the provided schema exactly.",
+                    "parameters": schema,
+                    "strict": True,
+                },
             }
         ],
-        "tool_choice": {"type": "tool", "name": ANTHROPIC_DECISION_TOOL},
-        "disable_parallel_tool_use": True,
+        "tool_choice": {"type": "function", "function": {"name": DECISION_TOOL_NAME}},
+        "parallel_tool_calls": False,
     }
     request = Request(
-        ANTHROPIC_API_URL,
+        ZAI_API_URL,
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "content-type": "application/json",
-            "x-api-key": _anthropic_api_key(),
-            "anthropic-version": ANTHROPIC_API_VERSION,
+            "authorization": f"Bearer {_zai_api_key()}",
         },
         method="POST",
     )
     try:
-        with urlopen(request, timeout=180) as response:  # noqa: S310 - fixed Anthropic API endpoint
+        with urlopen(request, timeout=180) as response:  # noqa: S310 - fixed zai API endpoint
             body = response.read().decode("utf-8")
     except HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Anthropic API error {exc.code}: {error_body[:300]}") from exc
-    return _extract_anthropic_tool_input(json.loads(body))
+        raise RuntimeError(f"zai API error {exc.code}: {error_body[:300]}") from exc
+    parsed = json.loads(body)
+    usage = extract_usage_from_openai_compat(parsed)
+    if usage:
+        record_spend(
+            agent="evaluator",
+            model=model,
+            input_tokens=usage[0],
+            output_tokens=usage[1],
+        )
+    return _extract_zai_tool_input(parsed)
 
 
 def _invoke_codex(model: str, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
@@ -257,61 +286,27 @@ def _invoke_codex(model: str, system_prompt: str, user_prompt: str, schema: dict
                 pass
 
 
-def _invoke_claude_cli(model: str, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
-    """Invoke via `claude --print` CLI — uses Claude Code's own auth, no ANTHROPIC_API_KEY needed."""
-    prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-    cmd = [
-        "claude",
-        "--print",
-        "--output-format", "json",
-        "--json-schema", json.dumps(schema),
-        "--model", model,
-        "--no-session-persistence",
-    ]
-    result = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=_clean_env(),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"claude cli exit {result.returncode}: {result.stderr[:300]}")
-    # --output-format json + --json-schema: structured output lands in outer["structured_output"]
-    outer = json.loads(result.stdout)
-
-    # Record LLM spend
-    usage = extract_usage_from_claude_json(outer)
-    if usage:
-        record_spend(
-            agent="evaluator",
-            model=model,
-            input_tokens=usage[0],
-            output_tokens=usage[1],
-        )
-
-    if outer.get("is_error"):
-        raise RuntimeError(f"claude cli error: {outer.get('result', '')[:300]}")
-    structured = outer.get("structured_output")
-    if isinstance(structured, dict):
-        return structured
-    # Fallback: parse result text as JSON
-    raw = outer.get("result", "")
-    if isinstance(raw, str) and raw.strip():
-        return json.loads(raw)
-    raise RuntimeError(f"claude cli: no structured_output and empty result")
-
 
 def default_model_invoker(model: str, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """Route a model id to the right invocation backend.
+
+    zai/glm models go to the zai OpenAI-compatible API; codex/gpt models go to
+    the codex CLI. The registry now serves zai models for every driftdriver
+    route, so zai is the default path. A stale anthropic/claude model id
+    (should not occur post-migration) is routed to zai rather than rejected,
+    since the registry no longer carries anthropic surfaces for evaluation.
+    """
     lower = model.lower()
-    is_claude = lower.startswith("claude") or "haiku" in lower or "sonnet" in lower or "opus" in lower
-    if not is_claude:
+    is_codex = lower.startswith("gpt") or "codex" in lower or "openai-codex" in lower
+    if is_codex:
         return _invoke_codex(model, system_prompt, user_prompt, schema)
-    # Prefer direct API when key is available; fall back to claude CLI
-    if _has_anthropic_api_key():
-        return _invoke_anthropic_api(model, system_prompt, user_prompt, schema)
-    return _invoke_claude_cli(model, system_prompt, user_prompt, schema)
+    # zai/glm and any other model (including residual claude ids) -> zai API.
+    if _has_zai_api_key():
+        return _invoke_zai_api(model, system_prompt, user_prompt, schema)
+    raise RuntimeError(
+        "zai API key not configured for evaluator; set ZAI_API_KEY "
+        "(no anthropic fallback remains after the model migration)."
+    )
 
 
 @dataclass(frozen=True)
@@ -966,7 +961,7 @@ def evaluate_pending_signals(
 
             for signal, envelope in mapped:
                 try:
-                    if envelope.decision in {"adopt", "defer"} and "haiku" not in envelope.decided_by.lower():
+                    if envelope.decision in {"adopt", "defer"} and "flash" not in envelope.decided_by.lower():
                         envelope = _review_for_adoption(
                             signal=signal,
                             envelope=envelope,

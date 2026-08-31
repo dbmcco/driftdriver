@@ -10,6 +10,8 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from typing import Any, Callable
 
 from .workgraph import find_workgraph_dir, load_workgraph
@@ -122,9 +124,9 @@ class ModelRoutePolicy:
     prohibited_prefixes: tuple[str, ...] = ()
     conditional_providers: tuple[str, ...] = ("lunaroute",)
     tier_prefixes: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
-        "fast": ("ollama:",),
-        "standard": ("zai:", "kimi-coding:kimi-for-coding"),
-        "premium": ("kimi-coding:k3", "openai-codex"),
+        "fast": ("ollama:", "zai:glm-5.3-flash", "lunaroute:glm-5.3-flash"),
+        "standard": ("zai:", "lunaroute:", "openai-codex:gpt-5.4-mini"),
+        "premium": ("openai-codex:gpt-5.6-luna", "openai-codex:gpt-5.5"),
     })
     default_tier: str = "fast"
     require_escalation_reason_for: tuple[str, ...] = ("premium",)
@@ -493,8 +495,8 @@ def build_decompose_prompt(
                 "| Tier | Cost | Eligible models |\n"
                 "|------|------|-----------------|\n"
                 "| **Fast** (simple leaf tasks) | Free, local | `ollama:` prefixed models |\n"
-                "| **Standard** (normal work) | Lower cost | `zai:glm-5.2`, `kimi-coding:kimi-for-coding` |\n"
-                "| **Premium** (complex / critical) | Higher cost | `kimi-coding:k3`, `openai-codex:gpt-5.5` |\n\n"
+                "| **Standard** (normal work) | Lower cost | `zai:glm-5.3`, `lunaroute:glm-5.3`, `openai-codex:gpt-5.4-mini` |\n"
+                "| **Premium** (complex / critical) | Higher cost | `openai-codex:gpt-5.6-luna`, `openai-codex:gpt-5.5` |\n\n"
                 "Assign the cheapest tier that can do the job well. Small "
                 "strongly-verified leaf tasks default to fast. Premium REQUIRES a "
                 "non-empty escalation_reason explaining why cheaper tiers are "
@@ -674,53 +676,49 @@ def parse_plan_output(raw: str) -> list[PlannedNode]:
 # ---------------------------------------------------------------------------
 
 
-def call_llm(prompt: str, model: str = "sonnet") -> str:
-    """Call claude CLI in non-interactive mode and return the response text.
+def call_llm(prompt: str, model: str = "glm-5.3") -> str:
+    """Call the zai OpenAI-compatible API and return the response text.
 
-    This is a planner-side direct CLI invocation, NOT a workgraph-dispatched
-    task. The anthropic dispatch prohibition in ModelRoutePolicy governs models
-    assigned TO tasks, not the planner's own runtime.
+    This is a planner-side direct inference call, NOT a workgraph-dispatched
+    task. The route policy in ModelRoutePolicy governs models assigned TO
+    tasks, not the planner's own runtime. Replaces the former `claude -p`
+    CLI path; the ecosystem no longer routes through Anthropic.
     """
-    cmd = [
-        "claude",
-        "-p",
-        "--model", model,
-        "--output-format", "json",
-        "--no-session-persistence",
-        "--dangerously-skip-permissions",
-    ]
-    # Strip env vars that trigger interactive session hooks
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("CLAUDE_SESSION_ID", "CLAUDE_CONVERSATION_ID")
-    }
-    try:
-        result = subprocess.run(
-            cmd,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            env=env,
-        )
-        if result.returncode != 0:
-            print(
-                f"warning: claude CLI exit {result.returncode}: {result.stderr[:200]}",
-                file=sys.stderr,
-            )
-            return ""
-        # --output-format json wraps response in {"result": "...", ...}
-        try:
-            cli_output = json.loads(result.stdout)
-            if isinstance(cli_output, dict):
-                return cli_output.get("result", result.stdout).strip()
-        except json.JSONDecodeError:
-            pass
-        return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        print(f"warning: LLM call failed: {e}", file=sys.stderr)
+    api_model = model.split("/", 1)[-1] if "/" in model else model
+    api_key = (
+        os.environ.get("DRIFTDRIVER_ZAI_API_KEY")
+        or os.environ.get("ZAI_API_KEY")
+        or os.environ.get("PAIA_ZAI_API_KEY")
+    )
+    if not api_key:
+        print("warning: ZAI_API_KEY not set; planner LLM call skipped", file=sys.stderr)
         return ""
+    payload = {
+        "model": api_model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    request = Request(
+        "https://api.z.ai/api/paas/v4/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "content-type": "application/json",
+            "authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=300) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (HTTPError, OSError) as exc:
+        print(f"warning: zai API call failed: {exc}", file=sys.stderr)
+        return ""
+    choices = body.get("choices") if isinstance(body, dict) else None
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        message = choices[0].get("message") or {}
+        content = message.get("content") or ""
+        if isinstance(content, str):
+            return content.strip()
+    return ""
 
 
 # ---------------------------------------------------------------------------

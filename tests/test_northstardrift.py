@@ -577,13 +577,13 @@ class AlignmentIntegrationTests(unittest.TestCase):
         from driftdriver.northstardrift import _score_alignment_with_llm
 
         mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps({
-            "result": '{"score": 72, "findings": ["Tasks focus on infra but north star is about UX"]}',
-            "usage": {"input_tokens": 100, "output_tokens": 50},
-        })
+        mock_result.__enter__.return_value = mock_result
+        mock_result.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"score": 72, "findings": ["Tasks focus on infra but north star is about UX"]}'}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }).encode("utf-8")
 
-        with patch("driftdriver.northstardrift.subprocess.run", return_value=mock_result):
+        with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", return_value=mock_result):
             score, findings = _score_alignment_with_llm(
                 "Build the best UX for users",
                 [{"id": "t1", "title": "Migrate database schema"}],
@@ -606,20 +606,20 @@ class AlignmentIntegrationTests(unittest.TestCase):
         statement = "Deliver delightful user experiences"
 
         mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps({
-            "result": '{"score": 85, "findings": []}',
-            "usage": {"input_tokens": 80, "output_tokens": 30},
-        })
+        mock_result.__enter__.return_value = mock_result
+        mock_result.read.return_value = json.dumps({
+            "choices": [{"message": {"content": '{"score": 85, "findings": []}'}}],
+            "usage": {"prompt_tokens": 80, "completion_tokens": 30},
+        }).encode("utf-8")
 
         # Clear module-level cache to isolate this test
         ns_mod._alignment_cache.clear()
 
-        with patch("driftdriver.northstardrift.subprocess.run", return_value=mock_result) as mock_run:
+        with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", return_value=mock_result) as mock_run:
             score1, findings1 = ns_mod._score_alignment_with_llm(statement, tasks)
             score2, findings2 = ns_mod._score_alignment_with_llm(statement, tasks)
 
-        # subprocess called exactly once despite two invocations
+        # urlopen called exactly once despite two invocations
         mock_run.assert_called_once()
         self.assertEqual(score1, score2)
         self.assertEqual(findings1, findings2)
@@ -691,17 +691,16 @@ class SignalGateTests(unittest.TestCase):
         }
 
     def _mock_llm_result(self, score: int = 80) -> "MagicMock":
-        """Return a mock matching the Claude CLI --output-format json envelope."""
+        """Return a mock matching the zai OpenAI-compatible chat/completions envelope."""
         import json as _json
         from unittest.mock import MagicMock
         mock = MagicMock()
-        mock.returncode = 0
+        mock.__enter__.return_value = mock
         inner = _json.dumps({"score": score, "findings": []})
-        mock.stdout = _json.dumps({
-            "result": inner,
-            "usage": {"input_tokens": 10, "output_tokens": 5,
-                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
-        })
+        mock.read.return_value = _json.dumps({
+            "choices": [{"message": {"content": inner}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }).encode("utf-8")
         return mock
 
     def test_signal_gate_skips_llm_when_hash_matches(self) -> None:
@@ -730,7 +729,7 @@ class SignalGateTests(unittest.TestCase):
             })
             ns_mod._alignment_cache.clear()
 
-            with patch("driftdriver.northstardrift.subprocess.run") as mock_run:
+            with patch("driftdriver.northstardrift.urlopen") as mock_run:
                 result = ns_mod.compute_northstardrift(
                     snapshot,
                     alignment_config=alignment_cfg,
@@ -764,7 +763,7 @@ class SignalGateTests(unittest.TestCase):
             })
             ns_mod._alignment_cache.clear()
 
-            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(88)) as mock_run:
+            with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", return_value=self._mock_llm_result(88)) as mock_run:
                 result = ns_mod.compute_northstardrift(
                     snapshot,
                     alignment_config=alignment_cfg,
@@ -789,7 +788,7 @@ class SignalGateTests(unittest.TestCase):
             gate_path = Path(td) / "northstar-gate-state.json"
             ns_mod._alignment_cache.clear()
 
-            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(91)):
+            with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", return_value=self._mock_llm_result(91)):
                 ns_mod.compute_northstardrift(
                     snapshot,
                     alignment_config=alignment_cfg,
@@ -828,7 +827,7 @@ class SignalGateTests(unittest.TestCase):
             })
             ns_mod._alignment_cache.clear()
 
-            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(70)):
+            with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", return_value=self._mock_llm_result(70)):
                 ns_mod.compute_northstardrift(
                     snapshot,
                     alignment_config=alignment_cfg,
@@ -860,7 +859,7 @@ class SignalGateTests(unittest.TestCase):
             })
             ns_mod._alignment_cache.clear()
 
-            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(95)) as mock_run:
+            with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", return_value=self._mock_llm_result(95)) as mock_run:
                 result = ns_mod.compute_northstardrift(
                     snapshot,
                     alignment_config=alignment_cfg,
@@ -893,7 +892,7 @@ class SignalGateTests(unittest.TestCase):
             })
             ns_mod._alignment_cache.clear()
 
-            with patch("driftdriver.northstardrift.subprocess.run"):
+            with patch("driftdriver.northstardrift.urlopen"):
                 with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
                     ns_mod.compute_northstardrift(
                         snapshot,
@@ -925,7 +924,7 @@ class SignalGateTests(unittest.TestCase):
             })
             ns_mod._alignment_cache.clear()
 
-            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(80)):
+            with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", return_value=self._mock_llm_result(80)):
                 with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
                     ns_mod.compute_northstardrift(
                         snapshot,
@@ -973,7 +972,7 @@ class SignalGateTests(unittest.TestCase):
             self.assertFalse(gate_path.exists())
             ns_mod._alignment_cache.clear()
 
-            with patch("driftdriver.northstardrift.subprocess.run", return_value=self._mock_llm_result(77)) as mock_run:
+            with patch.dict("os.environ", {"ZAI_API_KEY": "test-key"}), patch("driftdriver.northstardrift.urlopen", return_value=self._mock_llm_result(77)) as mock_run:
                 ns_mod.compute_northstardrift(
                     snapshot,
                     alignment_config=alignment_cfg,

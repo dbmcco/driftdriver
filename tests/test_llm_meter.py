@@ -1,5 +1,7 @@
 # ABOUTME: Tests for the LLM spend meter — recording, cost estimation, and querying.
-# ABOUTME: Validates record_spend, extract_usage_from_claude_json, extract_usage_from_api_response, query_spend.
+# ABOUTME: Validates record_spend, extract_usage_from_claude_json, extract_usage
+# helpers, and query_spend. Uses the post-Anthropic-migration model set
+# (zai glm-5.3 family + openai-codex).
 
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ from driftdriver.llm_meter import (
     estimate_cost,
     extract_usage_from_api_response,
     extract_usage_from_claude_json,
+    extract_usage_from_openai_compat,
     query_spend,
     record_spend,
 )
@@ -22,34 +25,39 @@ from driftdriver.llm_meter import (
 # --- estimate_cost ---
 
 
-def test_estimate_cost_haiku():
-    cost = estimate_cost("haiku", input_tokens=1000, output_tokens=500)
+def test_estimate_cost_flash():
+    cost = estimate_cost("zai/glm-5.3-flash", input_tokens=1000, output_tokens=500)
     assert cost > 0
-    # Haiku is cheap — should be under 1 cent for this volume
+    # Flash is cheap — should be well under 1 cent for this volume
     assert cost < 0.01
 
 
-def test_estimate_cost_sonnet():
-    cost = estimate_cost("sonnet", input_tokens=1000, output_tokens=500)
+def test_estimate_cost_glm53():
+    cost = estimate_cost("zai/glm-5.3", input_tokens=1000, output_tokens=500)
     assert cost > 0
-    # Sonnet more expensive than haiku
-    assert cost > estimate_cost("haiku", input_tokens=1000, output_tokens=500)
+    # glm-5.3 (standard) is more expensive than flash
+    assert cost > estimate_cost("zai/glm-5.3-flash", input_tokens=1000, output_tokens=500)
 
 
-def test_estimate_cost_opus():
-    cost = estimate_cost("opus", input_tokens=1000, output_tokens=500)
+def test_estimate_cost_codex_premium():
+    cost = estimate_cost("openai-codex/gpt-5.5", input_tokens=1000, output_tokens=500)
     assert cost > 0
-    assert cost > estimate_cost("sonnet", input_tokens=1000, output_tokens=500)
+    # Premium codex is more expensive than zai glm-5.3 standard
+    assert cost > estimate_cost("zai/glm-5.3", input_tokens=1000, output_tokens=500)
 
 
-def test_estimate_cost_unknown_model_uses_sonnet_rate():
+def test_estimate_cost_unknown_model_uses_default_rate():
     cost = estimate_cost("unknown-model-xyz", input_tokens=1000, output_tokens=500)
-    sonnet_cost = estimate_cost("sonnet", input_tokens=1000, output_tokens=500)
-    assert cost == sonnet_cost
+    default_cost = estimate_cost("zai/glm-5.3", input_tokens=1000, output_tokens=500)
+    assert cost == default_cost
 
 
 def test_estimate_cost_zero_tokens():
-    assert estimate_cost("haiku", input_tokens=0, output_tokens=0) == 0.0
+    assert estimate_cost("zai/glm-5.3-flash", input_tokens=0, output_tokens=0) == 0.0
+
+
+def test_estimate_cost_ollama_is_free():
+    assert estimate_cost("ollama:qwen3:8b", input_tokens=1000, output_tokens=500) == 0.0
 
 
 # --- extract_usage_from_claude_json ---
@@ -74,7 +82,7 @@ def test_extract_usage_from_claude_json_not_dict():
     assert extract_usage_from_claude_json("plain string") is None
 
 
-# --- extract_usage_from_api_response ---
+# --- extract_usage_from_api_response (Anthropic-shaped, retained) ---
 
 
 def test_extract_usage_from_api_response():
@@ -91,6 +99,23 @@ def test_extract_usage_from_api_response_missing():
     assert extract_usage_from_api_response(body) is None
 
 
+# --- extract_usage_from_openai_compat (zai / openai / openrouter) ---
+
+
+def test_extract_usage_from_openai_compat_prompt_completion():
+    body = {"usage": {"prompt_tokens": 200, "completion_tokens": 80, "total_tokens": 280}}
+    assert extract_usage_from_openai_compat(body) == (200, 80)
+
+
+def test_extract_usage_from_openai_compat_missing():
+    assert extract_usage_from_openai_compat({"choices": []}) is None
+
+
+def test_extract_usage_from_openai_compat_falls_back_to_anthropic_keys():
+    body = {"usage": {"input_tokens": 11, "output_tokens": 7}}
+    assert extract_usage_from_openai_compat(body) == (11, 7)
+
+
 # --- record_spend ---
 
 
@@ -98,7 +123,7 @@ def test_record_spend_creates_file(tmp_path: Path):
     log_path = tmp_path / "llm-spend.jsonl"
     record_spend(
         agent="factory-brain",
-        model="haiku",
+        model="zai/glm-5.3-flash",
         input_tokens=100,
         output_tokens=50,
         log_path=log_path,
@@ -108,7 +133,7 @@ def test_record_spend_creates_file(tmp_path: Path):
     assert len(lines) == 1
     rec = json.loads(lines[0])
     assert rec["agent"] == "factory-brain"
-    assert rec["model"] == "haiku"
+    assert rec["model"] == "zai/glm-5.3-flash"
     assert rec["input_tokens"] == 100
     assert rec["output_tokens"] == 50
     assert "ts" in rec
@@ -118,18 +143,18 @@ def test_record_spend_creates_file(tmp_path: Path):
 
 def test_record_spend_appends(tmp_path: Path):
     log_path = tmp_path / "llm-spend.jsonl"
-    record_spend(agent="a1", model="haiku", input_tokens=10, output_tokens=5, log_path=log_path)
-    record_spend(agent="a2", model="sonnet", input_tokens=20, output_tokens=10, log_path=log_path)
+    record_spend(agent="a1", model="zai/glm-5.3-flash", input_tokens=10, output_tokens=5, log_path=log_path)
+    record_spend(agent="a2", model="zai/glm-5.3", input_tokens=20, output_tokens=10, log_path=log_path)
     lines = log_path.read_text().strip().split("\n")
     assert len(lines) == 2
 
 
 def test_record_spend_returns_record(tmp_path: Path):
     log_path = tmp_path / "llm-spend.jsonl"
-    rec = record_spend(agent="test", model="haiku", input_tokens=10, output_tokens=5, log_path=log_path)
+    rec = record_spend(agent="test", model="zai/glm-5.3-flash", input_tokens=10, output_tokens=5, log_path=log_path)
     assert isinstance(rec, SpendRecord)
     assert rec.agent == "test"
-    assert rec.model == "haiku"
+    assert rec.model == "zai/glm-5.3-flash"
     assert rec.input_tokens == 10
     assert rec.output_tokens == 5
 
@@ -147,8 +172,8 @@ def test_query_spend_tail_filter(tmp_path: Path):
     log_path = tmp_path / "llm-spend.jsonl"
     now = time.time()
     records = [
-        {"ts": now - 7200, "agent": "old", "model": "haiku", "input_tokens": 10, "output_tokens": 5, "estimated_cost_usd": 0.0001},
-        {"ts": now - 1800, "agent": "recent", "model": "haiku", "input_tokens": 20, "output_tokens": 10, "estimated_cost_usd": 0.0002},
+        {"ts": now - 7200, "agent": "old", "model": "zai/glm-5.3-flash", "input_tokens": 10, "output_tokens": 5, "estimated_cost_usd": 0.0001},
+        {"ts": now - 1800, "agent": "recent", "model": "zai/glm-5.3-flash", "input_tokens": 20, "output_tokens": 10, "estimated_cost_usd": 0.0002},
     ]
     _write_spend_log(log_path, records)
 
@@ -161,9 +186,9 @@ def test_query_spend_by_agent(tmp_path: Path):
     log_path = tmp_path / "llm-spend.jsonl"
     now = time.time()
     records = [
-        {"ts": now - 100, "agent": "brain", "model": "haiku", "input_tokens": 10, "output_tokens": 5, "estimated_cost_usd": 0.001},
-        {"ts": now - 50, "agent": "northstar", "model": "sonnet", "input_tokens": 20, "output_tokens": 10, "estimated_cost_usd": 0.002},
-        {"ts": now - 30, "agent": "brain", "model": "haiku", "input_tokens": 30, "output_tokens": 15, "estimated_cost_usd": 0.003},
+        {"ts": now - 100, "agent": "brain", "model": "zai/glm-5.3-flash", "input_tokens": 10, "output_tokens": 5, "estimated_cost_usd": 0.001},
+        {"ts": now - 50, "agent": "northstar", "model": "zai/glm-5.3", "input_tokens": 20, "output_tokens": 10, "estimated_cost_usd": 0.002},
+        {"ts": now - 30, "agent": "brain", "model": "zai/glm-5.3-flash", "input_tokens": 30, "output_tokens": 15, "estimated_cost_usd": 0.003},
     ]
     _write_spend_log(log_path, records)
 

@@ -117,17 +117,27 @@ def _load_signal(config: PostgresConfig, signal_id: UUID) -> tuple[str | None, f
 
 
 class TestIntelligenceEvaluator(unittest.TestCase):
-    def test_invoke_anthropic_api_uses_strict_tool_output(self) -> None:
+    def test_invoke_zai_api_uses_strict_tool_output(self) -> None:
         schema = {"type": "object", "properties": {"decisions": {"type": "array"}}}
         response_payload = {
-            "content": [
-                {"type": "text", "text": "Recording decisions."},
+            "choices": [
                 {
-                    "type": "tool_use",
-                    "id": "toolu_eval",
-                    "name": "record_decisions",
-                    "input": {"decisions": [{"signal_id": "sig-1", "decision": "skip"}]},
-                },
+                    "message": {
+                        "content": "Recording decisions.",
+                        "tool_calls": [
+                            {
+                                "id": "call_eval",
+                                "type": "function",
+                                "function": {
+                                    "name": "record_decisions",
+                                    "arguments": json.dumps(
+                                        {"decisions": [{"signal_id": "sig-1", "decision": "skip"}]}
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                }
             ]
         }
         response = mock.MagicMock()
@@ -137,11 +147,11 @@ class TestIntelligenceEvaluator(unittest.TestCase):
         urlopen_result.__exit__.return_value = None
 
         with (
-            mock.patch.dict("driftdriver.intelligence.evaluator.os.environ", {"DRIFTDRIVER_ANTHROPIC_API_KEY": "test-key"}, clear=True),
+            mock.patch.dict("driftdriver.intelligence.evaluator.os.environ", {"DRIFTDRIVER_ZAI_API_KEY": "test-key"}, clear=True),
             mock.patch("driftdriver.intelligence.evaluator.urlopen", return_value=urlopen_result) as urlopen_mock,
         ):
-            result = intelligence_evaluator._invoke_anthropic_api(
-                "claude-haiku-4-5-20251001",
+            result = intelligence_evaluator._invoke_zai_api(
+                "glm-5.3-flash",
                 "system prompt",
                 "user prompt",
                 schema,
@@ -149,47 +159,68 @@ class TestIntelligenceEvaluator(unittest.TestCase):
 
         self.assertEqual(result, {"decisions": [{"signal_id": "sig-1", "decision": "skip"}]})
         request = urlopen_mock.call_args.args[0]
-        self.assertEqual(request.full_url, intelligence_evaluator.ANTHROPIC_API_URL)
+        self.assertEqual(request.full_url, intelligence_evaluator.ZAI_API_URL)
         self.assertEqual(request.get_method(), "POST")
         headers = dict(request.header_items())
         self.assertEqual(headers["Content-type"], "application/json")
-        self.assertEqual(headers["X-api-key"], "test-key")
-        self.assertEqual(headers["Anthropic-version"], intelligence_evaluator.ANTHROPIC_API_VERSION)
+        self.assertEqual(headers["Authorization"], "Bearer test-key")
         body = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(body["tool_choice"], {"type": "tool", "name": intelligence_evaluator.ANTHROPIC_DECISION_TOOL})
-        self.assertTrue(body["disable_parallel_tool_use"])
-        self.assertTrue(body["tools"][0]["strict"])
-        self.assertEqual(body["tools"][0]["input_schema"], schema)
+        self.assertEqual(body["tool_choice"], {"type": "function", "function": {"name": intelligence_evaluator.DECISION_TOOL_NAME}})
+        self.assertFalse(body["parallel_tool_calls"])
+        self.assertTrue(body["tools"][0]["function"]["strict"])
+        self.assertEqual(body["tools"][0]["function"]["parameters"], schema)
+        self.assertEqual(body["messages"][0]["role"], "system")
+        self.assertEqual(body["messages"][1]["role"], "user")
 
-    def test_invoke_anthropic_api_requires_key(self) -> None:
+    def test_invoke_zai_api_requires_key(self) -> None:
         with mock.patch.dict("driftdriver.intelligence.evaluator.os.environ", {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "Anthropic API key not configured"):
-                intelligence_evaluator._invoke_anthropic_api(
-                    "claude-haiku-4-5-20251001",
+            with self.assertRaisesRegex(RuntimeError, "zai API key not configured"):
+                intelligence_evaluator._invoke_zai_api(
+                    "glm-5.3-flash",
                     "system prompt",
                     "user prompt",
                     {"type": "object"},
                 )
 
-    def test_default_model_invoker_routes_haiku_models_to_anthropic_api(self) -> None:
+    def test_default_model_invoker_routes_zai_models_to_zai_api(self) -> None:
         with (
-            mock.patch.dict("os.environ", {"DRIFTDRIVER_ANTHROPIC_API_KEY": "fake-key"}, clear=True),
+            mock.patch.dict("os.environ", {"DRIFTDRIVER_ZAI_API_KEY": "fake-key"}, clear=True),
             mock.patch(
-                "driftdriver.intelligence.evaluator._invoke_anthropic_api",
+                "driftdriver.intelligence.evaluator._invoke_zai_api",
                 return_value={"decisions": []},
-            ) as anthropic_mock,
+            ) as zai_mock,
             mock.patch("driftdriver.intelligence.evaluator._invoke_codex", return_value={"decisions": []}) as codex_mock,
         ):
             result = default_model_invoker(
-                "claude-haiku-4-5-20251001",
+                "glm-5.3-flash",
                 "system prompt",
                 "user prompt",
                 {"type": "object"},
             )
 
         self.assertEqual(result, {"decisions": []})
-        anthropic_mock.assert_called_once()
+        zai_mock.assert_called_once()
         codex_mock.assert_not_called()
+
+    def test_default_model_invoker_routes_codex_models_to_codex(self) -> None:
+        with (
+            mock.patch.dict("os.environ", {"DRIFTDRIVER_ZAI_API_KEY": "fake-key"}, clear=True),
+            mock.patch(
+                "driftdriver.intelligence.evaluator._invoke_zai_api",
+                return_value={"decisions": []},
+            ) as zai_mock,
+            mock.patch("driftdriver.intelligence.evaluator._invoke_codex", return_value={"decisions": []}) as codex_mock,
+        ):
+            result = default_model_invoker(
+                "gpt-5.4-mini",
+                "system prompt",
+                "user prompt",
+                {"type": "object"},
+            )
+
+        self.assertEqual(result, {"decisions": []})
+        codex_mock.assert_called_once()
+        zai_mock.assert_not_called()
 
     def test_evaluator_batches_signals_updates_watchlist_and_creates_adopt_task(self) -> None:
         database = f"ecosystem_intelligence_eval_{uuid4().hex[:12]}"
@@ -229,7 +260,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
                         "new_repo": "gpt-4o-mini",
                         "hot_alert": "gpt-4o-mini",
                     },
-                    "adoption_review_model": "claude-haiku-4-5-20251001",
+                    "adoption_review_model": "glm-5.3-flash",
                     "batch_sizes": {"repo_update": 10, "new_repo": 1, "hot_alert": 5},
                     "watchlist": [],
                 },
@@ -295,7 +326,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
             self.assertIn(("gpt-4o-mini", [str(repo_signal.id)]), calls)
             self.assertIn(("gpt-4o-mini", [str(watch_signal.id)]), calls)
             self.assertIn(("gpt-4o-mini", [str(adopt_signal.id)]), calls)
-            self.assertIn(("claude-haiku-4-5-20251001", [str(adopt_signal.id)]), calls)
+            self.assertIn(("glm-5.3-flash", [str(adopt_signal.id)]), calls)
 
             repo_row = _load_signal(postgres_config, repo_signal.id)
             watch_row = _load_signal(postgres_config, watch_signal.id)
@@ -412,7 +443,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
                         "hot_alert": "gpt-4o-mini",
                         "activity": "gpt-4o-mini",
                     },
-                    "adoption_review_model": "claude-haiku-4-5-20251001",
+                    "adoption_review_model": "glm-5.3-flash",
                     "batch_sizes": {"repo_update": 10},
                     "watchlist": [],
                 },
@@ -443,13 +474,13 @@ class TestIntelligenceEvaluator(unittest.TestCase):
             )
 
             self.assertEqual(summary["signals_evaluated"], 1)
-            self.assertEqual(models_used, ["claude-haiku-4-5-20251001"])
+            self.assertEqual(models_used, ["glm-5.3-flash"])
             evaluator_config = load_source_config(postgres_config, "evaluator")
             self.assertIsNotNone(evaluator_config)
             assert evaluator_config is not None
             self.assertEqual(
                 evaluator_config.config["signal_models"]["repo_update"],
-                "claude-haiku-4-5-20251001",
+                "glm-5.3-flash",
             )
         finally:
             _drop_database(postgres_config)
@@ -513,7 +544,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
             recommended_actions=["Create WG task"],
             relevance_to_stack="Directly relevant",
             urgency="high",
-            decided_by="claude-haiku-4-5-20251001",
+            decided_by="glm-5.3-flash",
         )
         calls: list[int] = []
 
@@ -556,7 +587,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
             ]
         }
 
-        envelopes = _coerce_decisions(raw, model="claude-haiku-4-5")
+        envelopes = _coerce_decisions(raw, model="glm-5.3-flash")
 
         self.assertEqual(len(envelopes), 1)
         demoted = envelopes[0]
@@ -583,7 +614,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
             ]
         }
 
-        envelopes = _coerce_decisions(raw, model="claude-haiku-4-5")
+        envelopes = _coerce_decisions(raw, model="glm-5.3-flash")
 
         self.assertEqual(envelopes[0].decision, "defer")
         self.assertIn("auto-demoted", envelopes[0].rationale)
@@ -603,7 +634,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
             ]
         }
 
-        envelopes = _coerce_decisions(raw, model="claude-haiku-4-5")
+        envelopes = _coerce_decisions(raw, model="glm-5.3-flash")
 
         self.assertEqual(envelopes[0].decision, "adopt")
         self.assertEqual(envelopes[0].recommended_actions, ["Bump workgraph dep"])
@@ -642,7 +673,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
             ]
         }
 
-        envelopes = _coerce_decisions(raw, model="claude-haiku-4-5")
+        envelopes = _coerce_decisions(raw, model="glm-5.3-flash")
 
         decisions = [env.decision for env in envelopes]
         self.assertEqual(decisions, ["skip", "watch", "defer"])
@@ -664,7 +695,7 @@ class TestIntelligenceEvaluator(unittest.TestCase):
             recommended_actions=[],
             relevance_to_stack="",
             urgency="high",
-            decided_by="claude-haiku-4-5-20251001",
+            decided_by="glm-5.3-flash",
         )
 
         run_mock = mock.MagicMock()

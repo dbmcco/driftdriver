@@ -51,7 +51,7 @@ def test_allowed_live_pi_model_ids_are_provider_qualified(model_spec: str) -> No
 
 
 def test_pi_model_specs_preserve_allowed_thinking_suffix() -> None:
-    model_spec = "anthropic/claude-sonnet-4-5:high"
+    model_spec = "zai/glm-5.3:high"
     assert validate_pi_model_spec(model_spec) == model_spec
 
     with pytest.raises(ValueError, match="allowed Pi model"):
@@ -77,9 +77,9 @@ def test_pi_executor_preserves_selected_and_fallback_model_specs(tmp_path: Path)
             "bash",
             str(ROOT / "driftdriver" / "templates" / "executors" / "pi-run.sh"),
             "--provider",
-            "anthropic",
+            "openai-codex",
             "--model",
-            "anthropic/claude-opus-4-8",
+            "openai-codex/gpt-5.5",
             "--fallback-model",
             "zai/glm-5.2:high",
         ],
@@ -97,10 +97,10 @@ def test_pi_executor_preserves_selected_and_fallback_model_specs(tmp_path: Path)
         "--mode",
         "json",
         "--model",
-        "anthropic/claude-opus-4-8",
+        "openai-codex/gpt-5.5",
         "deterministic compatibility prompt",
     ]
-    assert invocation["selected"] == "anthropic/claude-opus-4-8"
+    assert invocation["selected"] == "openai-codex/gpt-5.5"
     assert invocation["fallback"] == "zai/glm-5.2:high"
 
 

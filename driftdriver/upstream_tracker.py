@@ -12,7 +12,7 @@ from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from driftdriver.llm_meter import extract_usage_from_api_response, record_spend
+from driftdriver.llm_meter import extract_usage_from_openai_compat, record_spend
 from driftdriver.model_routes import model_for_route
 from driftdriver.signal_gate import should_fire as _sg_should_fire, record_fire as _sg_record_fire
 
@@ -73,8 +73,9 @@ def classify_changes(changed_files: list[str], commit_subjects: list[str]) -> st
 
 # --- LLM evaluation ---
 
-_ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-_ANTHROPIC_API_VERSION = "2023-06-01"
+# zai OpenAI-compatible endpoint; replaces the former direct Anthropic
+# Messages API path. The registry now serves zai models for both routes.
+_ZAI_API_URL = "https://api.z.ai/api/paas/v4/chat/completions"
 _HAIKU_MODEL = model_for_route("driftdriver.upstream_tracker_triage")
 _SONNET_MODEL = model_for_route("driftdriver.upstream_tracker_deep")
 
@@ -86,26 +87,26 @@ _DRIFTDRIVER_CONTEXT = (
 
 
 def _default_llm_caller(model: str, prompt: str) -> dict[str, Any]:
-    """Call Anthropic API with a simple text prompt, return parsed JSON from the response."""
+    """Call the zai OpenAI-compatible API with a simple text prompt, return
+    parsed JSON from the response text."""
     api_key = (
-        os.environ.get("DRIFTDRIVER_ANTHROPIC_API_KEY")
-        or os.environ.get("ANTHROPIC_API_KEY")
-        or os.environ.get("CLAUDE_API_KEY")
+        os.environ.get("DRIFTDRIVER_ZAI_API_KEY")
+        or os.environ.get("ZAI_API_KEY")
+        or os.environ.get("PAIA_ZAI_API_KEY")
     )
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
+        raise RuntimeError("ZAI_API_KEY not set")
     payload = {
         "model": model,
         "max_tokens": 512,
         "messages": [{"role": "user", "content": prompt}],
     }
     request = Request(
-        _ANTHROPIC_API_URL,
+        _ZAI_API_URL,
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": _ANTHROPIC_API_VERSION,
+            "authorization": f"Bearer {api_key}",
         },
         method="POST",
     )
@@ -113,10 +114,10 @@ def _default_llm_caller(model: str, prompt: str) -> dict[str, Any]:
         with urlopen(request, timeout=60) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except HTTPError as exc:
-        raise RuntimeError(f"Anthropic API error {exc.code}") from exc
+        raise RuntimeError(f"zai API error {exc.code}") from exc
 
     # Record LLM spend
-    usage = extract_usage_from_api_response(body)
+    usage = extract_usage_from_openai_compat(body)
     if usage:
         record_spend(
             agent="upstream-tracker",
@@ -125,10 +126,11 @@ def _default_llm_caller(model: str, prompt: str) -> dict[str, Any]:
             output_tokens=usage[1],
         )
 
-    content = body.get("content", [])
-    for block in content:
-        if isinstance(block, dict) and block.get("type") == "text":
-            text = block.get("text", "").strip()
+    choices = body.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        message = choices[0].get("message") or {}
+        text = (message.get("content") or "").strip()
+        if text:
             start = text.find("{")
             end = text.rfind("}") + 1
             if start >= 0 and end > start:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-_DEFAULT_MODEL = "hermes3:8b"
+_DEFAULT_MODEL = "qwen3:8b"
 _OLLAMA_URL = "http://localhost:11434"
 
 

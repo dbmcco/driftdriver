@@ -102,8 +102,8 @@ def test_deep_eval_returns_risk_score() -> None:
     assert result["recommended_action"] in ("adopt", "watch", "ignore")
 
 
-def test_default_llm_caller_prefers_driftdriver_anthropic_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    response_payload = {"content": [{"type": "text", "text": '{"relevance_score": 0.4}'}]}
+def test_default_llm_caller_prefers_driftdriver_zai_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    response_payload = {"choices": [{"message": {"content": "{\"relevance_score\": 0.4}"}}]}
 
     class _Response:
         def __enter__(self) -> "_Response":
@@ -116,19 +116,21 @@ def test_default_llm_caller_prefers_driftdriver_anthropic_key(monkeypatch: pytes
             return json.dumps(response_payload).encode("utf-8")
 
     captured_headers: dict[str, str] = {}
+    captured_url: dict[str, str] = {}
 
     def _fake_urlopen(request: Any, timeout: int) -> _Response:
         assert timeout == 60
         captured_headers.update(dict(request.header_items()))
+        captured_url["url"] = request.full_url
         return _Response()
 
-    monkeypatch.setenv("DRIFTDRIVER_ANTHROPIC_API_KEY", "driftdriver-key")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "legacy-anthropic")
-    monkeypatch.setenv("CLAUDE_API_KEY", "legacy-claude")
+    monkeypatch.setenv("DRIFTDRIVER_ZAI_API_KEY", "driftdriver-key")
+    monkeypatch.setenv("ZAI_API_KEY", "legacy-zai")
     monkeypatch.setattr("driftdriver.upstream_tracker.urlopen", _fake_urlopen)
 
-    assert _default_llm_caller("claude-haiku", "prompt") == {"relevance_score": 0.4}
-    assert captured_headers["X-api-key"] == "driftdriver-key"
+    assert _default_llm_caller("glm-5.3-flash", "prompt") == {"relevance_score": 0.4}
+    assert captured_headers["Authorization"] == "Bearer driftdriver-key"
+    assert "api.z.ai" in captured_url["url"]
 
 
 # --- Pass 1 tests ---

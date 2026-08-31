@@ -229,7 +229,7 @@ def _default_northstardrift_cfg() -> dict[str, Any]:
             "anti_patterns": [],
             "last_reviewed": "",
             "review_interval_days": 30,
-            "alignment_model": "haiku",
+            "alignment_model": "lunaroute/glm-5.3-flash",
             "alignment_threshold_proceed": 0.7,
             "alignment_threshold_pause": 0.4,
             "decision_category": "alignment",
@@ -509,7 +509,7 @@ def _default_policy_text() -> str:
         "anti_patterns = []\n"
         "last_reviewed = \"\"\n"
         "review_interval_days = 30\n"
-        "alignment_model = \"haiku\"\n"
+        "alignment_model = \"lunaroute/glm-5.3-flash\"\n"
         "alignment_threshold_proceed = 0.7\n"
         "alignment_threshold_pause = 0.4\n"
         "decision_category = \"alignment\"\n"
