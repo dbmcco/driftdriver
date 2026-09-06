@@ -157,7 +157,7 @@ wheels = [
 [[package]]
 name = "speedrift-lane-sdk"
 version = "0.1.0"
-source = { git = "https://github.com/dbmcco/speedrift-lane-sdk.git#82ebf240dd56665be9e81b274835265388619d8d" }
+source = { git = "https://github.com/dbmcco/speedrift-lane-sdk.git#cddeb51ebd226892360372bc5a4aee516fee955a" }
 
 [[package]]
 name = "typing-extensions"
