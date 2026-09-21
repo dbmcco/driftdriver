@@ -23,8 +23,9 @@ wg health --json
 # Tailscale: http://100.77.214.44:8777/
 
 # Create tasks with current wg flags
-wg add "Title" --after <dep-id> --no-place -d "## Validation
+wg add "Title" --after <dep-id> -d "## Validation
 - [ ] test command passes"
+wg publish <task-id> --only   # add creates a paused draft; publish activates it
 
 # Attractor loop — check convergence status or run convergence
 driftdriver attractor status --json

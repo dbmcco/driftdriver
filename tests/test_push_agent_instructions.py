@@ -19,7 +19,13 @@ def _load_push_agent_instructions_module():
 def test_managed_guidance_uses_current_wg_add_flags() -> None:
     module = _load_push_agent_instructions_module()
 
-    assert "--no-place" in module.CLAUDE_BLOCK
-    assert "--no-place" in module.AGENTS_BLOCK
+    assert "--no-place" not in module.CLAUDE_BLOCK
+    assert "--no-place" not in module.AGENTS_BLOCK
+    assert "--verify" not in module.CLAUDE_BLOCK
+    assert "--verify" not in module.AGENTS_BLOCK
+    assert "wg publish" in module.CLAUDE_BLOCK
+    assert "wg publish" in module.AGENTS_BLOCK
+    assert "--after" in module.CLAUDE_BLOCK
+    assert "--after" in module.AGENTS_BLOCK
     assert "--immediate" not in module.CLAUDE_BLOCK
     assert "--immediate" not in module.AGENTS_BLOCK

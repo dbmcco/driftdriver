@@ -30,8 +30,10 @@ Use `/speedrift` (or `/rifts`) to invoke the full protocol skill.
 # Local:     http://127.0.0.1:8777/
 # Tailscale: http://100.77.214.44:8777/
 
-# Create tasks with current wg flags
-wg add "Title" --after <dep-id> --no-place --verify "test command"
+# Create tasks with current wg flags (add creates a draft; publish activates it)
+wg add "Title" --after <dep-id> -d "## Validation
+- [ ] test command passes"
+wg publish <task-id> --only
 
 # Attractor loop — check convergence status or run convergence
 driftdriver attractor status --json
@@ -80,8 +82,10 @@ code, specs, and intent in sync without hard-blocking work.
 # Local:     http://127.0.0.1:8777/
 # Tailscale: http://100.77.214.44:8777/
 
-# Create tasks with current wg flags
-wg add "Title" --after <dep-id> --no-place --verify "test command"
+# Create tasks with current wg flags (add creates a draft; publish activates it)
+wg add "Title" --after <dep-id> -d "## Validation
+- [ ] test command passes"
+wg publish <task-id> --only
 
 # Attractor loop — check convergence status or run convergence
 driftdriver attractor status --json
