@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,6 +138,13 @@ def resolve_workgraph_dir(
     legacy_initialized = _is_initialized_graph(legacy)
     current_initialized = _is_initialized_graph(current)
     if legacy_initialized and current_initialized:
+        # A `.wg` -> `.workgraph` symlink alias is one store, not a conflict
+        # (mirrors speedrift-lane-sdk cddeb51).
+        try:
+            if os.path.samefile(legacy, current):
+                return GraphDirectoryResolution(current, True, "current")
+        except OSError:
+            pass
         raise WorkgraphDirectoryConflictError(
             "Two initialized Workgraph directories found: "
             f"{legacy} and {current}. Choose one graph before continuing."
