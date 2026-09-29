@@ -26,6 +26,11 @@ def call_ollama(model: str, prompt: str, timeout: int = 60) -> str:
                     "prompt": prompt,
                     "stream": False,
                     "options": {"temperature": 0.3, "num_predict": 1024},
+                    # task-68 keep_alive trial (owner GO 2026-09-29): unload the chat
+                    # model shortly after each call instead of parking in VRAM alongside
+                    # the embedding model (VRAM contention -> /api/embeddings 500s).
+                    # Rollback: delete this line.
+                    "keep_alive": "3m",
                 }),
             ],
             capture_output=True,
