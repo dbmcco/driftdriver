@@ -199,7 +199,7 @@ def _default_existdrift_cfg() -> dict[str, Any]:
         "max_findings": 40,
         "symbol_check": True,
         "min_symbol_len": 4,
-        "interpretation_model": "hermes3:8b",
+        "interpretation_model": "glm-5.3-flash",
         "emit_followups": False,
     }
 
@@ -473,7 +473,7 @@ def _default_policy_text() -> str:
         "max_findings = 40\n"
         "symbol_check = true\n"
         "min_symbol_len = 4\n"
-        "interpretation_model = \"hermes3:8b\"\n"
+        "interpretation_model = \"glm-5.3-flash\"\n"
         "emit_followups = false\n"
         "\n"
         "[northstardrift]\n"

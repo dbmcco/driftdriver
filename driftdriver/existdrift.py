@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from driftdriver.drift_task_guard import guarded_add_drift_task
-from driftdriver.local_llm import call_ollama as _default_caller, _DEFAULT_MODEL
+from driftdriver.local_llm import call_lunaroute as _default_caller, _DEFAULT_MODEL
 
 _SEVERITY_RANK = {
     "critical": 4,

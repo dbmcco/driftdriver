@@ -8,13 +8,19 @@
 # (wg binary side).
 
 mode = "enforce"
-prohibited_prefixes = []
+prohibited_prefixes = ["ollama", "ollama:", "pi:ollama", "pi:ollama:"]
+# (Both spellings: the wg binary prefix-matches colon forms; planner_core
+# also matches bare provider names — see _is_prohibited.)
 conditional_providers = ["lunaroute"]
+
+# Owner ruling 2026-09-30: local Ollama models are PROHIBITED for wg dispatch —
+# local 26-27B workers and resident embedding/chat models degrade the whole
+# machine (load avg >180 observed). Fast tier is served by remote flash models.
 
 # Tier tables. The cheapest-sufficient floor gate in planner_core derives a
 # floor from each node's declared routing properties and compares it against
 # the tier of the actual selected model, classified by these prefixes.
-fast_prefixes = ["ollama:", "zai:glm-5.3-flash", "lunaroute:glm-5.3-flash"]
+fast_prefixes = ["zai:glm-5.3-flash", "lunaroute:glm-5.3-flash"]
 standard_prefixes = ["zai:", "lunaroute:", "openai-codex:gpt-5.4-mini"]
 premium_prefixes = ["openai-codex:gpt-5.6-luna", "openai-codex:gpt-5.5"]
 require_escalation_reason = true

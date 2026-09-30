@@ -124,7 +124,7 @@ class ModelRoutePolicy:
     prohibited_prefixes: tuple[str, ...] = ()
     conditional_providers: tuple[str, ...] = ("lunaroute",)
     tier_prefixes: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
-        "fast": ("ollama:", "zai:glm-5.3-flash", "lunaroute:glm-5.3-flash"),
+        "fast": ("zai:glm-5.3-flash", "lunaroute:glm-5.3-flash"),
         "standard": ("zai:", "lunaroute:", "openai-codex:gpt-5.4-mini"),
         "premium": ("openai-codex:gpt-5.6-luna", "openai-codex:gpt-5.5"),
     })
@@ -270,6 +270,22 @@ def _provider_prefix(model: str) -> str:
     return model
 
 
+def _is_prohibited(model: str, policy: "ModelRoutePolicy") -> bool:
+    """True when *model* matches any prohibited prefix in *policy*.
+
+    Matches either spelling: a bare provider name (``ollama`` — the portion
+    before the first ':'/'/') or a colon-form route prefix (``ollama:`` or
+    ``pi:ollama:``) matched against the start of the full route string.
+    """
+    if _provider_prefix(model).lower() in policy.prohibited_prefixes:
+        return True
+    model_lower = model.lower()
+    return any(
+        bool(p) and model_lower.startswith(str(p).lower())
+        for p in policy.prohibited_prefixes
+    )
+
+
 def validate_model_routes(
     route_models: dict[str, str],
     *,
@@ -297,7 +313,7 @@ def validate_model_routes(
         prefix = _provider_prefix(model)
         prefix_lower = prefix.lower()
         flagged = False
-        if prefix_lower in policy.prohibited_prefixes:
+        if _is_prohibited(model, policy):
             violations.append(RouteViolation(
                 node_id=node_id,
                 model=model,
@@ -491,17 +507,19 @@ def build_decompose_prompt(
                 "## Model Routing\n"
                 "Every node MUST include route assignments:\n"
                 "- route_tier: one of `fast`, `standard`, `premium`\n"
-                "- model: explicit worker route (e.g. `pi:zai:glm-5.2`, `pi:ollama:gemma4:26b`)\n\n"
+                "- model: explicit worker route (e.g. `pi:zai:glm-5.2`, `pi:zai:glm-5.3-flash`)\n\n"
                 "| Tier | Cost | Eligible models |\n"
                 "|------|------|-----------------|\n"
-                "| **Fast** (simple leaf tasks) | Free, local | `ollama:` prefixed models |\n"
+                "| **Fast** (simple leaf tasks) | Cheapest | `zai:glm-5.3-flash`, `lunaroute:glm-5.3-flash` |\n"
                 "| **Standard** (normal work) | Lower cost | `zai:glm-5.3`, `lunaroute:glm-5.3`, `openai-codex:gpt-5.4-mini` |\n"
                 "| **Premium** (complex / critical) | Higher cost | `openai-codex:gpt-5.6-luna`, `openai-codex:gpt-5.5` |\n\n"
                 "Assign the cheapest tier that can do the job well. Small "
                 "strongly-verified leaf tasks default to fast. Premium REQUIRES a "
                 "non-empty escalation_reason explaining why cheaper tiers are "
                 "insufficient. Lunaroute models only with explicit "
-                "operator opt-in.\n"
+                "operator opt-in. Local `ollama:` routes are PROHIBITED "
+                "(owner ruling 2026-09-30: local models degrade machine "
+                "performance) — the planner must not propose them.\n"
             )
         # Build the output format field list
         output_fields = (

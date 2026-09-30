@@ -230,7 +230,7 @@ class ValidateModelRoutesTests(unittest.TestCase):
     def test_clean_routes_pass(self) -> None:
         routes = {
             "n1": "zai:glm-5.2",
-            "n2": "ollama:qwopus3.6:27b-mtp-q4",
+            "n2": "zai:glm-5.3-flash",
             "n3": "kimi-coding:kimi-for-coding",
         }
         self.assertEqual(validate_model_routes(routes), [])
@@ -239,6 +239,29 @@ class ValidateModelRoutesTests(unittest.TestCase):
         custom = ModelRoutePolicy(prohibited_prefixes=("openai",), conditional_providers=())
         violations = validate_model_routes({"n1": "openai:gpt-5.5"}, policy=custom)
         self.assertEqual(len(violations), 1)
+
+    def test_prohibited_matches_colon_form_prefixes(self) -> None:
+        """Colon-form entries (as shipped in route-policy.toml) must match both
+        planner-form and pi-prefixed dispatch routes."""
+        custom = ModelRoutePolicy(
+            prohibited_prefixes=("ollama", "ollama:", "pi:ollama", "pi:ollama:"),
+            conditional_providers=(),
+        )
+        for model in ("ollama:gemma", "pi:ollama:gemma4:26b"):
+            violations = validate_model_routes({"n1": model}, policy=custom)
+            self.assertEqual(
+                [v.kind for v in violations], ["prohibited"], msg=model,
+            )
+
+    def test_prohibition_does_not_leak_to_other_providers(self) -> None:
+        custom = ModelRoutePolicy(
+            prohibited_prefixes=("ollama", "ollama:", "pi:ollama", "pi:ollama:"),
+            conditional_providers=(),
+        )
+        violations = validate_model_routes(
+            {"n1": "zai:glm-5.3-flash"}, policy=custom,
+        )
+        self.assertEqual(violations, [])
 
     def test_reason_is_full_sentence(self) -> None:
         violations = validate_model_routes({"n1": "anthropic:sonnet"}, policy=ModelRoutePolicy(prohibited_prefixes=("anthropic",)))
@@ -819,9 +842,9 @@ class PlannedNodeRouteFieldsTests(unittest.TestCase):
 
 
 class TierOfTests(unittest.TestCase):
-    def test_ollama_is_fast(self) -> None:
+    def test_ollama_is_not_routable(self) -> None:
         self.assertEqual(
-            DEFAULT_MODEL_ROUTE_POLICY.tier_of("ollama:qwopus3.6:27b-mtp-q4"), "fast",
+            DEFAULT_MODEL_ROUTE_POLICY.tier_of("ollama:qwopus3.6:27b-mtp-q4"), "unknown",
         )
 
     def test_zai_is_standard(self) -> None:
@@ -869,7 +892,7 @@ class EscalationReasonTests(unittest.TestCase):
         self.assertEqual(violations, [])
 
     def test_fast_needs_no_reason(self) -> None:
-        violations = validate_model_routes({"n1": "ollama:gemma"})
+        violations = validate_model_routes({"n1": "zai:glm-5.3-flash"})
         self.assertEqual(violations, [])
 
     def test_missing_reason_violation_kind(self) -> None:
@@ -998,7 +1021,7 @@ class UndersizedRouteTests(unittest.TestCase):
 
     def test_fast_model_below_standard_floor_flagged(self) -> None:
         violations = validate_model_routes(
-            {"n1": "ollama:gemma"},
+            {"n1": "zai:glm-5.3-flash"},
             node_properties={"n1": {"blast_radius": "shared_module"}},
         )
         self.assertEqual(len(violations), 1)
@@ -1014,8 +1037,8 @@ class UndersizedRouteTests(unittest.TestCase):
 
     def test_undersized_with_reason_passes(self) -> None:
         violations = validate_model_routes(
-            {"n1": "ollama:gemma"},
-            escalation_reasons={"n1": "operator chose a local model deliberately"},
+            {"n1": "zai:glm-5.3-flash"},
+            escalation_reasons={"n1": "operator chose a cheaper tier deliberately"},
             node_properties={"n1": {"blast_radius": "shared_module"}},
         )
         self.assertEqual(violations, [])
@@ -1030,14 +1053,14 @@ class UndersizedRouteTests(unittest.TestCase):
     def test_slash_format_model_is_classified(self) -> None:
         """Catalog-format `provider/id` models must classify like `provider:id`."""
         violations = validate_model_routes(
-            {"n1": "ollama/gemma4:26b"},
+            {"n1": "zai/glm-5.3-flash"},
             node_properties={"n1": {"blast_radius": "shared_module"}},
         )
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0].kind, "undersized")
 
     def test_no_properties_means_no_floor_check(self) -> None:
-        violations = validate_model_routes({"n1": "ollama:gemma"})
+        violations = validate_model_routes({"n1": "zai:glm-5.3-flash"})
         self.assertEqual(violations, [])
 
     def test_prohibited_takes_precedence_over_floor(self) -> None:
@@ -1061,7 +1084,7 @@ class MaterializeUndersizedTests(unittest.TestCase):
         node = PlannedNode(
             id="hard",
             title="Hard",
-            model="ollama:gemma",
+            model="zai:glm-5.3-flash",
             routing_properties={"blast_radius": "shared_module", "risk": "medium"},
         )
         err = io.StringIO()
@@ -1081,13 +1104,13 @@ class MaterializeUndersizedTests(unittest.TestCase):
         node = PlannedNode(
             id="hard",
             title="Hard",
-            model="ollama:gemma",
+            model="zai:glm-5.3-flash",
             routing_properties={"blast_radius": "shared_module"},
         )
         materialize_plan(
             [node],
             Path("/repo"),
-            escalation_reasons={"hard": "deliberate local-first choice"},
+            escalation_reasons={"hard": "deliberate cheaper-tier choice"},
             runner=runner,
         )
         self.assertIn("--model", calls[0])
@@ -1099,7 +1122,7 @@ class MaterializeUndersizedTests(unittest.TestCase):
             calls.append(cmd)
             return _ok()
 
-        node = PlannedNode(id="plain", title="Plain", model="ollama:gemma")
+        node = PlannedNode(id="plain", title="Plain", model="zai:glm-5.3-flash")
         materialize_plan([node], Path("/repo"), runner=runner)
         self.assertIn("--model", calls[0])
 
@@ -1163,7 +1186,7 @@ class LoadRoutePolicyTests(unittest.TestCase):
             self._write_policy(Path(tmp), 'mode = "enforce"\n')
             policy = load_route_policy(Path(tmp))
         self.assertEqual(policy.prohibited_prefixes, ())
-        self.assertEqual(policy.tier_of("ollama:gemma"), "fast")
+        self.assertEqual(policy.tier_of("ollama:gemma"), "unknown")
         self.assertEqual(policy.tier_of("openai-codex:gpt-5.5"), "premium")
 
     def test_invalid_toml_falls_back_with_warning(self) -> None:

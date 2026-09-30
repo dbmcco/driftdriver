@@ -1,17 +1,14 @@
-# ABOUTME: Ollama-based LLM summarization for agent panes.
+# ABOUTME: LLM summarization for agent panes (remote Lunaroute GLM flash; no local models).
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from driftdriver.local_llm import call_lunaroute as _call_llm, _DEFAULT_MODEL
 from driftdriver.tmux_monitor.config import TmuxMonitorConfig
-
-_DEFAULT_MODEL = "hermes3:8b"
-_OLLAMA_URL = "http://localhost:11434"
 
 _SUMMARY_PROMPT = """\
 You are a coding agent monitor. Summarize what this agent has been doing based on its recent terminal output.
@@ -47,31 +44,6 @@ class PaneSummary:
             "related_panes": self.related_panes,
             "llm_summary_at": self.generated_at,
         }
-
-
-def _call_ollama(model: str, prompt: str, timeout: int = 60) -> str:
-    try:
-        result = subprocess.run(
-            [
-                "curl", "-s", "--max-time", str(timeout),
-                f"{_OLLAMA_URL}/api/generate",
-                "-d", json.dumps({
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.3, "num_predict": 512},
-                }),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout + 10,
-        )
-        if result.returncode != 0:
-            return ""
-        data = json.loads(result.stdout)
-        return data.get("response", "").strip()
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
-        return ""
 
 
 def _parse_summary_response(raw: str) -> PaneSummary | None:
@@ -117,13 +89,17 @@ def summarize_pane(
     if len(content) > max_input_chars:
         content = content[-max_input_chars:]
 
-    model = getattr(config, "ollama_model", None) or _DEFAULT_MODEL
+    model = (
+        getattr(config, "llm_model", None)
+        or getattr(config, "ollama_model", None)  # legacy attr
+        or _DEFAULT_MODEL
+    )
     prompt = _SUMMARY_PROMPT.format(
         previous_summary=previous_summary or "(none)",
         pane_output=content,
     )
 
-    raw = _call_ollama(model, prompt)
+    raw = _call_llm(model, prompt)
     return _parse_summary_response(raw)
 
 
